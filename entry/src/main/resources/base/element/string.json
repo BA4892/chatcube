@@ -1241,6 +1241,42 @@
       "value": "Pick Background Color"
     },
     {
+      "name": "icon_source_text",
+      "value": "Text"
+    },
+    {
+      "name": "icon_source_gallery",
+      "value": "Gallery"
+    },
+    {
+      "name": "icon_source_link",
+      "value": "Link"
+    },
+    {
+      "name": "icon_link_label",
+      "value": "Image URL"
+    },
+    {
+      "name": "icon_link_placeholder",
+      "value": "https://example.com/icon.png"
+    },
+    {
+      "name": "icon_link_hint",
+      "value": "Use a remote image URL as the provider icon."
+    },
+    {
+      "name": "icon_pick_gallery",
+      "value": "Choose Image"
+    },
+    {
+      "name": "icon_gallery_hint",
+      "value": "Pick an image from your gallery."
+    },
+    {
+      "name": "icon_gallery_pick_failed",
+      "value": "Failed to pick image"
+    },
+    {
       "name": "tools_center_title",
       "value": "Tool Services"
     },

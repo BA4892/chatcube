@@ -17,7 +17,7 @@ import { showToast } from '../utils/ToastUtil'
 import { ProviderIcon } from './ProviderIcon'
 import { generateDefaultTextIcon } from '../utils/IconGeneratorUtils'
 import { getPresetProviderById } from '../config/PresetProviders'
-import { ProviderIconEditSheet } from './ProviderIconEditSheet'
+import { ProviderIconEditSheet, ProviderIconEditConfig } from './ProviderIconEditSheet'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { ModelCapabilityMatcher } from '../services/ModelCapabilityMatcher'
 import { buildModelIconRenderData, ModelIconRenderData } from '../utils/ModelIconRenderUtils'
@@ -172,9 +172,6 @@ export struct ProviderDetailPanel {
   @Local modelsTabEffectTrigger: number = 0
   // 图标编辑相关状态
   @Local showTextIconEditor: boolean = false
-  @Local showColorPicker: boolean = false
-  @Local tempTextIcon: string = ''
-  @Local tempTextIconBgColor: string = ''
   @Local providerCustomHeaderEntries: ProviderHeaderEntry[] = []
   @Local showProviderCustomHeadersEditor: boolean = false
   // 手动添加模型相关状态
@@ -1010,7 +1007,6 @@ export struct ProviderDetailPanel {
   private handleInternalBackPressed(): boolean {
     if (this.showTextIconEditor) {
       this.showTextIconEditor = false
-      this.showColorPicker = false
       return true
     }
     if (this.showSheet) {
@@ -1667,11 +1663,12 @@ export struct ProviderDetailPanel {
                   this.openIconEditor()
                 })
                 .bindSheet($$this.showTextIconEditor, this.IconEditSheetBuilder(), {
-                  height: 450,
+                  height: SheetSize.FIT_CONTENT,
+                  dragBar: true,
                   showClose: false,
+                  backgroundColor: getAppUiState().themeBackground,
                   onDisappear: () => {
                     this.showTextIconEditor = false
-                    this.showColorPicker = false
                   }
                 })
             }
@@ -1826,11 +1823,12 @@ export struct ProviderDetailPanel {
                 this.openIconEditor()
               })
               .bindSheet($$this.showTextIconEditor, this.IconEditSheetBuilder(), {
-                height: 450,
+                height: SheetSize.FIT_CONTENT,
+                dragBar: true,
                 showClose: false,
+                backgroundColor: getAppUiState().themeBackground,
                 onDisappear: () => {
                   this.showTextIconEditor = false
-                  this.showColorPicker = false
                 }
               })
           }
@@ -2715,11 +2713,13 @@ ModelsCard() {
   @Builder
   IconEditSheetBuilder() {
     ProviderIconEditSheet({
-      tempTextIcon: this.tempTextIcon!!,
-      tempTextIconBgColor: this.tempTextIconBgColor!!,
       provider: this.provider,
-      onSave: () => {
-        this.saveIconConfig()
+      initialIconType: this.provider !== null ? this.provider.iconType : ProviderIconType.TEXT,
+      initialTextIcon: this.provider !== null ? this.provider.textIcon : '',
+      initialTextIconBgColor: this.provider !== null ? this.provider.textIconBgColor : '',
+      initialCustomImagePath: this.provider !== null ? this.provider.customImagePath : '',
+      onSave: (config: ProviderIconEditConfig) => {
+        this.applyIconConfig(config)
       },
       onResetToPreset: () => {
         this.resetToPresetIcon()
@@ -2737,28 +2737,22 @@ ModelsCard() {
     if (this.provider === null) {
       return
     }
-    // 初始化临时变量
-    if (this.provider.iconType === 'text') {
-      this.tempTextIcon = this.provider.textIcon
-      this.tempTextIconBgColor = this.provider.textIconBgColor
-      this.showTextIconEditor = true
-    } else {
-      // 对于其他类型，先切换到文字图标模式
-      const config = generateDefaultTextIcon(this.provider.name)
-      this.tempTextIcon = config.text
-      this.tempTextIconBgColor = config.bgColor
-      this.showTextIconEditor = true
-    }
+    this.showTextIconEditor = true
   }
 
-  // 保存图标配置
-  private async saveIconConfig(): Promise<void> {
+  // 应用图标编辑器返回的配置
+  private async applyIconConfig(config: ProviderIconEditConfig): Promise<void> {
     if (this.provider === null) {
       return
     }
-    this.provider.iconType = 'text' as ProviderIconType
-    this.provider.textIcon = this.tempTextIcon
-    this.provider.textIconBgColor = this.tempTextIconBgColor
+    this.provider.iconType = config.iconType as ProviderIconType
+    this.provider.textIcon = config.textIcon
+    this.provider.textIconBgColor = config.textIconBgColor
+    this.provider.customImagePath = config.customImagePath
+    // 切到自定义图标后清空预设 SVG 路径，避免回退渲染时仍然命中预设资源
+    if (config.iconType !== ProviderIconType.SVG) {
+      this.provider.iconPath = ''
+    }
     await this.saveCurrentProvider()
     this.showProviderToast($r('app.string.provider_icon_updated'))
   }
@@ -2768,7 +2762,7 @@ ModelsCard() {
     if (this.provider === null) {
       return
     }
-    this.provider.iconType = 'text' as ProviderIconType
+    this.provider.iconType = ProviderIconType.TEXT
     this.provider.iconPath = ''
     this.provider.customImagePath = ''
     // 恢复预设文字图标

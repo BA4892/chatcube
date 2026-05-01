@@ -16,6 +16,19 @@ export function resolveProviderTextIconDisplayMode(isEnabled: boolean): Provider
   return isEnabled ? ProviderTextIconDisplayMode.BRAND : ProviderTextIconDisplayMode.DISABLED_NEUTRAL
 }
 
+// 解析自定义图片来源：兼容历史格式（裸路径自动补 file://）与新格式（http(s)/file/data URI 直接透传）
+export function resolveProviderCustomImageSource(customImagePath: string): string {
+  if (customImagePath === '') {
+    return ''
+  }
+  const lower = customImagePath.toLowerCase()
+  if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('file://')
+    || lower.startsWith('data:')) {
+    return customImagePath
+  }
+  return 'file://' + customImagePath
+}
+
 @ComponentV2
 export struct ProviderIcon {
   @Param iconPath: string = ''
@@ -98,7 +111,7 @@ export struct ProviderIcon {
       }
       // 自定义图片
       else if (this.iconType === 'image' && this.customImagePath !== '') {
-        Image('file://' + this.customImagePath)
+        Image(resolveProviderCustomImageSource(this.customImagePath))
           .width(this.iconSize)
           .height(this.iconSize)
           .objectFit(ImageFit.Cover)
@@ -191,7 +204,7 @@ export struct ProviderIconSmall {
     }
     // 自定义图片
     else if (this.iconType === 'image' && this.customImagePath !== '') {
-      Image('file://' + this.customImagePath)
+      Image(resolveProviderCustomImageSource(this.customImagePath))
         .width(this.iconSize)
         .height(this.iconSize)
         .objectFit(ImageFit.Cover)

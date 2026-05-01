@@ -1241,6 +1241,42 @@
       "value": "选择背景颜色"
     },
     {
+      "name": "icon_source_text",
+      "value": "文字"
+    },
+    {
+      "name": "icon_source_gallery",
+      "value": "相册"
+    },
+    {
+      "name": "icon_source_link",
+      "value": "链接"
+    },
+    {
+      "name": "icon_link_label",
+      "value": "图片链接"
+    },
+    {
+      "name": "icon_link_placeholder",
+      "value": "https://example.com/icon.png"
+    },
+    {
+      "name": "icon_link_hint",
+      "value": "使用网络图片作为服务商图标。"
+    },
+    {
+      "name": "icon_pick_gallery",
+      "value": "选择图片"
+    },
+    {
+      "name": "icon_gallery_hint",
+      "value": "从相册选择一张图片作为图标。"
+    },
+    {
+      "name": "icon_gallery_pick_failed",
+      "value": "选择图片失败"
+    },
+    {
       "name": "tools_center_title",
       "value": "工具服务"
     },
