@@ -44,9 +44,31 @@ export struct ProviderIcon {
   @Param brandColor: ResourceColor = ''
   @Param isDarkMode: boolean = false
   @Param textIconDisplayMode: ProviderTextIconDisplayMode = ProviderTextIconDisplayMode.BRAND
+  @Local hasImageLoadError: boolean = false
+
+  @Monitor('customImagePath', 'iconType')
+  onImageSourceChange(): void {
+    this.hasImageLoadError = false
+  }
+
+  private shouldFallbackToText(): boolean {
+    return this.iconType === 'image' && this.hasImageLoadError && this.textIcon !== ''
+  }
+
+  // models.dev 远程 SVG 内部用 fill="currentColor" 默认黑色，深色主题下不可见，需配浅色背景
+  private isPresetRemoteSvgLogo(): boolean {
+    if (this.iconType !== 'image' || this.customImagePath === '' || this.hasImageLoadError) {
+      return false
+    }
+    const lower = this.customImagePath.toLowerCase()
+    return lower.includes('/logos/') || lower.endsWith('.svg')
+  }
 
   private isDisabledNeutralMode(): boolean {
-    return this.iconType === 'text' && this.textIconDisplayMode === ProviderTextIconDisplayMode.DISABLED_NEUTRAL
+    if (this.iconType === 'text' || this.shouldFallbackToText()) {
+      return this.textIconDisplayMode === ProviderTextIconDisplayMode.DISABLED_NEUTRAL
+    }
+    return false
   }
 
   // 判断是否为透明背景
@@ -60,7 +82,7 @@ export struct ProviderIcon {
 
   // 获取背景色
   private getBackgroundColor(): ResourceColor {
-    if (this.iconType === 'text') {
+    if (this.iconType === 'text' || this.shouldFallbackToText()) {
       if (this.isDisabledNeutralMode()) {
         return $r('app.color.divider')
       }
@@ -68,6 +90,9 @@ export struct ProviderIcon {
         return Color.Transparent
       }
       return this.textIconBgColor
+    }
+    if (this.isPresetRemoteSvgLogo()) {
+      return $r('app.color.model_icon_bg')
     }
     if (this.iconType === 'svg' || this.iconType === 'image') {
       return Color.Transparent
@@ -102,15 +127,7 @@ export struct ProviderIcon {
           .borderRadius(this.radius)
           .clip(true)
       }
-      // 文字图标
-      else if (this.iconType === 'text' && this.textIcon !== '') {
-        Text(this.textIcon)
-          .fontSize(this.getTextFontSize())
-          .fontColor(this.getTextColor())
-          .fontWeight(FontWeight.Bold)
-      }
-      // 自定义图片
-      else if (this.iconType === 'image' && this.customImagePath !== '') {
+      else if (this.iconType === 'image' && this.customImagePath !== '' && !this.hasImageLoadError) {
         Image(resolveProviderCustomImageSource(this.customImagePath))
           .width(this.iconSize)
           .height(this.iconSize)
@@ -118,8 +135,16 @@ export struct ProviderIcon {
           .interpolation(ImageInterpolation.High)
           .borderRadius(this.radius)
           .clip(true)
+          .onError(() => {
+            this.hasImageLoadError = true
+          })
       }
-      // 默认 fallback（显示云图标）
+      else if ((this.iconType === 'text' || this.shouldFallbackToText()) && this.textIcon !== '') {
+        Text(this.textIcon)
+          .fontSize(this.getTextFontSize())
+          .fontColor(this.getTextColor())
+          .fontWeight(FontWeight.Bold)
+      }
       else {
         SymbolGlyph(this.fallbackSymbol)
           .fontSize(this.iconSize * 0.55)
@@ -146,9 +171,31 @@ export struct ProviderIconSmall {
   @Param brandColor: ResourceColor = ''
   @Param isDarkMode: boolean = false
   @Param textIconDisplayMode: ProviderTextIconDisplayMode = ProviderTextIconDisplayMode.BRAND
+  @Local hasImageLoadError: boolean = false
+
+  @Monitor('customImagePath', 'iconType')
+  onImageSourceChange(): void {
+    this.hasImageLoadError = false
+  }
+
+  private shouldFallbackToText(): boolean {
+    return this.iconType === 'image' && this.hasImageLoadError && this.textIcon !== ''
+  }
+
+  // models.dev 远程 SVG 内部用 fill="currentColor" 默认黑色，深色主题下不可见，需配浅色背景
+  private isPresetRemoteSvgLogo(): boolean {
+    if (this.iconType !== 'image' || this.customImagePath === '' || this.hasImageLoadError) {
+      return false
+    }
+    const lower = this.customImagePath.toLowerCase()
+    return lower.includes('/logos/') || lower.endsWith('.svg')
+  }
 
   private isDisabledNeutralMode(): boolean {
-    return this.iconType === 'text' && this.textIconDisplayMode === ProviderTextIconDisplayMode.DISABLED_NEUTRAL
+    if (this.iconType === 'text' || this.shouldFallbackToText()) {
+      return this.textIconDisplayMode === ProviderTextIconDisplayMode.DISABLED_NEUTRAL
+    }
+    return false
   }
 
   // 判断是否显示品牌色边框
@@ -179,8 +226,19 @@ export struct ProviderIconSmall {
         } : undefined)
         .borderRadius(this.iconSize * 0.25)
     }
-    // 文字图标
-    else if (this.iconType === 'text' && this.textIcon !== '') {
+    else if (this.iconType === 'image' && this.customImagePath !== '' && !this.hasImageLoadError) {
+      Image(resolveProviderCustomImageSource(this.customImagePath))
+        .width(this.iconSize)
+        .height(this.iconSize)
+        .objectFit(ImageFit.Cover)
+        .interpolation(ImageInterpolation.High)
+        .borderRadius(this.iconSize * 0.25)
+        .backgroundColor(this.isPresetRemoteSvgLogo() ? $r('app.color.model_icon_bg') : Color.Transparent)
+        .onError(() => {
+          this.hasImageLoadError = true
+        })
+    }
+    else if ((this.iconType === 'text' || this.shouldFallbackToText()) && this.textIcon !== '') {
       if (this.shouldUseTransparentTextLayout()) {
         // 透明背景：直接显示文字/emoji
         Text(this.textIcon)
@@ -201,15 +259,6 @@ export struct ProviderIconSmall {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
-    }
-    // 自定义图片
-    else if (this.iconType === 'image' && this.customImagePath !== '') {
-      Image(resolveProviderCustomImageSource(this.customImagePath))
-        .width(this.iconSize)
-        .height(this.iconSize)
-        .objectFit(ImageFit.Cover)
-        .interpolation(ImageInterpolation.High)
-        .borderRadius(this.iconSize * 0.25)
     }
     // 默认 fallback
     else {

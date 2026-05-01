@@ -3,8 +3,9 @@
  * 定义内置的模型供应商，这些供应商不可删除
  */
 
-import { ProviderType, ApiStyle, OpenAITransport } from '../models/ChatModels'
+import { ProviderType, ApiStyle, OpenAITransport, ProviderIconType, ModelProvider } from '../models/ChatModels'
 import { DEFAULT_PRIMARY_COLOR } from './ThemeDefaults'
+import { DEFAULT_MODELS_DEV_BASE_URL } from '../services/PreferencesService'
 
 // 预设供应商配置接口
 export interface PresetProviderConfig {
@@ -18,8 +19,11 @@ export interface PresetProviderConfig {
   iconPath: string      // SVG 图标路径（已弃用，置空）
   brandColorHex: string // 品牌色（十六进制）
   presetApiKey?: string // 预设 API Key（可选，用户不填时使用）
-  textIcon: string      // 文字图标内容
+  textIcon: string      // 文字图标内容（也作为远程 logo 加载失败的兜底显示）
   textIconBgColor: string // 文字图标背景色
+  // models.dev 上对应的 provider key，用于拉取远程 SVG logo（${baseUrl}/logos/{key}.svg）。
+  // 留空则不使用远程 logo，仅显示文字图标。
+  logoProviderKey?: string
 }
 
 // 预设供应商列表（主流厂商，不可删除）
@@ -34,7 +38,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#202123',
     textIcon: 'AI',
-    textIconBgColor: '#202123'
+    textIconBgColor: '#202123',
+    logoProviderKey: 'openai'
   },
   {
     id: 'anthropic',
@@ -46,7 +51,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#C45C3A',
     textIcon: 'C',
-    textIconBgColor: '#C45C3A'
+    textIconBgColor: '#C45C3A',
+    logoProviderKey: 'anthropic'
   },
   {
     id: 'deepseek',
@@ -58,7 +64,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#4D6BFE',
     textIcon: 'DS',
-    textIconBgColor: '#4D6BFE'
+    textIconBgColor: '#4D6BFE',
+    logoProviderKey: 'deepseek'
   },
   {
     id: 'gemini',
@@ -70,7 +77,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#4285F4',
     textIcon: 'G',
-    textIconBgColor: '#4285F4'
+    textIconBgColor: '#4285F4',
+    logoProviderKey: 'google'
   },
   {
     id: 'openrouter',
@@ -81,7 +89,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#6366F1',
     textIcon: 'OR',
-    textIconBgColor: '#6366F1'
+    textIconBgColor: '#6366F1',
+    logoProviderKey: 'openrouter'
   },
   {
     id: 'siliconflow',
@@ -92,7 +101,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#7C3AED',
     textIcon: 'SF',
-    textIconBgColor: '#7C3AED'
+    textIconBgColor: '#7C3AED',
+    logoProviderKey: 'siliconflow'
   },
   {
     id: 'qwen',
@@ -103,7 +113,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#615CED',
     textIcon: 'Q',
-    textIconBgColor: '#615CED'
+    textIconBgColor: '#615CED',
+    logoProviderKey: 'alibaba'
   },
   {
     id: 'kimi',
@@ -114,7 +125,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#0F172A',
     textIcon: 'K',
-    textIconBgColor: '#0F172A'
+    textIconBgColor: '#0F172A',
+    logoProviderKey: 'moonshotai'
   },
   {
     id: 'zhipu',
@@ -125,7 +137,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#3B82F6',
     textIcon: 'Z',
-    textIconBgColor: '#3B82F6'
+    textIconBgColor: '#3B82F6',
+    logoProviderKey: 'zhipuai'
   },
   {
     id: 'doubao',
@@ -147,7 +160,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#00A876',
     textIcon: 'M',
-    textIconBgColor: '#00A876'
+    textIconBgColor: '#00A876',
+    logoProviderKey: 'minimax'
   },
   {
     id: 'aihubmix',
@@ -158,7 +172,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#D97706',
     textIcon: 'AH',
-    textIconBgColor: '#D97706'
+    textIconBgColor: '#D97706',
+    logoProviderKey: 'aihubmix'
   },
   {
     id: 'grok',
@@ -169,7 +184,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#000000',
     textIcon: 'G',
-    textIconBgColor: '#000000'
+    textIconBgColor: '#000000',
+    logoProviderKey: 'xai'
   },
   {
     id: 'aiping',
@@ -192,7 +208,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#FF6900',
     textIcon: 'Mi',
-    textIconBgColor: '#FF6900'
+    textIconBgColor: '#FF6900',
+    logoProviderKey: 'xiaomi'
   },
   {
     id: 'ollama',
@@ -204,7 +221,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#FFFFFF',
     textIcon: '🦙',
-    textIconBgColor: ''
+    textIconBgColor: '',
+    logoProviderKey: 'ollama-cloud'
   }
 ]
 
@@ -287,6 +305,42 @@ export function isPresetProviderApiKeyRequired(providerId: string): boolean {
   const preset = getPresetProviderById(providerId)
   if (preset !== null && preset.requiresApiKey !== undefined) {
     return preset.requiresApiKey
+  }
+  return true
+}
+
+/**
+ * 由 logoProviderKey 拼接 models.dev 远程 logo URL。
+ * 没有 logoProviderKey 返回空字符串。
+ */
+export function getPresetProviderLogoUrl(providerId: string): string {
+  const preset = getPresetProviderById(providerId)
+  if (preset === null || preset.logoProviderKey === undefined || preset.logoProviderKey === '') {
+    return ''
+  }
+  return `${DEFAULT_MODELS_DEV_BASE_URL}/logos/${preset.logoProviderKey}.svg`
+}
+
+/**
+ * 把预设服务商的默认图标配置写入 ModelProvider：
+ * 有远程 logo 用 IMAGE+URL，否则用 TEXT；textIcon/bg 总是写入预设值作为兜底。
+ * 返回 true 表示已应用，false 表示 providerId 不是预设服务商。
+ */
+export function applyPresetIconDefaults(provider: ModelProvider, providerId: string): boolean {
+  const preset = getPresetProviderById(providerId)
+  if (preset === null) {
+    return false
+  }
+  provider.iconPath = ''
+  provider.textIcon = preset.textIcon
+  provider.textIconBgColor = preset.textIconBgColor
+  const logoUrl = getPresetProviderLogoUrl(providerId)
+  if (logoUrl !== '') {
+    provider.iconType = ProviderIconType.IMAGE
+    provider.customImagePath = logoUrl
+  } else {
+    provider.iconType = ProviderIconType.TEXT
+    provider.customImagePath = ''
   }
   return true
 }

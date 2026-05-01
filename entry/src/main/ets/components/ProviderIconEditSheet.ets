@@ -83,7 +83,8 @@ export struct ProviderIconEditSheet {
   }
 
   private hasPresetIconToReset(): boolean {
-    return this.provider !== null && this.provider.isPreset && this.provider.iconPath !== ''
+    // 预设服务商总是可以重置回默认图标（远程 logo 或预设文字）
+    return this.provider !== null && this.provider.isPreset
   }
 
   private getPreviewIconType(): string {

@@ -20,7 +20,9 @@ import {
   isPresetProvider,
   getEffectiveApiKey,
   getPresetProviderById,
-  isPresetProviderApiKeyRequired
+  isPresetProviderApiKeyRequired,
+  applyPresetIconDefaults,
+  getPresetProviderLogoUrl
 } from '../config/PresetProviders'
 import {
   CompatibilityProviderInfo,
@@ -294,14 +296,26 @@ export class ProviderViewModel {
     provider.textIconBgColor = config.textIconBgColor !== undefined ? config.textIconBgColor : ''
     provider.customImagePath = config.customImagePath !== undefined ? config.customImagePath : ''
 
-    // 自动迁移：预设供应商始终使用预设图标配置（确保品牌色对比度合规）
+    // 自动迁移：预设服务商优先使用 models.dev 远程 logo + 文字兜底；保留用户自定义图标
     if (provider.isPreset) {
       const preset = getPresetProviderById(config.id)
       if (preset !== null) {
-        provider.iconType = ProviderIconType.TEXT
-        provider.iconPath = ''
-        provider.textIcon = preset.textIcon
-        provider.textIconBgColor = preset.textIconBgColor
+        // 判断用户是否手动改过图标：
+        // - image 类型且 customImagePath 不等于该预设的远程 logo URL → 用户自定义图片（含 file:// 沙箱图、其他 URL 链接）
+        // - text 类型且 textIcon 与预设不同 → 用户自定义文字
+        const presetLogoUrl = getPresetProviderLogoUrl(preset.id)
+        const isUserCustomImage = provider.iconType === ProviderIconType.IMAGE
+          && provider.customImagePath !== ''
+          && provider.customImagePath !== presetLogoUrl
+        const savedTextIcon: string = config.textIcon !== undefined ? config.textIcon : ''
+        const isUserCustomText = provider.iconType === ProviderIconType.TEXT
+          && savedTextIcon !== '' && savedTextIcon !== preset.textIcon
+
+        if (!isUserCustomImage && !isUserCustomText) {
+          applyPresetIconDefaults(provider, preset.id)
+        } else {
+          provider.iconPath = ''
+        }
       }
     }
 
@@ -512,10 +526,7 @@ export class ProviderViewModel {
     siliconflow.iconPath = ''
     siliconflow.apiPath = ''
     siliconflow.openaiTransport = OpenAITransport.CHAT_COMPLETIONS
-    siliconflow.iconType = ProviderIconType.TEXT
-    siliconflow.textIcon = 'SF'
-    siliconflow.textIconBgColor = '#7C3AED'
-    siliconflow.customImagePath = ''
+    applyPresetIconDefaults(siliconflow, siliconflow.id)
     providers.push(siliconflow)
 
     return providers
@@ -564,10 +575,7 @@ export class ProviderViewModel {
           provider.iconPath = ''
           provider.apiPath = ''
           provider.openaiTransport = preset.openaiTransport !== undefined ? preset.openaiTransport : OpenAITransport.CHAT_COMPLETIONS
-          provider.iconType = ProviderIconType.TEXT
-          provider.textIcon = preset.textIcon
-          provider.textIconBgColor = preset.textIconBgColor
-          provider.customImagePath = ''
+          applyPresetIconDefaults(provider, preset.id)
           await this.saveProvider(provider)
         }
       }

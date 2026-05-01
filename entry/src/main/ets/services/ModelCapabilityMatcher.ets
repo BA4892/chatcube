@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit'
 import { ModelInfo, InputMode, OutputMode } from '../models/ChatModels'
-import { PreferenceKeys, getPreferencesService } from './PreferencesService'
+import { PreferenceKeys, getPreferencesService, DEFAULT_MODELS_DEV_BASE_URL } from './PreferencesService'
 
 // models.dev 单个模型的数据结构
 interface ModelsDevModalities {
@@ -52,7 +52,7 @@ export class ModelCapabilityMatcher {
   private cacheTimestamp: number = 0
   private readonly CACHE_TTL: number = 24 * 60 * 60 * 1000 // 24h
   private fetchPromise: Promise<boolean> | null = null
-  private baseUrl: string = 'https://models.dev'
+  private baseUrl: string = DEFAULT_MODELS_DEV_BASE_URL
   // 模型 ID（含别名） -> logo URL
   private persistedLogoIndex: Map<string, string> = new Map()
   private isPersistedLogoIndexLoaded: boolean = false
@@ -206,7 +206,7 @@ export class ModelCapabilityMatcher {
   private async fetchAndBuildCache(): Promise<boolean> {
     try {
       const prefs = getPreferencesService()
-      const baseUrl = await prefs.getString(PreferenceKeys.MODELS_DEV_BASE_URL, 'https://models.dev')
+      const baseUrl = await prefs.getString(PreferenceKeys.MODELS_DEV_BASE_URL, DEFAULT_MODELS_DEV_BASE_URL)
       const url = `${baseUrl}/api.json`
 
       const httpRequest = http.createHttp()

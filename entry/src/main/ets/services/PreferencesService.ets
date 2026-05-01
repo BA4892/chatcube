@@ -85,6 +85,9 @@ export class PreferenceKeys {
   static readonly LIGHT_COLOR_MODE: string = 'light_color_mode'
 }
 
+// models.dev 默认基址，PreferenceKeys.MODELS_DEV_BASE_URL 未配置时使用
+export const DEFAULT_MODELS_DEV_BASE_URL: string = 'https://models.dev'
+
 // 主题模式枚举
 export enum ThemeMode {
   SYSTEM = 'system',

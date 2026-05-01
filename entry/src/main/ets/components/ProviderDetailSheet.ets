@@ -16,7 +16,7 @@ import { buildIconResourcePath, getModelIconPath, isNetworkIconPath, isSandboxIc
 import { showToast } from '../utils/ToastUtil'
 import { ProviderIcon } from './ProviderIcon'
 import { generateDefaultTextIcon } from '../utils/IconGeneratorUtils'
-import { getPresetProviderById } from '../config/PresetProviders'
+import { applyPresetIconDefaults } from '../config/PresetProviders'
 import { ProviderIconEditSheet, ProviderIconEditConfig } from './ProviderIconEditSheet'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { ModelCapabilityMatcher } from '../services/ModelCapabilityMatcher'
@@ -2762,15 +2762,11 @@ ModelsCard() {
     if (this.provider === null) {
       return
     }
-    this.provider.iconType = ProviderIconType.TEXT
-    this.provider.iconPath = ''
-    this.provider.customImagePath = ''
-    // 恢复预设文字图标
-    const preset = getPresetProviderById(this.provider.id)
-    if (preset !== null) {
-      this.provider.textIcon = preset.textIcon
-      this.provider.textIconBgColor = preset.textIconBgColor
-    } else {
+    if (!applyPresetIconDefaults(this.provider, this.provider.id)) {
+      // 非预设服务商：用名称生成默认文字图标
+      this.provider.iconType = ProviderIconType.TEXT
+      this.provider.iconPath = ''
+      this.provider.customImagePath = ''
       const config = generateDefaultTextIcon(this.provider.name)
       this.provider.textIcon = config.text
       this.provider.textIconBgColor = config.bgColor
