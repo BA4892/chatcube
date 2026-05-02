@@ -397,6 +397,30 @@
       "value": "导出进度"
     },
     {
+      "name": "export_select_all",
+      "value": "全选"
+    },
+    {
+      "name": "export_stage_collecting",
+      "value": "整理会话…"
+    },
+    {
+      "name": "export_stage_processing",
+      "value": "处理消息与附件…"
+    },
+    {
+      "name": "export_stage_writing",
+      "value": "写入备份文件…"
+    },
+    {
+      "name": "export_stage_archiving",
+      "value": "压缩归档…"
+    },
+    {
+      "name": "export_stage_finalizing",
+      "value": "即将完成…"
+    },
+    {
       "name": "export_success",
       "value": "导出成功"
     },

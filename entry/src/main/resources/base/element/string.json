@@ -397,6 +397,30 @@
       "value": "Exporting..."
     },
     {
+      "name": "export_select_all",
+      "value": "Select All"
+    },
+    {
+      "name": "export_stage_collecting",
+      "value": "Collecting sessions…"
+    },
+    {
+      "name": "export_stage_processing",
+      "value": "Processing messages and attachments…"
+    },
+    {
+      "name": "export_stage_writing",
+      "value": "Writing backup files…"
+    },
+    {
+      "name": "export_stage_archiving",
+      "value": "Archiving…"
+    },
+    {
+      "name": "export_stage_finalizing",
+      "value": "Finalizing…"
+    },
+    {
       "name": "export_success",
       "value": "Export Successful"
     },

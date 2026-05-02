@@ -214,37 +214,7 @@ struct ExportDataPage {
   private PageContent() {
     Column() {
       if (this.isExporting) {
-        Row() {
-          Column() {
-            Text($r('app.string.export_progress'))
-              .fontSize(20)
-              .fontWeight(FontWeight.Medium)
-              .margin({ bottom: 24 })
-
-            Progress({ value: this.exportProgress, total: 100, type: ProgressType.Ring })
-              .width(120)
-              .height(120)
-              .style({ strokeWidth: 8 })
-              .color(this.themePrimary)
-
-            Text(`${Math.floor(this.exportProgress)}%`)
-              .fontSize(16)
-              .fontColor($r('app.color.text_secondary'))
-              .margin({ top: 16 })
-          }
-          .width('100%')
-          .constraintSize({ maxWidth: this.getContentMaxWidth() })
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-        .padding({
-          left: 16,
-          right: 16,
-          top: this.isDetailPaneMode() ? 0 : this.getCompactContentTopPadding()
-        })
+        this.ExportingProgress()
       } else {
         Scroll(this.compactScroller) {
           Row() {
@@ -256,65 +226,7 @@ struct ExportDataPage {
               }
 
               this.SectionTitle($r('app.string.export_select_sessions'))
-
-              Column() {
-                Row() {
-                  Checkbox({ name: 'selectAll', group: 'sessions' })
-                    .select(this.selectAll)
-                    .onChange((_value: boolean) => {
-                      this.toggleSelectAll()
-                    })
-                    .margin({ right: 12 })
-
-                  Text(this.selectAll ? $r('app.string.export_all_sessions') :
-                    `已选择 ${this.selectedSessionIds.length} 个会话`)
-                    .fontSize(16)
-                    .fontColor($r('app.color.text_primary'))
-                    .layoutWeight(1)
-                }
-                .width('100%')
-                .padding(16)
-
-                Divider().color($r('app.color.divider'))
-
-                ForEach(this.sessions, (session: ChatSession) => {
-                  Column() {
-                    Row() {
-                      Checkbox({ name: session.id, group: 'sessions' })
-                        .select(this.selectedSessionIds.includes(session.id))
-                        .onChange((_value: boolean) => {
-                          this.toggleSession(session.id)
-                        })
-                        .margin({ right: 12 })
-
-                      Column() {
-                        Text(session.title)
-                          .fontSize(16)
-                          .fontColor($r('app.color.text_primary'))
-                          .maxLines(1)
-                          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                        Text(new Date(session.updatedAt).toLocaleString('zh-CN'))
-                          .fontSize(14)
-                          .fontColor($r('app.color.text_secondary'))
-                          .margin({ top: 4 })
-                      }
-                      .alignItems(HorizontalAlign.Start)
-                      .layoutWeight(1)
-                    }
-                    .width('100%')
-                    .padding(16)
-
-                    if (session.id !== this.sessions[this.sessions.length - 1].id) {
-                      Divider().color($r('app.color.divider')).margin({ left: 52 })
-                    }
-                  }
-                }, (session: ChatSession) => session.id)
-              }
-              .width('100%')
-              .backgroundColor(getAppUiState().themeSurface)
-              .borderRadius(16)
-              .margin({ bottom: 24 })
+              this.SessionPickerCard()
 
               this.SectionTitle($r('app.string.export_options'))
 
@@ -349,6 +261,7 @@ struct ExportDataPage {
               .fontWeight(FontWeight.Medium)
               .backgroundColor(this.themePrimary)
               .borderRadius(12)
+              .enabled(this.selectedSessionIds.length > 0)
               .onClick(() => {
                 this.startExport()
               })
@@ -369,6 +282,192 @@ struct ExportDataPage {
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  @Builder
+  private SessionPickerCard() {
+    // 头部:全选 toggle + 已选计数
+    Column() {
+      Row() {
+        Column() {
+          Text($r('app.string.export_select_all'))
+            .fontSize(16)
+            .fontColor($r('app.color.text_primary'))
+          Text(`已选 ${this.selectedSessionIds.length} / ${this.sessions.length}`)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.selectAll })
+          .onChange((_value: boolean) => {
+            this.toggleSelectAll()
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    }
+    .width('100%')
+    .backgroundColor(getAppUiState().themeSurface)
+    .borderRadius(16)
+    .margin({ bottom: 12 })
+
+    // 会话列表
+    Column() {
+      ForEach(this.sessions, (session: ChatSession, index: number) => {
+        Column() {
+          this.SessionRow(session)
+          if (index < this.sessions.length - 1) {
+            Divider().color($r('app.color.divider')).margin({ left: 52 })
+          }
+        }
+      }, (session: ChatSession) => session.id)
+    }
+    .width('100%')
+    .backgroundColor(getAppUiState().themeSurface)
+    .borderRadius(16)
+    .margin({ bottom: 24 })
+  }
+
+  @Builder
+  private SessionRow(session: ChatSession) {
+    Row() {
+      // 左侧选中状态图标
+      Stack() {
+        if (this.selectedSessionIds.includes(session.id)) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+            .fontSize(22)
+            .fontColor([this.themePrimary])
+        } else {
+          SymbolGlyph($r('sys.symbol.circle'))
+            .fontSize(22)
+            .fontColor([$r('app.color.text_tertiary')])
+        }
+      }
+      .width(28)
+      .height(28)
+      .margin({ right: 12 })
+
+      // 会话标题 + 副信息
+      Column() {
+        Text(session.title)
+          .fontSize(16)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.buildSessionSubtitle(session))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ top: 3 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .onClick(() => { this.toggleSession(session.id) })
+  }
+
+  private buildSessionSubtitle(session: ChatSession): string {
+    const parts: string[] = []
+    if (session.messageCount > 0) {
+      parts.push(`${session.messageCount} 条消息`)
+    }
+    parts.push(this.formatRelativeTime(session.updatedAt))
+    return parts.join(' · ')
+  }
+
+  private formatRelativeTime(ts: number): string {
+    if (ts <= 0) {
+      return ''
+    }
+    const diffMs = Date.now() - ts
+    if (diffMs < 60_000) {
+      return '刚刚'
+    }
+    if (diffMs < 3_600_000) {
+      return `${Math.floor(diffMs / 60_000)} 分钟前`
+    }
+    if (diffMs < 86_400_000) {
+      return `${Math.floor(diffMs / 3_600_000)} 小时前`
+    }
+    if (diffMs < 604_800_000) {
+      return `${Math.floor(diffMs / 86_400_000)} 天前`
+    }
+    return new Date(ts).toLocaleDateString('zh-CN')
+  }
+
+  private getExportStageLabel(): Resource {
+    if (this.exportProgress < 15) {
+      return $r('app.string.export_stage_collecting')
+    } else if (this.exportProgress < 30) {
+      return $r('app.string.export_stage_processing')
+    } else if (this.exportProgress < 60) {
+      return $r('app.string.export_stage_writing')
+    } else if (this.exportProgress < 90) {
+      return $r('app.string.export_stage_archiving')
+    }
+    return $r('app.string.export_stage_finalizing')
+  }
+
+  @Builder
+  private ExportingProgress() {
+    Row() {
+      Column() {
+        Text($r('app.string.export_progress'))
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ bottom: 28 })
+
+        Stack() {
+          Progress({ value: this.exportProgress, total: 100, type: ProgressType.Ring })
+            .width(140)
+            .height(140)
+            .style({ strokeWidth: 10 })
+            .color(this.themePrimary)
+
+          Column() {
+            Text(`${Math.floor(this.exportProgress)}`)
+              .fontSize(34)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+            Text('%')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Center)
+          .justifyContent(FlexAlign.Center)
+        }
+        .width(140)
+        .height(140)
+
+        Text(this.getExportStageLabel())
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ top: 24 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.getContentMaxWidth() })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .padding({
+      left: 16,
+      right: 16,
+      top: this.isDetailPaneMode() ? 0 : this.getCompactContentTopPadding()
+    })
   }
 
   @Builder
