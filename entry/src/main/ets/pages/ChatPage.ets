@@ -2385,7 +2385,7 @@ export struct ChatPage {
 
         // 底部边缘柔和阴影叠层(与设置页/聊天列表页保持一致)
         Stack({ alignContent: Alignment.Bottom }) {
-          BottomEdgeShadow({ height: 32 })
+          BottomEdgeShadow({ shadowHeight: 32 })
         }
         .width('100%')
         .height('100%')

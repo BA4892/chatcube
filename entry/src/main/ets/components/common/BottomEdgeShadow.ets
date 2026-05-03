@@ -9,7 +9,7 @@ import { getAppUiState } from '../../state/AppUiState'
 
 @ComponentV2
 export struct BottomEdgeShadow {
-  @Param height: number = 32
+  @Param shadowHeight: number = 32
   // 浅色模式下的最大透明度(0-1)
   @Param lightAlpha: number = 0.10
   // 深色模式下的最大透明度(0-1)
@@ -27,7 +27,7 @@ export struct BottomEdgeShadow {
   build() {
     Column()
       .width('100%')
-      .height(this.height)
+      .height(this.shadowHeight)
       .linearGradient({
         angle: 180, // 由顶向下:顶端透明 → 底端柔和黑
         colors: [

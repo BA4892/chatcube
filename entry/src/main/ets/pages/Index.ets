@@ -1382,7 +1382,7 @@ struct Index {
 
       // 底部边缘柔和阴影叠层(自动跟随深浅色),覆盖 Tabs 与底部安全区交界
       Stack({ alignContent: Alignment.Bottom }) {
-        BottomEdgeShadow({ height: 32 })
+        BottomEdgeShadow({ shadowHeight: 32 })
       }
       .width('100%')
       .height('100%')
