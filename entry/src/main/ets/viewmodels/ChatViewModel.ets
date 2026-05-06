@@ -1194,7 +1194,8 @@ ${limitedSearchContext}
 1. 如果搜索结果/抓取正文中已经包含回答所需的信息(例如天气的温度/风力/AQI等具体数值),请直接整理并回答,不要再让用户去别的网站查询。
 2. 只有当搜索结果中确实缺少关键数据时,才说明"未找到"并建议进一步查询。
 3. 如果用户询问"今天"、"现在"等相对时间,请使用上述当前时间作为参考。
-4. 若回答中需要写出"今天是X年X月X日",必须与"当前时间"保持一致,不得改成其他日期。`
+4. 若回答中需要写出"今天是X年X月X日",必须与"当前时间"保持一致,不得改成其他日期。
+5. 如果搜索上下文显示 URL 读取失败或网页正文为空,请明确说明未读取到页面正文和错误原因。`
 
     console.info('ChatViewModel', `[搜索上下文] 当前时间: ${currentTime}`)
     console.info('ChatViewModel', `[搜索上下文] 搜索查询: ${searchResult.query}`)
@@ -1258,7 +1259,9 @@ ${limitedSearchContext}
     for (let i = 0; i < historyMessages.length; i++) {
       requestMessages.push(historyMessages[i])
     }
-    requestMessages.push(new RequestMessage('user', content, requestAttachments))
+    requestMessages.push(new RequestMessage('user',
+      this.buildSearchResultRequestContent(content, searchResult),
+      requestAttachments))
 
     await this.prepareHistoryAttachments(requestMessages)
     if (this.isCancelled(cancelSnapshot)) {
@@ -1570,13 +1573,15 @@ ${limitedSearchContext}
     if (hasWebSearchTool) {
       toolUsageSystemPrompt += `
 - 针对同一个用户问题，最多调用 web_search 5 次;超过 5 次后不再调用，根据已获取的内容整理并返回结果。
-- 生成 web_search.query 时优先保留用户原始关键词，不要擅自改写实体、地点和时间。`
+- 生成 web_search.query 时优先保留用户原始关键词，不要擅自改写实体、地点和时间。
+- 当用户输入只包含一个 URL，或明确要求读取、总结、分析某个网页时，必须调用 web_search。
+- URL 读取场景下，web_search.query 必须原样传入该 URL，不要改写成标题、关键词或搜索语句。`
     }
     toolUsageSystemPrompt += `
 - 若用户提到“今天/昨天/明天/现在/最新”等相对时间，请以当前时间为基准理解，不要编造不一致的绝对日期。
 - 工具返回后必须给出最终回答，不要在没有必要的情况下重复调用工具。`
-	    const finalToolUsageSystemPrompt = await this.buildRequestSystemPrompt(toolUsageSystemPrompt)
-	    requestMessages.push(new RequestMessage('system', finalToolUsageSystemPrompt))
+    const finalToolUsageSystemPrompt = await this.buildRequestSystemPrompt(toolUsageSystemPrompt)
+    requestMessages.push(new RequestMessage('system', finalToolUsageSystemPrompt))
     for (let i = 0; i < historyMessages.length; i++) {
       requestMessages.push(historyMessages[i])
     }
@@ -2408,6 +2413,30 @@ ${limitedSearchContext}
       return trimmed
     }
     return trimmed.substring(0, maxChars) + '\n\n[搜索上下文已截断]'
+  }
+
+  private isUrlLikeText(text: string): boolean {
+    const trimmed = text.trim()
+    if (trimmed === '' || /\s/.test(trimmed)) {
+      return false
+    }
+    return /^https?:\/\/[^\s]+$/i.test(trimmed) ||
+      /^[\w\-]+\.[\w\-]+(:\d+)?(\/[\w\-._~:/?#[\]@!$&'()*+,;=]*)?$/i.test(trimmed)
+  }
+
+  private buildSearchResultRequestContent(content: string, searchResult: SearchResult): string {
+    if (this.isUrlLikeText(content) || this.isUrlLikeText(searchResult.query)) {
+      const targetUrl = content.trim() !== '' ? content.trim() : searchResult.query.trim()
+      if (this.isUrlFetchFailureContext(searchResult.contentForAI)) {
+        return `请说明这个链接的读取结果：${targetUrl}`
+      }
+      return `请基于已抓取的网页内容分析这个链接：${targetUrl}`
+    }
+    return content
+  }
+
+  private isUrlFetchFailureContext(contentForAI: string): boolean {
+    return contentForAI.includes('URL 读取结果:') && contentForAI.includes('状态: 失败')
   }
 
   private isWebSearchFunction(functionName: string): boolean {

@@ -44,6 +44,7 @@ export struct ToolsCenterPanel {
   @Local searchEngineDisplayValue: string = 'Bing(local)'
   @Local searchBraveApiKey: string = ''
   @Local searchTavilyApiKey: string = ''
+  @Local searchTavilyBaseUrl: string = 'https://api.tavily.com'
   @Local searchExaApiKey: string = ''
   @Local searchExaBaseUrl: string = 'https://api.exa.ai'
   @Local searchQueryOptimizationEnabled: boolean = false
@@ -108,6 +109,7 @@ export struct ToolsCenterPanel {
   private originalSearchEngine: SearchEngine = SearchEngine.BING
   private originalSearchBraveApiKey: string = ''
   private originalSearchTavilyApiKey: string = ''
+  private originalSearchTavilyBaseUrl: string = 'https://api.tavily.com'
   private originalSearchExaApiKey: string = ''
   private originalSearchExaBaseUrl: string = 'https://api.exa.ai'
   private originalSearchQueryOptimizationEnabled: boolean = false
@@ -341,6 +343,8 @@ export struct ToolsCenterPanel {
     const engineRaw = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENGINE, SearchEngine.BING)
     const braveApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_BRAVE_API_KEY, '')
     const tavilyApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_TAVILY_API_KEY, '')
+    const tavilyBaseUrl =
+      await this.preferencesService.getString(PreferenceKeys.SEARCH_TAVILY_BASE_URL, 'https://api.tavily.com')
     const exaApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_EXA_API_KEY, '')
     const exaBaseUrl = await this.preferencesService.getString(PreferenceKeys.SEARCH_EXA_BASE_URL, 'https://api.exa.ai')
     const optimizationEnabled = await this.preferencesService.getBoolean(
@@ -354,16 +358,17 @@ export struct ToolsCenterPanel {
     this.searchEngineDisplayValue = this.getSearchEngineLabel(this.searchEngine)
     this.searchBraveApiKey = braveApiKey.trim()
     this.searchTavilyApiKey = tavilyApiKey.trim()
+    this.searchTavilyBaseUrl = this.normalizeSearchBaseUrl(tavilyBaseUrl, 'https://api.tavily.com')
     this.searchExaApiKey = exaApiKey
-    this.searchExaBaseUrl = exaBaseUrl.trim() !== '' ? exaBaseUrl.trim() : 'https://api.exa.ai'
+    this.searchExaBaseUrl = this.normalizeSearchBaseUrl(exaBaseUrl, 'https://api.exa.ai')
     this.searchQueryOptimizationEnabled = optimizationEnabled
     this.syncOriginalSearchSettings()
   }
 
-  private normalizeSearchBaseUrl(raw: string): string {
+  private normalizeSearchBaseUrl(raw: string, fallback: string): string {
     const trimmed = raw.trim()
     if (trimmed === '') {
-      return 'https://api.exa.ai'
+      return fallback
     }
     if (trimmed.endsWith('/')) {
       return trimmed.substring(0, trimmed.length - 1)
@@ -375,8 +380,10 @@ export struct ToolsCenterPanel {
     this.originalSearchEngine = this.searchEngine
     this.originalSearchBraveApiKey = this.searchBraveApiKey.trim()
     this.originalSearchTavilyApiKey = this.searchTavilyApiKey.trim()
+    this.originalSearchTavilyBaseUrl =
+      this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com')
     this.originalSearchExaApiKey = this.searchExaApiKey.trim()
-    this.originalSearchExaBaseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl)
+    this.originalSearchExaBaseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai')
     this.originalSearchQueryOptimizationEnabled = this.searchQueryOptimizationEnabled
   }
 
@@ -390,10 +397,14 @@ export struct ToolsCenterPanel {
     if (this.searchTavilyApiKey.trim() !== this.originalSearchTavilyApiKey) {
       return true
     }
+    if (this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com') !==
+      this.originalSearchTavilyBaseUrl) {
+      return true
+    }
     if (this.searchExaApiKey.trim() !== this.originalSearchExaApiKey) {
       return true
     }
-    if (this.normalizeSearchBaseUrl(this.searchExaBaseUrl) !== this.originalSearchExaBaseUrl) {
+    if (this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai') !== this.originalSearchExaBaseUrl) {
       return true
     }
     if (this.searchQueryOptimizationEnabled !== this.originalSearchQueryOptimizationEnabled) {
@@ -438,6 +449,8 @@ export struct ToolsCenterPanel {
     const braveKey = this.searchBraveApiKey.trim()
     const tavilyKey = this.searchTavilyApiKey.trim()
     const exaKey = this.searchExaApiKey.trim()
+    const tavilyBaseUrl = this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com')
+    const exaBaseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai')
     if (this.searchEngine === SearchEngine.BRAVE && braveKey === '') {
       this.showToolsSnack(pickLocalizedText(
         '请选择 Brave Search 时先填写 API Key',
@@ -457,9 +470,13 @@ export struct ToolsCenterPanel {
       return false
     }
 
-    const baseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl)
+    const shouldValidateTavilyBaseUrl = this.searchEngine === SearchEngine.TAVILY
+    if (shouldValidateTavilyBaseUrl && !tavilyBaseUrl.startsWith('http://') && !tavilyBaseUrl.startsWith('https://')) {
+      this.showToolsSnack($r('app.string.search_base_url_invalid'), 2000, SnackBarTone.ERROR)
+      return false
+    }
     const shouldValidateExaBaseUrl = this.searchEngine === SearchEngine.EXA
-    if (shouldValidateExaBaseUrl && !baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    if (shouldValidateExaBaseUrl && !exaBaseUrl.startsWith('http://') && !exaBaseUrl.startsWith('https://')) {
       this.showToolsSnack($r('app.string.search_base_url_invalid'), 2000, SnackBarTone.ERROR)
       return false
     }
@@ -467,16 +484,18 @@ export struct ToolsCenterPanel {
     await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, this.searchEngine)
     await this.preferencesService.setString(PreferenceKeys.SEARCH_BRAVE_API_KEY, braveKey)
     await this.preferencesService.setString(PreferenceKeys.SEARCH_TAVILY_API_KEY, tavilyKey)
+    await this.preferencesService.setString(PreferenceKeys.SEARCH_TAVILY_BASE_URL, tavilyBaseUrl)
     await this.preferencesService.setString(PreferenceKeys.SEARCH_EXA_API_KEY, exaKey)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_EXA_BASE_URL, baseUrl)
+    await this.preferencesService.setString(PreferenceKeys.SEARCH_EXA_BASE_URL, exaBaseUrl)
     await this.preferencesService.setBoolean(
       PreferenceKeys.SEARCH_QUERY_OPTIMIZATION_ENABLED,
       this.searchQueryOptimizationEnabled
     )
     this.searchBraveApiKey = braveKey
     this.searchTavilyApiKey = tavilyKey
+    this.searchTavilyBaseUrl = tavilyBaseUrl
     this.searchExaApiKey = exaKey
-    this.searchExaBaseUrl = baseUrl
+    this.searchExaBaseUrl = exaBaseUrl
     this.syncOriginalSearchSettings()
 
     this.showToolsSnack($r('app.string.search_config_saved'), 2000, SnackBarTone.SUCCESS)
@@ -1082,6 +1101,25 @@ export struct ToolsCenterPanel {
                 .backgroundColor(getAppUiState().themeBackground)
                 .padding({ left: 12, right: 12 })
                 .margin({ top: 8 })
+
+              TextInput({ text: this.searchTavilyBaseUrl, placeholder: $r('app.string.search_tavily_base_url') })
+                .onChange((value: string) => {
+                  this.searchTavilyBaseUrl = value
+                })
+                .fontSize(13)
+                .width('100%')
+                .height(40)
+                .borderRadius(10)
+                .backgroundColor(getAppUiState().themeBackground)
+                .padding({ left: 12, right: 12 })
+                .margin({ top: 8 })
+
+              Text($r('app.string.search_tavily_base_url_hint'))
+                .fontSize(11)
+                .lineHeight(16)
+                .fontColor($r('app.color.text_tertiary'))
+                .width('100%')
+                .margin({ top: 6 })
             }
 
             if (this.searchEngine === SearchEngine.EXA) {

@@ -649,6 +649,14 @@
       "value": "仅对 Bing（本地）生效。用于把口语输入改写为更可检索的关键词。"
     },
     {
+      "name": "search_tavily_base_url",
+      "value": "Tavily 服务地址"
+    },
+    {
+      "name": "search_tavily_base_url_hint",
+      "value": "填写 Tavily 根地址。Tavily 搜索会调用 /search；只输入 URL 时会调用 /extract，basic 无正文会重试 advanced。其它搜索引擎读取 URL 时使用本地抓取，不会调用 Tavily 扩展接口。"
+    },
+    {
       "name": "search_exa_api_key",
       "value": "Exa API Key"
     },
@@ -662,7 +670,7 @@
     },
     {
       "name": "search_base_url_invalid",
-      "value": "Exa 服务地址格式错误，请使用 http/https"
+      "value": "搜索服务地址格式错误，请使用 http/https"
     },
     {
       "name": "search_config_saved",

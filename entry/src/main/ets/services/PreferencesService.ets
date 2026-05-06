@@ -50,6 +50,7 @@ export class PreferenceKeys {
   static readonly SEARCH_QUERY_OPTIMIZATION_ENABLED: string = 'search_query_optimization_enabled'
   static readonly SEARCH_BRAVE_API_KEY: string = 'search_brave_api_key'
   static readonly SEARCH_TAVILY_API_KEY: string = 'search_tavily_api_key'
+  static readonly SEARCH_TAVILY_BASE_URL: string = 'search_tavily_base_url'
   static readonly SEARCH_EXA_API_KEY: string = 'search_exa_api_key'
   static readonly SEARCH_EXA_BASE_URL: string = 'search_exa_base_url'
   static readonly MCP_SERVER_CONFIGS_JSON: string = 'mcp_server_configs_json'

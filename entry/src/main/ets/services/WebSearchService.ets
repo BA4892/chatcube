@@ -55,13 +55,16 @@ export class WebSearchResult {
   content: string = ''
   errorMessage: string = ''
   searchResults: SearchResultItem[] = []
+  sourceName: string = ''
 
-  constructor(success: boolean, url: string, title: string, content: string, errorMessage: string, searchResults?: SearchResultItem[]) {
+  constructor(success: boolean, url: string, title: string, content: string, errorMessage: string,
+    searchResults?: SearchResultItem[], sourceName: string = '') {
     this.success = success
     this.url = url
     this.title = title
     this.content = content
     this.errorMessage = errorMessage
+    this.sourceName = sourceName
     if (searchResults !== undefined) {
       this.searchResults = searchResults
     }
@@ -77,6 +80,7 @@ export class SearchRuntimeConfigSnapshot {
   autoTestConnection: boolean = true
   braveApiKey: string = ''
   tavilyApiKey: string = ''
+  tavilyBaseUrl: string = 'https://api.tavily.com'
   exaApiKey: string = ''
   exaBaseUrl: string = 'https://api.exa.ai'
 }
@@ -134,6 +138,20 @@ class ExaSearchRequest {
   }
 }
 
+class TavilyExtractRequest {
+  urls: string[] = []
+  extract_depth: string = 'basic'
+  format: string = 'markdown'
+  include_images: boolean = false
+  timeout: number = 10
+
+  constructor(url: string, extractDepth: string, timeoutSeconds: number) {
+    this.urls = [url]
+    this.extract_depth = extractDepth
+    this.timeout = timeoutSeconds
+  }
+}
+
 class RequestControllerEntry {
   controller: HttpRequestController
   refCount: number = 1
@@ -167,10 +185,10 @@ export class WebSearchService {
     return WebSearchService.instance
   }
 
-  private normalizeExaBaseUrl(raw: string): string {
+  private normalizeBaseUrl(raw: string, fallback: string): string {
     const trimmed = raw.trim()
     if (trimmed === '') {
-      return 'https://api.exa.ai'
+      return fallback
     }
     if (trimmed.endsWith('/')) {
       return trimmed.substring(0, trimmed.length - 1)
@@ -244,6 +262,8 @@ export class WebSearchService {
     const autoTest = await prefsService.getBoolean(PreferenceKeys.SEARCH_AUTO_TEST, true)
     const braveApiKey = await prefsService.getString(PreferenceKeys.SEARCH_BRAVE_API_KEY, '')
     const tavilyApiKey = await prefsService.getString(PreferenceKeys.SEARCH_TAVILY_API_KEY, '')
+    const tavilyBaseUrl =
+      await prefsService.getString(PreferenceKeys.SEARCH_TAVILY_BASE_URL, 'https://api.tavily.com')
     const exaApiKey = await prefsService.getString(PreferenceKeys.SEARCH_EXA_API_KEY, '')
     const exaBaseUrl = await prefsService.getString(PreferenceKeys.SEARCH_EXA_BASE_URL, 'https://api.exa.ai')
 
@@ -254,8 +274,9 @@ export class WebSearchService {
     snapshot.autoTestConnection = autoTest
     snapshot.braveApiKey = braveApiKey.trim()
     snapshot.tavilyApiKey = tavilyApiKey.trim()
+    snapshot.tavilyBaseUrl = this.normalizeBaseUrl(tavilyBaseUrl, 'https://api.tavily.com')
     snapshot.exaApiKey = exaApiKey.trim()
-    snapshot.exaBaseUrl = this.normalizeExaBaseUrl(exaBaseUrl)
+    snapshot.exaBaseUrl = this.normalizeBaseUrl(exaBaseUrl, 'https://api.exa.ai')
 
     // 同步到旧字段，兼容依赖 this.config 的现有逻辑
     this.applyRuntimeConfig(snapshot)
@@ -744,7 +765,7 @@ export class WebSearchService {
       }
 
       const response = await this.httpService.postWithTimeout(
-        'https://api.tavily.com/search',
+        this.buildTavilyEndpointUrl(runtime.tavilyBaseUrl, 'search'),
         JSON.stringify({
           query: query,
           topic: 'general',
@@ -754,11 +775,7 @@ export class WebSearchService {
           include_images: false,
           include_raw_content: false
         }),
-        {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${runtime.tavilyApiKey}`
-        },
+        this.buildTavilyHeaders(runtime),
         runtime.timeout,
         this.buildHttpOptions(runtime.timeout, controller)
       )
@@ -785,6 +802,149 @@ export class WebSearchService {
     } catch (error) {
       return new BingSearchResponse(false, query, [], `Tavily 搜索失败: ${JSON.stringify(error)}`)
     }
+  }
+
+  private buildTavilyHeaders(runtime: SearchRuntimeConfigSnapshot): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${runtime.tavilyApiKey}`
+    }
+  }
+
+  private stripKnownTavilyEndpoint(url: string): string {
+    const endpoints: string[] = ['/search', '/extract', '/map', '/crawl', '/research', '/usage']
+    for (let i = 0; i < endpoints.length; i++) {
+      if (url.endsWith(endpoints[i])) {
+        return url.substring(0, url.length - endpoints[i].length)
+      }
+    }
+    return url
+  }
+
+  private buildTavilyEndpointUrl(baseUrl: string, endpoint: string): string {
+    const normalized = this.normalizeBaseUrl(baseUrl, 'https://api.tavily.com')
+    const base = this.stripKnownTavilyEndpoint(normalized)
+    return `${base}/${endpoint}`
+  }
+
+  private getTavilyExtractApiTimeoutSeconds(depth: string): number {
+    return depth === 'advanced' ? 30 : 10
+  }
+
+  private getTavilyExtractHttpTimeoutMs(runtimeTimeout: number, depth: string): number {
+    const apiTimeoutMs = this.getTavilyExtractApiTimeoutSeconds(depth) * 1000
+    return Math.max(this.normalizeTimeout(runtimeTimeout), apiTimeoutMs + 5000)
+  }
+
+  private async tavilyExtractUrlContent(
+    url: string,
+    runtime: SearchRuntimeConfigSnapshot,
+    controller: HttpRequestController | null,
+    cancelCheck?: () => boolean
+  ): Promise<WebSearchResult> {
+    if (this.isCancelled(controller, cancelCheck)) {
+      return this.buildCancelledWebResult(url)
+    }
+
+    if (!this.isValidUrl(url)) {
+      return new WebSearchResult(false, url, '', '', 'URL 格式无效')
+    }
+
+    const fullUrl = this.normalizeContentUrl(url)
+    const basicResult = await this.tavilyExtractUrlContentByDepth(fullUrl, runtime, controller, cancelCheck, 'basic')
+    if (basicResult.success || this.isCancelled(controller, cancelCheck) ||
+      !this.shouldRetryTavilyExtractWithAdvanced(basicResult.errorMessage)) {
+      return basicResult
+    }
+
+    console.warn('WebSearchService', `[Tavily Extract] Basic failed, retry advanced: ${basicResult.errorMessage}`)
+    const advancedResult = await this.tavilyExtractUrlContentByDepth(
+      fullUrl,
+      runtime,
+      controller,
+      cancelCheck,
+      'advanced'
+    )
+    if (advancedResult.success || this.isCancelled(controller, cancelCheck)) {
+      return advancedResult
+    }
+
+    return new WebSearchResult(
+      false,
+      fullUrl,
+      '',
+      '',
+      `Tavily Extract basic 失败: ${basicResult.errorMessage}; advanced 失败: ${advancedResult.errorMessage}`,
+      undefined,
+      'Tavily Extract'
+    )
+  }
+
+  private async tavilyExtractUrlContentByDepth(
+    fullUrl: string,
+    runtime: SearchRuntimeConfigSnapshot,
+    controller: HttpRequestController | null,
+    cancelCheck: (() => boolean) | undefined,
+    depth: string
+  ): Promise<WebSearchResult> {
+    try {
+      const timeout = this.getTavilyExtractHttpTimeoutMs(runtime.timeout, depth)
+      const request = new TavilyExtractRequest(
+        fullUrl,
+        depth,
+        this.getTavilyExtractApiTimeoutSeconds(depth)
+      )
+      console.info(
+        'WebSearchService',
+        `[Tavily Extract] POST ${this.buildTavilyEndpointUrl(runtime.tavilyBaseUrl, 'extract')} depth=${depth}`
+      )
+      const response = await this.httpService.postWithTimeout(
+        this.buildTavilyEndpointUrl(runtime.tavilyBaseUrl, 'extract'),
+        JSON.stringify(request),
+        this.buildTavilyHeaders(runtime),
+        timeout,
+        this.buildHttpOptions(timeout, controller)
+      )
+
+      if (!response.success) {
+        return new WebSearchResult(false, fullUrl, '', '', response.errorMessage, undefined, 'Tavily Extract')
+      }
+
+      if (this.isCancelled(controller, cancelCheck)) {
+        return this.buildCancelledWebResult(fullUrl)
+      }
+
+      const errorMessage = this.extractTavilyErrorMessage(response.data)
+      if (errorMessage !== '') {
+        return new WebSearchResult(false, fullUrl, '', '', errorMessage, undefined, 'Tavily Extract')
+      }
+
+      return this.parseTavilyExtractResult(response.data, fullUrl)
+    } catch (error) {
+      return new WebSearchResult(
+        false,
+        fullUrl,
+        '',
+        '',
+        `Tavily Extract 失败: ${JSON.stringify(error)}`,
+        undefined,
+        'Tavily Extract'
+      )
+    }
+  }
+
+  private shouldRetryTavilyExtractWithAdvanced(errorMessage: string): boolean {
+    if (errorMessage === '') {
+      return true
+    }
+    const lower = errorMessage.toLowerCase()
+    if (lower.includes('401') || lower.includes('403') || lower.includes('api key') ||
+      lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('quota') ||
+      lower.includes('credit') || lower.includes('rate limit') || lower.includes('请求已取消')) {
+      return false
+    }
+    return true
   }
 
   private async exaSearch(
@@ -868,6 +1028,17 @@ export class WebSearchService {
     }
     try {
       const parsed = JSON.parse(json) as Record<string, Object>
+      const detail = parsed['detail']
+      if (detail !== undefined && detail !== null) {
+        if (typeof detail === 'string') {
+          return detail
+        }
+        return JSON.stringify(detail)
+      }
+      const message = this.readStringFromObject(parsed, 'message')
+      if (message !== '') {
+        return message
+      }
       const error = parsed['error']
       if (error === undefined || error === null) {
         return ''
@@ -962,6 +1133,110 @@ export class WebSearchService {
     }
 
     return results
+  }
+
+  private parseTavilyExtractResult(json: string, fallbackUrl: string): WebSearchResult {
+    if (json === '') {
+      return new WebSearchResult(false, fallbackUrl, '', '', 'Tavily Extract 未返回内容')
+    }
+
+    try {
+      const parsed = JSON.parse(json) as Record<string, Object>
+      const resultsValue = parsed['results']
+      if (resultsValue !== undefined && resultsValue !== null && Array.isArray(resultsValue)) {
+        const list = resultsValue as Object[]
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          if (item === null || item === undefined || typeof item !== 'object' || Array.isArray(item)) {
+            continue
+          }
+          const itemObj = item as Record<string, Object>
+          const content = this.extractTavilyExtractContent(itemObj)
+          if (content === '') {
+            continue
+          }
+          const resultUrl = this.readStringFromObject(itemObj, 'url')
+          const resolvedUrl = resultUrl !== '' ? resultUrl : fallbackUrl
+          let title = this.readStringFromObject(itemObj, 'title').trim()
+          if (title === '') {
+            title = this.extractTitleFromTextContent(content, resolvedUrl)
+          }
+          return new WebSearchResult(
+            true,
+            resolvedUrl,
+            title,
+            this.limitExtractedContent(content),
+            '',
+            undefined,
+            'Tavily Extract'
+          )
+        }
+      }
+
+      const failedMessage = this.extractTavilyFailedResultMessage(parsed)
+      if (failedMessage !== '') {
+        return new WebSearchResult(false, fallbackUrl, '', '', failedMessage)
+      }
+    } catch (error) {
+      console.error('WebSearchService', `Parse Tavily extract failed: ${JSON.stringify(error)}`)
+      return new WebSearchResult(false, fallbackUrl, '', '', `Tavily Extract 解析失败: ${JSON.stringify(error)}`)
+    }
+
+    return new WebSearchResult(false, fallbackUrl, '', '', 'Tavily Extract 未返回正文')
+  }
+
+  private extractTavilyExtractContent(itemObj: Record<string, Object>): string {
+    const rawContent = this.readStringFromObject(itemObj, 'raw_content').trim()
+    if (rawContent !== '') {
+      return rawContent
+    }
+
+    const content = this.readStringFromObject(itemObj, 'content').trim()
+    if (content !== '') {
+      return content
+    }
+
+    return this.readStringFromObject(itemObj, 'text').trim()
+  }
+
+  private extractTavilyFailedResultMessage(parsed: Record<string, Object>): string {
+    const failedResults = parsed['failed_results']
+    if (failedResults === undefined || failedResults === null || !Array.isArray(failedResults)) {
+      return ''
+    }
+
+    const list = failedResults as Object[]
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i]
+      if (item === null || item === undefined || typeof item !== 'object' || Array.isArray(item)) {
+        continue
+      }
+      const itemObj = item as Record<string, Object>
+      const error = this.readStringFromObject(itemObj, 'error')
+      if (error !== '') {
+        return error
+      }
+    }
+    return ''
+  }
+
+  private extractTitleFromTextContent(content: string, fallbackUrl: string): string {
+    const headingMatch = /^#{1,6}\s+(.+)$/m.exec(content)
+    if (headingMatch !== null && headingMatch[1] !== undefined) {
+      const title = headingMatch[1].trim()
+      if (title !== '') {
+        return title
+      }
+    }
+    return fallbackUrl
+  }
+
+  private limitExtractedContent(content: string): string {
+    const maxContentLength = 8000
+    if (content.length <= maxContentLength) {
+      return content
+    }
+    return content.substring(0, maxContentLength) + '...'
   }
 
   private extractExaErrorMessage(json: string): string {
@@ -1436,6 +1711,39 @@ export class WebSearchService {
     const controller = this.acquireRequestController(requestId)
 
     try {
+      // 只有 Tavily 当前接入了 provider-side Extract；其它搜索引擎保持本地网页抓取兼容路径。
+      if (runtime.searchEngine === SearchEngine.TAVILY) {
+        if (runtime.tavilyApiKey === '') {
+          return new WebSearchResult(
+            false,
+            this.normalizeContentUrl(url),
+            '',
+            '',
+            'Tavily API Key 未配置，无法调用 Extract',
+            undefined,
+            'Tavily Extract'
+          )
+        }
+        const tavilyResult = await this.tavilyExtractUrlContent(url, runtime, controller, options?.cancelCheck)
+        if (tavilyResult.success || this.isCancelled(controller, options?.cancelCheck)) {
+          return tavilyResult
+        }
+        console.warn('WebSearchService', `[Tavily Extract] Failed, fallback to local fetch: ${tavilyResult.errorMessage}`)
+        const localResult = await this.fetchUrlContentInternal(url, runtime.timeout, controller, options?.cancelCheck)
+        if (localResult.success) {
+          localResult.sourceName = 'Tavily Extract失败后 URL抓取'
+          return localResult
+        }
+        return new WebSearchResult(
+          false,
+          this.normalizeContentUrl(url),
+          '',
+          '',
+          `Tavily Extract 失败: ${tavilyResult.errorMessage}; 本地 URL 抓取失败: ${localResult.errorMessage}`,
+          undefined,
+          'Tavily Extract'
+        )
+      }
       return await this.fetchUrlContentInternal(url, runtime.timeout, controller, options?.cancelCheck)
     } finally {
       this.releaseRequestController(requestId)
@@ -1456,10 +1764,7 @@ export class WebSearchService {
       return new WebSearchResult(false, url, '', '', 'URL 格式无效')
     }
 
-    let fullUrl = url
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      fullUrl = 'https://' + url
-    }
+    const fullUrl = this.normalizeContentUrl(url)
 
     const response = await this.httpService.get(
       fullUrl,
@@ -1479,7 +1784,17 @@ export class WebSearchService {
     }
 
     const parsed = this.parseHtmlContent(response.data)
-    return new WebSearchResult(true, fullUrl, parsed.title, parsed.content, '')
+    if (parsed.content.trim() === '') {
+      return new WebSearchResult(false, fullUrl, parsed.title, '', '本地 URL 抓取未提取到网页正文', undefined, 'URL抓取')
+    }
+    return new WebSearchResult(true, fullUrl, parsed.title, parsed.content, '', undefined, 'URL抓取')
+  }
+
+  private normalizeContentUrl(url: string): string {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return 'https://' + url
+    }
+    return url
   }
 
   // 解析 HTML 提取正文
@@ -1527,7 +1842,7 @@ export class WebSearchService {
       content = content.substring(0, maxContentLength) + '...'
     }
 
-    return new HtmlParseResult(title, content !== '' ? content : '无法提取正文内容')
+    return new HtmlParseResult(title, content)
   }
 
   // 验证 URL 格式

@@ -649,6 +649,14 @@
       "value": "Only applies to Bing (Local). Rewrites conversational input into searchable keywords."
     },
     {
+      "name": "search_tavily_base_url",
+      "value": "Tavily Base URL"
+    },
+    {
+      "name": "search_tavily_base_url_hint",
+      "value": "Enter the Tavily root URL. Tavily search calls /search; URL-only input calls /extract and retries advanced when basic returns no body. Other search engines use local URL fetching instead of Tavily endpoints."
+    },
+    {
       "name": "search_exa_api_key",
       "value": "Exa API Key"
     },
@@ -662,7 +670,7 @@
     },
     {
       "name": "search_base_url_invalid",
-      "value": "Invalid Exa Base URL. Use http/https"
+      "value": "Invalid search Base URL. Use http/https"
     },
     {
       "name": "search_config_saved",

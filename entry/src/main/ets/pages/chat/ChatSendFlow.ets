@@ -147,6 +147,7 @@ export class ChatSendFlow {
     currentModelId: string
   ): Promise<void> {
     const plan = this.buildExecutionPlan(
+      messageContent,
       currentProvider,
       webSearchConversationEnabled,
       selectedToolIds,
@@ -243,6 +244,7 @@ export class ChatSendFlow {
   }
 
   private buildExecutionPlan(
+    messageContent: string,
     currentProvider: ModelProvider,
     webSearchConversationEnabled: boolean,
     selectedToolIds: string[],
@@ -258,6 +260,10 @@ export class ChatSendFlow {
       return new ChatExecutionPlan(ChatExecutionPlanKind.PLAIN_DIRECT)
     }
 
+    if (searchEnabled && this.allToolsAreWebSearch(enabledToolIds) && this.isPureUrlInput(messageContent)) {
+      return new ChatExecutionPlan(ChatExecutionPlanKind.MANUAL_SEARCH, enabledToolIds)
+    }
+
     if (this.isCurrentModelSupportsTools(currentProvider, currentModelId)) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds)
     }
@@ -267,6 +273,19 @@ export class ChatSendFlow {
     }
 
     return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds)
+  }
+
+  private isPureUrlInput(messageContent: string): boolean {
+    const trimmed = messageContent.trim()
+    if (trimmed === '' || /\s/.test(trimmed)) {
+      return false
+    }
+    const httpPattern = /^https?:\/\/[^\s]+$/i
+    if (httpPattern.test(trimmed)) {
+      return true
+    }
+    const domainPattern = /^[\w\-]+\.[\w\-]+(:\d+)?(\/[\w\-._~:/?#[\]@!$&'()*+,;=]*)?$/i
+    return domainPattern.test(trimmed)
   }
 
   private allToolsAreWebSearch(toolIds: string[]): boolean {

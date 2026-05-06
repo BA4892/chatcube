@@ -1787,10 +1787,10 @@ export struct MessageBubble {
       return '工具调用'
     }
     if (source === 'manual') {
-      return '手动搜索'
+      return ''
     }
-    // 兼容旧数据：没有持久化 searchSource 时，用是否存在 toolCalls 做推断
-    return this.message.hasToolCalls() ? '工具调用' : '手动搜索'
+    // 兼容旧数据：没有持久化 searchSource 时，只展示工具调用，不暴露手动执行链路。
+    return this.message.hasToolCalls() ? '工具调用' : ''
   }
 
   private getSearchingIndicatorText(): string {

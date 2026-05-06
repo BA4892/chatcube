@@ -8,7 +8,7 @@ import {
   ToolSourceType
 } from '../models/ChatModels'
 import { ToolExecutor, RegisteredTool, getToolRegistry } from '../services/ToolRegistry'
-import { getWebSearchService, SearchResult } from '../services/WebSearchService'
+import { getWebSearchService, SearchResult, WebSearchResult } from '../services/WebSearchService'
 
 // web_search 工具参数接口
 interface WebSearchArgs {
@@ -66,13 +66,51 @@ class WebSearchExecutor implements ToolExecutor {
         return JSON.stringify(new ErrorOutput('搜索关键词不能为空'))
       }
 
-      console.info('WebSearchExecutor', `Executing web search: ${params.query}`)
-      const searchResult = await getWebSearchService().search(params.query)
+      const query = params.query.trim()
+      const webSearchService = getWebSearchService()
+      const extractedUrl = webSearchService.extractUrl(query)
+      const isPureUrl = extractedUrl !== null && extractedUrl === query
+      if (isPureUrl && extractedUrl !== null) {
+        console.info('WebSearchExecutor', `Executing web extract: ${extractedUrl}`)
+        const webResult = await webSearchService.fetchUrlContent(extractedUrl)
+        return this.formatWebResult(webResult)
+      }
+
+      console.info('WebSearchExecutor', `Executing web search: ${query}`)
+      const searchResult = await webSearchService.search(query)
       return this.formatResult(searchResult)
     } catch (error) {
       console.error('WebSearchExecutor', `Search error: ${JSON.stringify(error)}`)
       return JSON.stringify(new ErrorOutput(`搜索失败: ${JSON.stringify(error)}`))
     }
+  }
+
+  private buildSnippet(content: string): string {
+    const trimmed = content.replace(/\s+/g, ' ').trim()
+    if (trimmed.length <= 200) {
+      return trimmed
+    }
+    return trimmed.substring(0, 200) + '...'
+  }
+
+  private formatWebResult(result: WebSearchResult): string {
+    if (!result.success) {
+      return JSON.stringify(new ErrorOutput(result.errorMessage))
+    }
+
+    const output = new SearchResultOutput(
+      result.url,
+      result.sourceName !== '' ? result.sourceName : 'URL抓取',
+      [new SearchResultItem(
+        1,
+        `ref_${Date.now()}`,
+        result.title,
+        result.url,
+        this.buildSnippet(result.content)
+      )],
+      `标题: ${result.title}\n来源: ${result.url}\n\n${result.content}`
+    )
+    return JSON.stringify(output)
   }
 
   private formatResult(result: SearchResult): string {
@@ -108,13 +146,13 @@ function createWebSearchToolDefinition(): ToolDefinition {
   const parameters = new ToolParameters()
   parameters.addProperty('query', new ToolParameterProperty(
     'string',
-    '搜索关键词（尽量简洁，避免“查下/帮我/请”等口语前缀），用于在互联网上搜索相关信息'
+    '搜索关键词或网页 URL。普通联网问题传入简洁关键词；当用户只提供 URL，或要求读取、总结、分析网页时，必须原样传入该 URL。'
   ))
   parameters.addRequired('query')
 
   const func = new ToolFunction(
     'web_search',
-    '搜索互联网获取最新信息。当用户询问实时信息、新闻、天气、股票、最新事件等需要联网查询的内容时使用此工具。调用时请优先使用“可检索的关键词短语”，不要把口语化指令当作关键词。',
+    '搜索互联网或读取网页 URL 获取外部信息。当用户询问实时信息、新闻、天气、股票、最新事件等需要联网查询的内容时使用此工具；当用户只输入 URL 或要求总结/分析网页时，也必须使用此工具并原样传入 URL。',
     parameters
   )
 

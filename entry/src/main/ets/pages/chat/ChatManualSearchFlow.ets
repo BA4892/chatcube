@@ -14,7 +14,8 @@ import {
   WebSearchService,
   SearchResult,
   SearchRuntimeConfigSnapshot,
-  WebSearchExecutionOptions
+  WebSearchExecutionOptions,
+  WebSearchResult
 } from '../../services/WebSearchService'
 import { ChatTaskOrchestratorService } from '../../services/ChatTaskOrchestratorService'
 import { DefaultModelService } from '../../services/DefaultModelService'
@@ -346,7 +347,7 @@ export class ChatManualSearchFlow {
     }
   }
 
-  async performUrlFetchAsync(url: string, _originalInput: string, userMessage: ChatMessage,
+  async performUrlFetchAsync(url: string, originalInput: string, userMessage: ChatMessage,
     attachmentsToSend: MessageAttachment[] = [],
     requestId: string = '',
     taskId: string = ''): Promise<void> {
@@ -373,16 +374,25 @@ export class ChatManualSearchFlow {
 
       if (!webResult.success) {
         console.error('ChatPage', `[performUrlFetchAsync] 网页获取失败: ${webResult.errorMessage}`)
-        this.deps.onShowToast($r('app.string.url_fetch_failed'))
-        this.deps.onSetSending(false)
-        this.failTask(taskId, webResult.errorMessage)
+        const failureSearchResult = this.buildUrlFetchFailureSearchResult(
+          originalInput.trim() !== '' ? originalInput : url,
+          url,
+          webResult
+        )
+        userMessage.searchQuery = failureSearchResult.query
+        userMessage.searchEngine = failureSearchResult.searchEngine
+        for (let i = 0; i < failureSearchResult.references.length; i++) {
+          userMessage.searchReferences.push(failureSearchResult.references[i])
+        }
+        await this.sendSearchResultMessage(originalInput.trim() !== '' ? originalInput : url, failureSearchResult,
+          attachmentsToSend, taskId)
         return
       }
 
       const searchResult = new SearchResult(
         true,
-        '请分析这个网页',
-        'URL抓取',
+        originalInput.trim() !== '' ? originalInput : url,
+        webResult.sourceName !== '' ? webResult.sourceName : 'URL抓取',
         [new SearchReference(
           `ref_${Date.now()}`,
           webResult.title,
@@ -399,7 +409,8 @@ export class ChatManualSearchFlow {
         userMessage.searchReferences.push(searchResult.references[i])
       }
 
-      await this.sendSearchResultMessage('请分析这个网页', searchResult, attachmentsToSend, taskId)
+      await this.sendSearchResultMessage(originalInput.trim() !== '' ? originalInput : url, searchResult,
+        attachmentsToSend, taskId)
     } catch (error) {
       this.removeSearchingAIMessage(searchingAIMessage)
       console.error('ChatPage', `[performUrlFetchAsync] 网页获取异常: ${JSON.stringify(error)}`)
@@ -409,6 +420,45 @@ export class ChatManualSearchFlow {
     } finally {
       this.finishSearchRequest(requestId)
     }
+  }
+
+  private buildUrlFetchFailureSearchResult(userQuery: string, url: string, webResult: WebSearchResult): SearchResult {
+    const fullUrl = webResult.url.trim() !== '' ? webResult.url : url
+    const sourceName = webResult.sourceName.trim() !== '' ? webResult.sourceName : 'URL抓取'
+    const errorMessage = webResult.errorMessage.trim() !== '' ? webResult.errorMessage : '未获取到网页正文'
+    return new SearchResult(
+      true,
+      userQuery,
+      sourceName,
+      [new SearchReference(
+        `ref_${Date.now()}`,
+        fullUrl,
+        fullUrl,
+        `读取失败: ${this.limitReferenceSnippet(errorMessage)}`
+      )],
+      this.buildUrlFetchFailureContext(fullUrl, sourceName, errorMessage),
+      ''
+    )
+  }
+
+  private buildUrlFetchFailureContext(url: string, sourceName: string, errorMessage: string): string {
+    return `URL 读取结果:
+目标链接: ${url}
+读取方式: ${sourceName}
+状态: 失败
+错误: ${errorMessage}
+
+要求:
+- 请说明读取链路已经尝试过，以及失败原因可能是目标站点拒绝抓取、需要登录、依赖动态脚本渲染或访问受限。
+- 如果需要给出下一步建议，可以建议用户在浏览器打开链接或提供网页截图/页面正文。`
+  }
+
+  private limitReferenceSnippet(text: string): string {
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (normalized.length <= 180) {
+      return normalized
+    }
+    return normalized.substring(0, 180) + '...'
   }
 
   private async sendSearchResultMessage(userQuery: string, searchResult: SearchResult,
