@@ -59,7 +59,7 @@ export struct IndexSettingsPanel {
       this.versionName = info.versionName
     } catch (err) {
       console.error('IndexSettingsPanel', `Get version failed: ${JSON.stringify(err)}`)
-      this.versionName = '1.1.1'
+      this.versionName = '1.1.2'
     }
   }
 
