@@ -115,9 +115,9 @@ export struct MessageBubble {
   private cachedHasMessageTextContent: boolean = false
   private cachedHasToolbarPayload: boolean = false
   private cachedCurrentMessageModelIconResourcePath: string = ''
-  private cachedReadonlyMessageContent: string = ''
-  private cachedReadonlyReasoningContent: string = ''
-  private cachedReadonlyTranslatedText: string = ''
+  private cachedNormalizedMessageContent: string = ''
+  private cachedNormalizedReasoningContent: string = ''
+  private cachedNormalizedTranslatedText: string = ''
   private cachedHasHtmlSegments: boolean = false
   private cachedContentSegments: ContentSegment[] = []
   private cachedPreviewImageEntries: ImageAttachmentEntry[] = []
@@ -363,9 +363,9 @@ export struct MessageBubble {
     this.cachedHasMessageTextContent = this.message.content.trim().length > 0
     this.cachedHasToolbarPayload = this.cachedHasMessageTextContent || this.message.hasAttachments()
     this.cachedCurrentMessageModelIconResourcePath = this.computeCurrentMessageModelIconResourcePath()
-    this.cachedReadonlyMessageContent = this.convertTaskListToReadonly(this.message.content)
-    this.cachedReadonlyReasoningContent = this.convertTaskListToReadonly(this.message.reasoningContent)
-    this.cachedReadonlyTranslatedText = this.convertTaskListToReadonly(this.translatedText)
+    this.cachedNormalizedMessageContent = this.normalizeMarkdownContent(this.message.content)
+    this.cachedNormalizedReasoningContent = this.normalizeMarkdownContent(this.message.reasoningContent)
+    this.cachedNormalizedTranslatedText = this.normalizeMarkdownContent(this.translatedText)
     this.cachedHasHtmlSegments = !this.message.isGenerating && this.hasHtmlBlocks(this.message.content)
     this.cachedContentSegments = this.cachedHasHtmlSegments ? this.splitContentToSegments(this.message.content) : []
     this.cachedPreviewImageEntries = this.buildImageAttachmentEntries(this.previewAttachments)
@@ -635,7 +635,7 @@ export struct MessageBubble {
         if (textContent.trim().length > 0) {
           segments.push({
             isHtml: false,
-            renderContent: this.convertTaskListToReadonly(textContent)
+            renderContent: this.normalizeMarkdownContent(textContent)
           } as ContentSegment)
         }
       }
@@ -651,7 +651,7 @@ export struct MessageBubble {
       if (remaining.trim().length > 0) {
         segments.push({
           isHtml: false,
-          renderContent: this.convertTaskListToReadonly(remaining)
+          renderContent: this.normalizeMarkdownContent(remaining)
         } as ContentSegment)
       }
     }
@@ -755,19 +755,19 @@ export struct MessageBubble {
     return this.cachedContentSegments
   }
 
-  private getReadonlyMessageContent(): string {
+  private getNormalizedMessageContent(): string {
     this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyMessageContent
+    return this.cachedNormalizedMessageContent
   }
 
-  private getReadonlyReasoningContent(): string {
+  private getNormalizedReasoningContent(): string {
     this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyReasoningContent
+    return this.cachedNormalizedReasoningContent
   }
 
-  private getReadonlyTranslatedText(): string {
+  private getNormalizedTranslatedText(): string {
     this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyTranslatedText
+    return this.cachedNormalizedTranslatedText
   }
 
   private shouldShowUserToolbar(): boolean {
@@ -1361,7 +1361,7 @@ export struct MessageBubble {
               } else {
                 Markdown({
                   controller: this.markdownController,
-                  text: this.getReadonlyMessageContent()
+                  text: this.getNormalizedMessageContent()
                 })
                   .width('100%')
                   .backgroundColor(Color.Transparent)
@@ -1568,7 +1568,7 @@ export struct MessageBubble {
             Column() {
               Markdown({
                 controller: this.translationMarkdownController,
-                text: this.getReadonlyTranslatedText()
+                text: this.getNormalizedTranslatedText()
               })
                 .constraintSize({ maxWidth: '100%' })
                 .backgroundColor(Color.Transparent)
@@ -1652,7 +1652,7 @@ export struct MessageBubble {
         Column() {
           Markdown({
             controller: this.reasoningMarkdownController,
-            text: this.getReadonlyReasoningContent()
+            text: this.getNormalizedReasoningContent()
           })
             .constraintSize({ maxWidth: '100%' })
             .backgroundColor(Color.Transparent)
@@ -1670,20 +1670,11 @@ export struct MessageBubble {
     .margin({ bottom: 4 })
   }
 
-  /**
-   * 将 Markdown 任务列表语法转换为只读字符
-   * 避免 lv-markdown-in 渲染出可交互的 checkbox
-   * - [ ] → - ☐ (空心方框)
-   * - [x] 或 - [X] → - ☑ (勾选方框)
-   */
-  private convertTaskListToReadonly(content: string): string {
+  private normalizeMarkdownContent(content: string): string {
     if (content.length === 0) {
       return content
     }
-    // 替换未完成任务: - [ ] 或 * [ ]
-    let result = content.replace(/^(\s*[-*])\s*\[ \]/gm, '$1 ☐')
-    // 替换已完成任务: - [x] 或 - [X] 或 * [x] 或 * [X]
-    result = result.replace(/^(\s*[-*])\s*\[[xX]\]/gm, '$1 ☑')
+    let result = content
     // 转换 LaTeX 分隔符: \[...\] -> $$...$$ , \(...\) -> $...$
     // 部分模型(如 OpenAI 系列)使用 \[...\] 和 \(...\) 格式，lv-markdown-in 只识别 $/$$ 格式
     result = this.normalizeLatexDelimiters(result)
