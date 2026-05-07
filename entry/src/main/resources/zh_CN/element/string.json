@@ -337,6 +337,14 @@
       "value": "关于 ChatCube"
     },
     {
+      "name": "settings_invitation",
+      "value": "获取邀测地址"
+    },
+    {
+      "name": "settings_invitation_desc",
+      "value": "获取最新邀测链接与二维码"
+    },
+    {
       "name": "settings_support_development",
       "value": "支持开发"
     },

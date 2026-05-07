@@ -337,6 +337,14 @@
       "value": "About ChatCube"
     },
     {
+      "name": "settings_invitation",
+      "value": "Beta Invitation"
+    },
+    {
+      "name": "settings_invitation_desc",
+      "value": "Get the latest invite link and QR code"
+    },
+    {
       "name": "settings_support_development",
       "value": "Support Development"
     },

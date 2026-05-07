@@ -24,3 +24,6 @@ docs/appgallery
 
 # MCP 配置含本机绝对路径(D:\..., C:\Program Files\...)
 .mcp.json
+
+# 邀测地址管理脚本(含 admin token,不入库)
+/update_invite.sh

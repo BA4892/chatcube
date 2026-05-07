@@ -17,5 +17,6 @@ export enum SettingsRouteName {
   USAGE_STATS = 'UsageStatsPage',
   ABOUT = 'AboutPage',
   PRIVACY_POLICY = 'PrivacyPolicyPage',
-  SUPPORT_DEVELOPMENT = 'SupportDevelopmentPage'
+  SUPPORT_DEVELOPMENT = 'SupportDevelopmentPage',
+  INVITATION = 'InvitationPage'
 }

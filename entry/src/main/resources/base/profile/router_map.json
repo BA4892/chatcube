@@ -109,6 +109,11 @@
       "name": "SupportDevelopmentPage",
       "pageSourceFile": "src/main/ets/pages/SupportDevelopmentPage.ets",
       "buildFunction": "SupportDevelopmentPageBuilder"
+    },
+    {
+      "name": "InvitationPage",
+      "pageSourceFile": "src/main/ets/pages/InvitationPage.ets",
+      "buildFunction": "InvitationPageBuilder"
     }
   ]
 }

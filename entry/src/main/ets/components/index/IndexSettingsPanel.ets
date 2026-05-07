@@ -52,6 +52,7 @@ export struct IndexSettingsPanel {
   @Event onOpenAbout: () => void = () => {}
   @Event onOpenSupportDevelopment: () => void = () => {}
   @Event onOpenPrivacy: () => void = () => {}
+  @Event onOpenInvitation: () => void = () => {}
 
   aboutToAppear(): void {
     try {
@@ -194,6 +195,13 @@ export struct IndexSettingsPanel {
             title: $r('app.string.settings_about_chatcube'),
             subtitle: `v${this.versionName}`,
             action: (): void => { this.onOpenAbout() }
+          } as SettingsListItemModel,
+          {
+            key: SettingsRouteName.INVITATION,
+            icon: $r('sys.symbol.qrcode'),
+            title: $r('app.string.settings_invitation'),
+            subtitle: $r('app.string.settings_invitation_desc'),
+            action: (): void => { this.onOpenInvitation() }
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.PRIVACY_POLICY,

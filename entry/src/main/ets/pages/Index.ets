@@ -3776,6 +3776,9 @@ struct Index {
       onOpenAbout: (): void => {
         this.openSettingsDestination(SettingsRouteName.ABOUT)
       },
+      onOpenInvitation: (): void => {
+        this.openSettingsDestination(SettingsRouteName.INVITATION)
+      },
       onOpenSupportDevelopment: (): void => {
         this.openSettingsDestination(SettingsRouteName.SUPPORT_DEVELOPMENT)
       },
