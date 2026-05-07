@@ -2134,9 +2134,12 @@ export class AIApiService {
   }
 
   private getOpenAICompatReasoningEffort(level: ReasoningLevel): string | undefined {
+    // 通用 OpenAI 兼容协议没有统一的"关闭推理"取值;'none' 是 OpenAI gpt-5 系列扩展,
+    // DeepSeek / SiliconFlow / 火山方舟等仅接受 low/medium/high/xhigh/max,下发 'none' 会触发 HTTP 400。
+    // 此处对 OFF/AUTO 一律不下发字段,让后端走默认行为(对应 OpenAI 官方 gpt-5 路径走的是 getOpenAIReasoningEffort)。
     switch (level) {
       case ReasoningLevel.OFF:
-        return 'none'
+        return undefined
       case ReasoningLevel.AUTO:
         return undefined
       case ReasoningLevel.LOW:
