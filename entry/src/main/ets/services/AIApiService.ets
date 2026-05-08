@@ -251,6 +251,7 @@ interface OpenAIResponsesInputItem {
   type?: string
   role?: string
   content?: OpenAIResponsesContentPart[]
+  status?: string
   call_id?: string
   name?: string
   arguments?: string
@@ -1590,8 +1591,9 @@ export class AIApiService {
 
         const contentParts: OpenAIResponsesContentPart[] = []
         const fileTextContent = AttachmentContentService.buildNonInlineFileAttachmentText(msg.attachments)
+        const isAssistantMessage = msg.role === 'assistant'
 
-        for (let j = 0; j < msg.attachments.length; j++) {
+        for (let j = 0; j < msg.attachments.length && !isAssistantMessage; j++) {
           const attachment = msg.attachments[j]
           if (attachment.base64Data === '') {
             continue
@@ -1611,7 +1613,7 @@ export class AIApiService {
         }
         if (textContent !== '') {
           contentParts.unshift({
-            type: 'input_text',
+            type: isAssistantMessage ? 'output_text' : 'input_text',
             text: textContent
           })
         }
@@ -1620,10 +1622,19 @@ export class AIApiService {
           continue
         }
 
-        responseInputs.push({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: contentParts
-        })
+        if (isAssistantMessage) {
+          responseInputs.push({
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: contentParts
+          })
+        } else {
+          responseInputs.push({
+            role: 'user',
+            content: contentParts
+          })
+        }
       }
 
       const responsesBody: OpenAIResponsesRequestBody = {
