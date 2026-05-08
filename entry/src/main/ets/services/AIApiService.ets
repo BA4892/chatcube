@@ -1689,8 +1689,6 @@ export class AIApiService {
           if (normalizedReasoningLevel !== ReasoningLevel.OFF) {
             responsesBody.reasoning.summary = 'auto'
           }
-        } else if (normalizedReasoningLevel === ReasoningLevel.AUTO) {
-          responsesBody.reasoning = { summary: 'auto' }
         }
       } else if (reasoningRequestStrategy === ReasoningRequestStrategy.DASHSCOPE_THINKING) {
         this.applyDashScopeReasoningConfig(responsesBody, normalizedReasoningLevel, reasoningTokenLimit)
