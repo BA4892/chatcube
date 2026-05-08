@@ -3,10 +3,9 @@
  * 用于渲染分享图片的卡片样式
  */
 import { ChatMessage, MessageRole, MessageAttachment, AttachmentType } from '../models/ChatModels'
-import { getPresetProviderById } from '../config/PresetProviders'
-import { getCachedModelIconPath, buildIconResourcePath, resolveShareModelIdentity } from '../utils/ProviderIconUtils'
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { getAppUiState } from '../state/AppUiState'
+import { AssistantAvatarView } from './AssistantAvatar'
 import {
   getMarkdownBlockSpacing,
   getMarkdownQuotePadding,
@@ -21,12 +20,12 @@ export struct ShareMessageCard {
   @Param appName: string = 'ChatCube'
   @Param currentModelId: string = ''
   @Param iconRenderVersion: number = 0
+  @Param assistantAvatarValue: string = 'AI'
+  @Param assistantAvatarColor: string = '#4E6F9E'
+  @Param assistantAvatarCacheKey: number = 0
   private markdownControllers: Map<string, MarkdownController> = new Map()
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
-  }
-  private get themePrimary(): string {
-    return getAppUiState().themePrimary
   }
   private get themeUserBubble(): string {
     return getAppUiState().themeUserBubble
@@ -116,11 +115,6 @@ export struct ShareMessageCard {
     return $r('app.color.divider')
   }
 
-  // 获取AI头像背景色
-  private getAiAvatarBgColor(): ResourceColor {
-    return this.themeAiBubble
-  }
-
   // 获取 AI 内容容器背景色
   private getAiContentBgColor(): ResourceColor {
     return this.themeAiBubble
@@ -134,80 +128,6 @@ export struct ShareMessageCard {
   // 获取用户消息文字颜色
   private getUserBubbleTextColor(): string {
     return this.themeUserBubbleText
-  }
-
-  // 分享长图只允许使用本地已缓存图标，避免离屏渲染时回退到网络资源。
-  private getMessageModelIconPath(message: ChatMessage): string {
-    const id = resolveShareModelIdentity(message.modelId, this.currentModelId, message.modelName)
-    if (id === '' || id === undefined) {
-      return ''
-    }
-    return getCachedModelIconPath(id)
-  }
-
-  private resolveModelBrandKey(message: ChatMessage): string {
-    const id = resolveShareModelIdentity(message.modelId, this.currentModelId, message.modelName)
-    const lower = id.toLowerCase()
-
-    if (lower.includes('gpt') || lower.includes('o1') || lower.includes('o3') || lower.includes('o4') ||
-      lower.includes('chatgpt')) {
-      return 'openai'
-    }
-    if (lower.includes('claude')) {
-      return 'anthropic'
-    }
-    if (lower.includes('gemini')) {
-      return 'gemini'
-    }
-    if (lower.includes('deepseek')) {
-      return 'deepseek'
-    }
-    if (lower.includes('qwen') || lower.includes('qwq') || lower.includes('qvq')) {
-      return 'qwen'
-    }
-    if (lower.includes('glm') || lower.includes('zhipu') || lower.includes('bigmodel') || lower.includes('cogview') ||
-      lower.includes('codegeex') || lower.includes('charglm') || lower.includes('characterglm')) {
-      return 'zhipu'
-    }
-    if (lower.includes('grok')) {
-      return 'grok'
-    }
-    if (lower.includes('moonshot') || lower.includes('kimi')) {
-      return 'moonshotai'
-    }
-    if (lower.includes('minimax') || lower.includes('abab')) {
-      return 'minimax'
-    }
-    return ''
-  }
-
-  private getModelBadgeText(message: ChatMessage): string {
-    const preset = getPresetProviderById(this.resolveModelBrandKey(message))
-    if (preset !== null && preset.textIcon !== '') {
-      return preset.textIcon
-    }
-    const modelName = message.modelName.trim()
-    if (modelName !== '') {
-      return modelName.substring(0, 1).toUpperCase()
-    }
-    return 'AI'
-  }
-
-  private getModelBadgeBgColor(message: ChatMessage): string {
-    const preset = getPresetProviderById(this.resolveModelBrandKey(message))
-    if (preset !== null && preset.textIconBgColor !== '') {
-      return preset.textIconBgColor
-    }
-    return this.themePrimary
-  }
-
-  // 获取消息模型图标资源路径（空字符串表示无可用图标）
-  private getMessageModelIconResourcePath(message: ChatMessage): string {
-    const iconPath = this.getMessageModelIconPath(message)
-    if (iconPath === '') {
-      return ''
-    }
-    return buildIconResourcePath(iconPath)
   }
 
   build() {
@@ -245,8 +165,8 @@ export struct ShareMessageCard {
 
         // 消息列表
         Column() {
-          ForEach(this.messages, (message: ChatMessage, index: number) => {
-            this.MessageItem(message, index)
+          ForEach(this.messages, (message: ChatMessage) => {
+            this.MessageItem(message)
           }, (message: ChatMessage) => message.id)
         }
         .width('100%')
@@ -269,7 +189,7 @@ export struct ShareMessageCard {
   }
 
   @Builder
-  MessageItem(message: ChatMessage, index: number) {
+  MessageItem(message: ChatMessage) {
     Column() {
       if (message.role === MessageRole.USER) {
         // 用户消息
@@ -307,27 +227,22 @@ export struct ShareMessageCard {
       } else {
         // AI 消息
         Row() {
-          // 模型图标
+          // 助手头像 (与聊天页 MessageBubble 保持一致)
           Column() {
-            if (this.getMessageModelIconResourcePath(message) !== '') {
-              Image(this.getMessageModelIconResourcePath(message))
-                .width(18)
-                .height(18)
-                .objectFit(ImageFit.Contain)
-                .syncLoad(true)
-                .borderRadius(9)
-            } else {
-              Text(this.getModelBadgeText(message))
-                .fontSize(12)
-                .fontColor(Color.White)
-                .fontWeight(FontWeight.Bold)
-            }
+            AssistantAvatarView({
+              value: this.assistantAvatarValue,
+              color: this.assistantAvatarColor,
+              avatarSize: 30,
+              radius: 8,
+              fontSize: 14,
+              cacheKey: this.assistantAvatarCacheKey,
+              modelId: message.modelId !== '' ? message.modelId : this.currentModelId,
+              modelName: message.modelName
+            })
           }
           .width(30)
           .height(30)
           .borderRadius(8)
-          .backgroundColor(this.getMessageModelIconResourcePath(message) !== '' ?
-            $r('app.color.model_icon_bg') : this.getModelBadgeBgColor(message))
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
           .flexShrink(0)
@@ -441,4 +356,3 @@ export function ShareMessageCardBuilder(messages: ChatMessage[], appName: string
     appName: appName
   })
 }
-

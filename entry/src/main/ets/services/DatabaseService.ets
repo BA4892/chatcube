@@ -5,9 +5,6 @@ import {
   ChatSession,
   MessageRole,
   ModelProvider,
-  ModelInfo,
-  ProviderType,
-  ModelInfoExtendedJson,
   MessageAttachment,
   AttachmentType,
   SearchReference
@@ -48,7 +45,6 @@ interface ModelJsonData {
   inputMode?: string
   outputMode?: string
   capabilities?: CapabilitiesJsonData
-  parameters?: ParametersJsonData
   reasoningStrategyOverride?: string
 }
 
@@ -61,14 +57,7 @@ interface CapabilitiesJsonData {
   supportsStreaming: boolean
 }
 
-// 参数配置 JSON 数据
-interface ParametersJsonData {
-  temperature: number
-  topP: number
-  maxTokens: number
-  presencePenalty: number
-  frequencyPenalty: number
-}
+// 参数配置 JSON 数据(已废弃,2026/05 后所有采样参数已移到助手层,新写入不再带 parameters 字段)
 
 // 搜索引用 JSON 数据接口（用于序列化）
 interface SearchReferenceJsonData {
@@ -207,6 +196,12 @@ export class DatabaseService {
 	        default_model_name TEXT,
 	        temperature_enabled INTEGER DEFAULT 0,
 	        temperature REAL DEFAULT 0.7,
+	        top_p_enabled INTEGER DEFAULT 0,
+	        top_p REAL DEFAULT 1.0,
+	        presence_penalty_enabled INTEGER DEFAULT 0,
+	        presence_penalty REAL DEFAULT 0,
+	        frequency_penalty_enabled INTEGER DEFAULT 0,
+	        frequency_penalty REAL DEFAULT 0,
 	        is_default INTEGER DEFAULT 0,
 	        created_at INTEGER,
 	        updated_at INTEGER,
@@ -316,6 +311,8 @@ export class DatabaseService {
       await this.addToolEventMetaColumnsIfNeeded()
       // 尝试添加消息 model_id 字段（用于图标匹配）
       await this.addMessageModelIdColumnIfNeeded()
+      // 尝试添加助手采样参数列(top_p / presence_penalty / frequency_penalty)
+      await this.addAssistantSamplingColumnsIfNeeded()
 	      // 迁移现有供应商数据
 	      await this.migrateExistingProviders()
 	      await this.ensureDefaultAssistant()
@@ -607,6 +604,12 @@ export class DatabaseService {
 	      default_model_name: assistant.defaultModelName,
 	      temperature_enabled: assistant.temperatureEnabled ? 1 : 0,
 	      temperature: assistant.temperature,
+	      top_p_enabled: assistant.topPEnabled ? 1 : 0,
+	      top_p: assistant.topP,
+	      presence_penalty_enabled: assistant.presencePenaltyEnabled ? 1 : 0,
+	      presence_penalty: assistant.presencePenalty,
+	      frequency_penalty_enabled: assistant.frequencyPenaltyEnabled ? 1 : 0,
+	      frequency_penalty: assistant.frequencyPenalty,
 	      is_default: assistant.isDefault ? 1 : 0,
 	      created_at: assistant.createdAt,
 	      updated_at: assistant.updatedAt,
@@ -638,6 +641,36 @@ export class DatabaseService {
 	      assistant.temperature = resultSet.getDouble(resultSet.getColumnIndex('temperature'))
 	    } catch (error) {
 	      assistant.temperature = 0.7
+	    }
+	    try {
+	      assistant.topPEnabled = resultSet.getLong(resultSet.getColumnIndex('top_p_enabled')) === 1
+	    } catch (error) {
+	      assistant.topPEnabled = false
+	    }
+	    try {
+	      assistant.topP = resultSet.getDouble(resultSet.getColumnIndex('top_p'))
+	    } catch (error) {
+	      assistant.topP = 1.0
+	    }
+	    try {
+	      assistant.presencePenaltyEnabled = resultSet.getLong(resultSet.getColumnIndex('presence_penalty_enabled')) === 1
+	    } catch (error) {
+	      assistant.presencePenaltyEnabled = false
+	    }
+	    try {
+	      assistant.presencePenalty = resultSet.getDouble(resultSet.getColumnIndex('presence_penalty'))
+	    } catch (error) {
+	      assistant.presencePenalty = 0
+	    }
+	    try {
+	      assistant.frequencyPenaltyEnabled = resultSet.getLong(resultSet.getColumnIndex('frequency_penalty_enabled')) === 1
+	    } catch (error) {
+	      assistant.frequencyPenaltyEnabled = false
+	    }
+	    try {
+	      assistant.frequencyPenalty = resultSet.getDouble(resultSet.getColumnIndex('frequency_penalty'))
+	    } catch (error) {
+	      assistant.frequencyPenalty = 0
 	    }
 	    try {
 	      assistant.isDefault = resultSet.getLong(resultSet.getColumnIndex('is_default')) === 1
@@ -726,6 +759,29 @@ export class DatabaseService {
       await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN model_id TEXT DEFAULT ''`)
     } catch (error) {
       console.info('DatabaseService', 'messages model_id column may already exist')
+    }
+  }
+
+  // 添加助手采样参数列(温度之外的 top_p / presence_penalty / frequency_penalty)
+  // 旧库初始只有 temperature_enabled / temperature,这里把另外三对开关 + 数值列补齐。
+  private async addAssistantSamplingColumnsIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    const columns: string[] = [
+      `top_p_enabled INTEGER DEFAULT 0`,
+      `top_p REAL DEFAULT 1.0`,
+      `presence_penalty_enabled INTEGER DEFAULT 0`,
+      `presence_penalty REAL DEFAULT 0`,
+      `frequency_penalty_enabled INTEGER DEFAULT 0`,
+      `frequency_penalty REAL DEFAULT 0`
+    ]
+    for (const def of columns) {
+      try {
+        await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ASSISTANTS} ADD COLUMN ${def}`)
+      } catch (error) {
+        // 列已存在会抛错,忽略
+      }
     }
   }
 
@@ -1916,15 +1972,6 @@ export class DatabaseService {
         supportsStreaming: model.capabilities.supportsStreaming
       }
 
-      // 构建参数配置对象
-      const parametersData: ParametersJsonData = {
-        temperature: model.parameters.temperature,
-        topP: model.parameters.topP,
-        maxTokens: model.parameters.maxTokens,
-        presencePenalty: model.parameters.presencePenalty,
-        frequencyPenalty: model.parameters.frequencyPenalty
-      }
-
       // 构建模型数据对象
       const modelObj: ModelJsonData = {
         id: model.id,
@@ -1936,7 +1983,6 @@ export class DatabaseService {
         inputMode: model.inputMode,
         outputMode: model.outputMode,
         capabilities: capabilitiesData,
-        parameters: parametersData,
         reasoningStrategyOverride: model.reasoningStrategyOverride
       }
       modelsArray.push(modelObj)

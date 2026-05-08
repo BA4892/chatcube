@@ -3,7 +3,6 @@ import {
   ModelCapabilities,
   ModelInfo,
   ModelInfoExtendedJson,
-  ModelParameters,
   ModelType,
   OutputMode
 } from '../models/ChatModels'
@@ -37,9 +36,6 @@ export function applyModelDraft(target: ModelInfo, draft: ModelInfoExtendedJson)
   }
   if (draft.capabilities !== undefined) {
     target.capabilities = ModelCapabilities.fromJson(draft.capabilities)
-  }
-  if (draft.parameters !== undefined) {
-    target.parameters = ModelParameters.fromJson(draft.parameters)
   }
   if (draft.reasoningStrategyOverride !== undefined) {
     target.reasoningStrategyOverride = draft.reasoningStrategyOverride

@@ -7,12 +7,10 @@ import {
   ApiStyle,
   OpenAITransport,
   ModelCapabilities,
-  ModelParameters,
   ModelType,
   InputMode,
   OutputMode,
   ModelCapabilitiesJson,
-  ModelParametersJson,
   ProviderIconType
 } from '../models/ChatModels'
 import {
@@ -349,9 +347,6 @@ export class ProviderViewModel {
           if (modelObj.capabilities !== undefined) {
             modelInfo.capabilities = ModelCapabilities.fromJson(modelObj.capabilities)
           }
-          if (modelObj.parameters !== undefined) {
-            modelInfo.parameters = ModelParameters.fromJson(modelObj.parameters)
-          }
           if (modelObj.reasoningStrategyOverride !== undefined) {
             modelInfo.reasoningStrategyOverride = modelObj.reasoningStrategyOverride
           }
@@ -595,7 +590,6 @@ interface ModelData {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
-  parameters?: ModelParametersJson
   reasoningStrategyOverride?: string
 }
 

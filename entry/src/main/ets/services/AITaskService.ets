@@ -3,7 +3,7 @@ import { getAIApiService, AIApiService, AIApiConfig, RequestMessage } from './AI
 import { getDefaultModelService, DefaultModelService } from './DefaultModelService'
 import { getProviderViewModel, ProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { ReasoningRequestStrategy } from './ProviderCompatibilityRegistry'
-import { ModelRole, OpenAITransport } from '../models/ChatModels'
+import { ModelRole } from '../models/ChatModels'
 import { getEffectiveApiKey } from '../config/PresetProviders'
 
 // 翻译/标题生成结果
@@ -244,15 +244,12 @@ export class AITaskService {
       apiKey: effectiveApiKey,
       baseUrl: provider.baseUrl,
       apiPath: provider.apiPath !== '' ? provider.apiPath : undefined,
-      openaiTransport: OpenAITransport.CHAT_COMPLETIONS,
+      openaiTransport: provider.openaiTransport,
       customHeadersJson: provider.customHeadersJson || undefined
     }
 
     for (let i = 0; i < provider.models.length; i++) {
       if (provider.models[i].id === titleModel.modelId) {
-        apiConfig.topP = provider.models[i].parameters.topP
-        apiConfig.presencePenalty = provider.models[i].parameters.presencePenalty
-        apiConfig.frequencyPenalty = provider.models[i].parameters.frequencyPenalty
         apiConfig.modelReasoningStrategyOverride = ReasoningRequestStrategy.NONE
         break
       }
@@ -327,13 +324,11 @@ export class AITaskService {
       apiKey: effectiveApiKey,
       baseUrl: provider.baseUrl,
       apiPath: provider.apiPath !== '' ? provider.apiPath : undefined,
+      openaiTransport: provider.openaiTransport,
       customHeadersJson: provider.customHeadersJson || undefined
     }
     for (let i = 0; i < provider.models.length; i++) {
       if (provider.models[i].id === translateModel.modelId) {
-        apiConfig.topP = provider.models[i].parameters.topP
-        apiConfig.presencePenalty = provider.models[i].parameters.presencePenalty
-        apiConfig.frequencyPenalty = provider.models[i].parameters.frequencyPenalty
         if (!provider.models[i].capabilities.supportsReasoning) {
           apiConfig.modelReasoningStrategyOverride = ''
         } else {

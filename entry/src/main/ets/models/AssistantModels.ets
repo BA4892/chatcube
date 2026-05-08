@@ -14,6 +14,12 @@ export class Assistant {
   @Trace defaultModelName: string = ''
   @Trace temperatureEnabled: boolean = false
   @Trace temperature: number = 0.7
+  @Trace topPEnabled: boolean = false
+  @Trace topP: number = 1.0
+  @Trace presencePenaltyEnabled: boolean = false
+  @Trace presencePenalty: number = 0
+  @Trace frequencyPenaltyEnabled: boolean = false
+  @Trace frequencyPenalty: number = 0
   @Trace isDefault: boolean = false
   @Trace createdAt: number = 0
   @Trace updatedAt: number = 0
@@ -31,6 +37,12 @@ export class Assistant {
     this.defaultModelName = ''
     this.temperatureEnabled = false
     this.temperature = 0.7
+    this.topPEnabled = false
+    this.topP = 1.0
+    this.presencePenaltyEnabled = false
+    this.presencePenalty = 0
+    this.frequencyPenaltyEnabled = false
+    this.frequencyPenalty = 0
     this.isDefault = id === DEFAULT_ASSISTANT_ID
     this.createdAt = now
     this.updatedAt = now

@@ -2097,6 +2097,18 @@
       "value": "覆盖温度"
     },
     {
+      "name": "assistant_top_p_override",
+      "value": "覆盖 Top P"
+    },
+    {
+      "name": "assistant_presence_penalty_override",
+      "value": "覆盖存在惩罚"
+    },
+    {
+      "name": "assistant_frequency_penalty_override",
+      "value": "覆盖频率惩罚"
+    },
+    {
       "name": "assistant_name_required",
       "value": "请输入助手名称"
     },

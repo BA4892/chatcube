@@ -428,7 +428,8 @@ export class ChatSendFlow {
         0,
         this.deps.getReasoningLevel(),
         currentProvider.apiPath || undefined,
-        currentProvider.customHeadersJson || undefined
+        currentProvider.customHeadersJson || undefined,
+        currentProvider.openaiTransport
       )
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`
@@ -502,7 +503,8 @@ export class ChatSendFlow {
         tools,
         toolCallbacks,
         currentProvider.apiPath || undefined,
-        currentProvider.customHeadersJson || undefined
+        currentProvider.customHeadersJson || undefined,
+        currentProvider.openaiTransport
       )
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`

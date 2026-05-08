@@ -2586,6 +2586,9 @@ export struct ChatPage {
     SharePreviewSheet({
       messages: this.shareMessages,
       currentModelId: this.currentModelId,
+      assistantAvatarValue: this.currentAssistantAvatarSymbol,
+      assistantAvatarColor: this.currentAssistantColor,
+      assistantAvatarCacheKey: this.assistantAvatarRenderTick,
       onClose: () => {
         this.showSharePreview = false
       }

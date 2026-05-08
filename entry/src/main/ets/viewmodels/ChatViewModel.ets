@@ -4,7 +4,6 @@ import {
   AIApiService,
   AIApiConfig,
   RequestMessage,
-  AIApiResult,
   ToolCallDelta
 } from '../services/AIApiService'
 import { getAppStateManager, AppStateManager } from './AppStateManager'
@@ -13,7 +12,7 @@ import { getAttachmentStorageService, AttachmentStorageService } from '../servic
 import { getToolExecutionService, ToolExecutionService } from '../services/ToolExecutionService'
 import { getProviderViewModel, ProviderViewModel } from './ProviderViewModel'
 import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '../services/AssistantService'
-import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, ModelParameters } from '../models/ChatModels'
+import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport } from '../models/ChatModels'
 import { WebSearchResult, SearchResult } from '../services/WebSearchService'
 import { http } from '@kit.NetworkKit'
 import { getEffectiveApiKey } from '../config/PresetProviders'
@@ -170,6 +169,23 @@ export class ChatViewModel {
 	      return assistantConfig.temperature
 	    }
 	    return this.appStateManager.getDefaultTemperature()
+	  }
+
+	  // 助手未启用相应开关时返回 undefined,让 AIApiService 走"非默认值才下发"逻辑(等价于不发字段)。
+	  // 这样既不会把 1.0 / 0 强行塞进请求体,也避免对推理模型(gpt-5/o-系列)等触发不支持参数的报错。
+	  private async getRequestTopP(): Promise<number | undefined> {
+	    const assistantConfig = await this.getAssistantRuntimeConfig()
+	    return assistantConfig.topPEnabled ? assistantConfig.topP : undefined
+	  }
+
+	  private async getRequestPresencePenalty(): Promise<number | undefined> {
+	    const assistantConfig = await this.getAssistantRuntimeConfig()
+	    return assistantConfig.presencePenaltyEnabled ? assistantConfig.presencePenalty : undefined
+	  }
+
+	  private async getRequestFrequencyPenalty(): Promise<number | undefined> {
+	    const assistantConfig = await this.getAssistantRuntimeConfig()
+	    return assistantConfig.frequencyPenaltyEnabled ? assistantConfig.frequencyPenalty : undefined
 	  }
 
   private notifySessionListChanged(): void {
@@ -574,7 +590,8 @@ export class ChatViewModel {
     contextStartIndex: number = 0,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     apiPath?: string,  // 可选的自定义 API 路径
-    customHeadersJson?: string
+    customHeadersJson?: string,
+    openaiTransport?: OpenAITransport
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -671,14 +688,21 @@ export class ChatViewModel {
       apiKey: getEffectiveApiKey(providerId, apiKey),
       baseUrl: baseUrl,
       apiPath: apiPath,
+      openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
 
-    const modelParams = this.getCurrentModelParameters(providerId, modelId)
-    if (modelParams !== null) {
-      apiConfig.topP = modelParams.topP
-      apiConfig.presencePenalty = modelParams.presencePenalty
-      apiConfig.frequencyPenalty = modelParams.frequencyPenalty
+    const overrideTopP = await this.getRequestTopP()
+    if (overrideTopP !== undefined) {
+      apiConfig.topP = overrideTopP
+    }
+    const overridePresencePenalty = await this.getRequestPresencePenalty()
+    if (overridePresencePenalty !== undefined) {
+      apiConfig.presencePenalty = overridePresencePenalty
+    }
+    const overrideFrequencyPenalty = await this.getRequestFrequencyPenalty()
+    if (overrideFrequencyPenalty !== undefined) {
+      apiConfig.frequencyPenalty = overrideFrequencyPenalty
     }
     apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
@@ -880,7 +904,8 @@ export class ChatViewModel {
     onComplete: () => void,
     onError: (error: string) => void,
     apiPath?: string,
-    customHeadersJson?: string
+    customHeadersJson?: string,
+    openaiTransport?: OpenAITransport
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     await this.persistPendingSession()
@@ -969,6 +994,7 @@ ${webContext.content}
       apiKey: apiKey,
       baseUrl: baseUrl,
       apiPath: apiPath,
+      openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
     apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
@@ -1166,7 +1192,8 @@ ${webContext.content}
     onError: (error: string) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     apiPath?: string,
-    customHeadersJson?: string
+    customHeadersJson?: string,
+    openaiTransport?: OpenAITransport
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     await this.persistPendingSession()
@@ -1286,6 +1313,7 @@ ${limitedSearchContext}
       apiKey: apiKey,
       baseUrl: baseUrl,
       apiPath: apiPath,
+      openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
     apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
@@ -1485,7 +1513,8 @@ ${limitedSearchContext}
     tools: ToolDefinition[] = [],
     toolCallbacks?: ToolCallCallbacks,
     apiPath?: string,
-    customHeadersJson?: string
+    customHeadersJson?: string,
+    openaiTransport?: OpenAITransport
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -1612,14 +1641,21 @@ ${limitedSearchContext}
       apiKey: getEffectiveApiKey(providerId, apiKey),
       baseUrl: baseUrl,
       apiPath: apiPath,
+      openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
 
-    const modelParams = this.getCurrentModelParameters(providerId, modelId)
-    if (modelParams !== null) {
-      apiConfig.topP = modelParams.topP
-      apiConfig.presencePenalty = modelParams.presencePenalty
-      apiConfig.frequencyPenalty = modelParams.frequencyPenalty
+    const overrideTopP = await this.getRequestTopP()
+    if (overrideTopP !== undefined) {
+      apiConfig.topP = overrideTopP
+    }
+    const overridePresencePenalty = await this.getRequestPresencePenalty()
+    if (overridePresencePenalty !== undefined) {
+      apiConfig.presencePenalty = overridePresencePenalty
+    }
+    const overrideFrequencyPenalty = await this.getRequestFrequencyPenalty()
+    if (overrideFrequencyPenalty !== undefined) {
+      apiConfig.frequencyPenalty = overrideFrequencyPenalty
     }
     apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
@@ -2604,7 +2640,8 @@ ${limitedSearchContext}
     apiKey: string,
     baseUrl: string,
     modelId: string,
-    customHeadersJson?: string
+    customHeadersJson?: string,
+    openaiTransport?: OpenAITransport
   ): Promise<string> {
     try {
       const cleanedUserQuery = this.cleanSearchQuery(userQuery)
@@ -2647,6 +2684,7 @@ ${context !== '' ? context : '(无历史对话)'}
         apiStyle: apiStyle,
         apiKey: apiKey,
         baseUrl: baseUrl,
+        openaiTransport: openaiTransport,
         customHeadersJson: customHeadersJson
       }
 
@@ -2777,22 +2815,6 @@ ${context !== '' ? context : '(无历史对话)'}
   // 获取当前会话标题
   getCurrentSessionTitle(): string {
     return this.sessionStore.getCurrentSessionTitle()
-  }
-
-  // 获取当前模型的参数配置
-  private getCurrentModelParameters(providerId: string, modelId: string): ModelParameters | null {
-    const provider = this.providerViewModel.getProviderById(providerId)
-    if (provider === null) {
-      return null
-    }
-
-    for (let i = 0; i < provider.models.length; i++) {
-      if (provider.models[i].id === modelId) {
-        return provider.models[i].parameters
-      }
-    }
-
-    return null
   }
 
   private getCurrentModelReasoningStrategyOverride(providerId: string, modelId: string): string {

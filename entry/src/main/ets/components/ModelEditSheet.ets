@@ -1,6 +1,9 @@
 /**
  * 模型编辑半模态组件
- * 单页滚动布局：核心信息 → 能力标签 → 可折叠高级参数
+ * 单页滚动布局：核心信息 → 能力标签
+ *
+ * 历史背景:这里曾经有一个"高级参数"折叠区,放 temperature / topP / presencePenalty / frequencyPenalty
+ * 等采样参数。2026/05 重构后,所有采样参数都搬到助手设置(Assistant.xxxEnabled / xxx),模型级整段废弃。
  */
 import { ModelInfo, InputMode, OutputMode, ModelInfoExtendedJson } from '../models/ChatModels'
 import { LengthMetrics } from '@kit.ArkUI'
@@ -24,13 +27,6 @@ export struct ModelEditSheet {
   @Local capSupportsStreaming: boolean = false
   @Local capOutputImage: boolean = false
   @Local reasoningStrategyOverride: string = ''
-  // 高级参数折叠状态
-  @Local isAdvancedExpanded: boolean = false
-  // 高级参数本地状态（驱动 Slider 实时刷新）
-  @Local paramTemperature: number = 0.7
-  @Local paramTopP: number = 1.0
-  @Local paramPresencePenalty: number = 0
-  @Local paramFrequencyPenalty: number = 0
   // 回调函数
   @Event onSave: (draft: ModelInfoExtendedJson) => Promise<void> = async (_draft: ModelInfoExtendedJson): Promise<void> => {
   }
@@ -50,10 +46,6 @@ export struct ModelEditSheet {
     this.capSupportsStreaming = this.model.capabilities.supportsStreaming
     this.capOutputImage = this.model.outputMode === OutputMode.IMAGE
     this.reasoningStrategyOverride = this.model.reasoningStrategyOverride
-    this.paramTemperature = this.model.parameters.temperature
-    this.paramTopP = this.model.parameters.topP
-    this.paramPresencePenalty = this.model.parameters.presencePenalty
-    this.paramFrequencyPenalty = this.model.parameters.frequencyPenalty
   }
 
   private buildDraft(): ModelInfoExtendedJson {
@@ -73,14 +65,7 @@ export struct ModelEditSheet {
         supportsVision: this.capSupportsVision,
         supportsStreaming: this.capSupportsStreaming
       },
-      reasoningStrategyOverride: this.reasoningStrategyOverride,
-      parameters: {
-        temperature: this.paramTemperature,
-        topP: this.paramTopP,
-        maxTokens: this.model.parameters.maxTokens,
-        presencePenalty: this.paramPresencePenalty,
-        frequencyPenalty: this.paramFrequencyPenalty
-      }
+      reasoningStrategyOverride: this.reasoningStrategyOverride
     }
   }
 
@@ -95,8 +80,6 @@ export struct ModelEditSheet {
           this.ModelNameSection()
           // 能力标签区
           this.CapabilityChipsSection()
-          // 可折叠高级参数区
-          this.AdvancedParametersSection()
         }
         .width('100%')
         .padding({ left: 20, right: 20, bottom: 34 })
@@ -321,235 +304,4 @@ export struct ModelEditSheet {
     .borderRadius(16)
     .margin({ bottom: 12 })
   }
-
-  @Builder
-  AdvancedParametersSection() {
-    Column() {
-      // 折叠标题行
-      Row() {
-        Text('高级参数')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([$r('app.color.text_tertiary')])
-          .rotate({ angle: this.isAdvancedExpanded ? 90 : 0 })
-          .animation({ duration: 200, curve: Curve.EaseOut })
-      }
-      .width('100%')
-      .height(48)
-      .onClick(() => {
-        this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-          this.isAdvancedExpanded = !this.isAdvancedExpanded
-        })
-      })
-
-      // 展开内容
-      if (this.isAdvancedExpanded) {
-        Column() {
-          // 温度
-          Column() {
-            Row() {
-              Column() {
-                Text('温度 (Temperature)')
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_primary'))
-                Text('控制输出的随机性，值越高越有创意')
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_tertiary'))
-                  .margin({ top: 2 })
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
-              Text(this.paramTemperature.toFixed(2))
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.themePrimary)
-                .width(50)
-                .textAlign(TextAlign.End)
-            }
-            .width('100%')
-
-            Slider({
-              value: this.paramTemperature,
-              min: 0,
-              max: 2,
-              step: 0.1
-            })
-              .selectedColor(this.themePrimary)
-              .trackColor($r('app.color.divider'))
-              .blockColor(Color.White)
-              .showSteps(false)
-              .showTips(false)
-              .margin({ top: 8 })
-              .onChange((v: number) => {
-                this.paramTemperature = v
-              })
-          }
-          .width('100%')
-          .padding({ top: 12, bottom: 12 })
-
-          // Top P
-          Column() {
-            Row() {
-              Column() {
-                Text('Top P')
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_primary'))
-                Text('核采样参数，控制词汇选择范围')
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_tertiary'))
-                  .margin({ top: 2 })
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
-              Text(this.paramTopP.toFixed(2))
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.themePrimary)
-                .width(50)
-                .textAlign(TextAlign.End)
-            }
-            .width('100%')
-
-            Slider({
-              value: this.paramTopP,
-              min: 0,
-              max: 1,
-              step: 0.05
-            })
-              .selectedColor(this.themePrimary)
-              .trackColor($r('app.color.divider'))
-              .blockColor(Color.White)
-              .showSteps(false)
-              .showTips(false)
-              .margin({ top: 8 })
-              .onChange((v: number) => {
-                this.paramTopP = v
-              })
-          }
-          .width('100%')
-          .padding({ top: 12, bottom: 12 })
-
-          // 存在惩罚
-          Column() {
-            Row() {
-              Column() {
-                Text('存在惩罚 (Presence Penalty)')
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_primary'))
-                Text('减少重复话题的出现')
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_tertiary'))
-                  .margin({ top: 2 })
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
-              Text(this.paramPresencePenalty.toFixed(2))
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.themePrimary)
-                .width(50)
-                .textAlign(TextAlign.End)
-            }
-            .width('100%')
-
-            Slider({
-              value: this.paramPresencePenalty,
-              min: -2,
-              max: 2,
-              step: 0.1
-            })
-              .selectedColor(this.themePrimary)
-              .trackColor($r('app.color.divider'))
-              .blockColor(Color.White)
-              .showSteps(false)
-              .showTips(false)
-              .margin({ top: 8 })
-              .onChange((v: number) => {
-                this.paramPresencePenalty = v
-              })
-          }
-          .width('100%')
-          .padding({ top: 12, bottom: 12 })
-
-          // 频率惩罚
-          Column() {
-            Row() {
-              Column() {
-                Text('频率惩罚 (Frequency Penalty)')
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_primary'))
-                Text('减少重复词汇的出现')
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_tertiary'))
-                  .margin({ top: 2 })
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
-              Text(this.paramFrequencyPenalty.toFixed(2))
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.themePrimary)
-                .width(50)
-                .textAlign(TextAlign.End)
-            }
-            .width('100%')
-
-            Slider({
-              value: this.paramFrequencyPenalty,
-              min: -2,
-              max: 2,
-              step: 0.1
-            })
-              .selectedColor(this.themePrimary)
-              .trackColor($r('app.color.divider'))
-              .blockColor(Color.White)
-              .showSteps(false)
-              .showTips(false)
-              .margin({ top: 8 })
-              .onChange((v: number) => {
-                this.paramFrequencyPenalty = v
-              })
-          }
-          .width('100%')
-          .padding({ top: 12, bottom: 12 })
-
-          // 重置按钮
-          Button('重置为默认值')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .backgroundColor($r('app.color.divider'))
-            .borderRadius(12)
-            .height(44)
-            .width('100%')
-            .margin({ top: 12 })
-            .onClick(() => {
-              this.paramTemperature = 0.7
-              this.paramTopP = 1.0
-              this.paramPresencePenalty = 0
-              this.paramFrequencyPenalty = 0
-            })
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .padding({
-      left: 16,
-      right: 16,
-      top: 0,
-      bottom: 16
-    })
-    .backgroundColor(getAppUiState().themeSurface)
-    .borderRadius(16)
-  }
 }
-

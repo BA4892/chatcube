@@ -355,70 +355,12 @@ export interface ModelCapabilitiesJson {
   supportsStreaming: boolean
 }
 
-// ============ 模型默认参数 ============
-@ObservedV2
-export class ModelParameters {
-  @Trace temperature: number         // 温度 0-2
-  @Trace topP: number               // Top P 0-1
-  @Trace maxTokens: number          // 最大输出 Token
-  @Trace presencePenalty: number    // 存在惩罚 -2 到 2
-  @Trace frequencyPenalty: number   // 频率惩罚 -2 到 2
-
-  constructor(
-    temperature: number = 0.7,
-    topP: number = 1.0,
-    maxTokens: number = 4096,
-    presencePenalty: number = 0,
-    frequencyPenalty: number = 0
-  ) {
-    this.temperature = temperature
-    this.topP = topP
-    this.maxTokens = maxTokens
-    this.presencePenalty = presencePenalty
-    this.frequencyPenalty = frequencyPenalty
-  }
-
-  // 从 JSON 对象创建
-  static fromJson(json: ModelParametersJson): ModelParameters {
-    return new ModelParameters(
-      json.temperature,
-      json.topP,
-      json.maxTokens,
-      json.presencePenalty,
-      json.frequencyPenalty
-    )
-  }
-
-  // 转换为 JSON 对象
-  toJson(): ModelParametersJson {
-    const json: ModelParametersJson = {
-      temperature: this.temperature,
-      topP: this.topP,
-      maxTokens: this.maxTokens,
-      presencePenalty: this.presencePenalty,
-      frequencyPenalty: this.frequencyPenalty
-    }
-    return json
-  }
-
-  // 重置为默认值
-  reset(): void {
-    this.temperature = 0.7
-    this.topP = 1.0
-    this.maxTokens = 4096
-    this.presencePenalty = 0
-    this.frequencyPenalty = 0
-  }
-}
-
-// 模型参数 JSON 接口
-export interface ModelParametersJson {
-  temperature: number
-  topP: number
-  maxTokens: number
-  presencePenalty: number
-  frequencyPenalty: number
-}
+// ============ 模型默认参数(已废弃) ============
+// 历史背景:
+//  - 一开始这里有 temperature / topP / maxTokens / presencePenalty / frequencyPenalty 五个模型级字段
+//  - 实际请求层只读 topP / presencePenalty / frequencyPenalty,temperature / maxTokens 是 dead weight
+//  - 2026/05 重构后,所有采样参数都搬到助手级(Assistant.topPEnabled / topP 等),模型级整个废弃
+//  - ModelParameters 类已删除;旧数据库 / 旧导出 JSON 里的 parameters 字段读取时静默忽略,新写入不再带此字段
 
 // 搜索引擎类型枚举
 export enum SearchEngine {
@@ -598,9 +540,6 @@ export class ModelInfo {
   // 新增字段：能力配置
   @Trace capabilities: ModelCapabilities
 
-  // 新增字段：默认参数
-  @Trace parameters: ModelParameters
-
   // 推理请求策略覆盖（空字符串表示沿用自动推断）
   @Trace reasoningStrategyOverride: string
 
@@ -622,7 +561,6 @@ export class ModelInfo {
     this.inputMode = InputMode.TEXT
     this.outputMode = OutputMode.TEXT
     this.capabilities = new ModelCapabilities()
-    this.parameters = new ModelParameters()
     this.reasoningStrategyOverride = ''
   }
 
@@ -652,10 +590,6 @@ export class ModelInfo {
       model.capabilities = ModelCapabilities.fromJson(json.capabilities)
     }
 
-    // 恢复参数配置
-    if (json.parameters !== undefined) {
-      model.parameters = ModelParameters.fromJson(json.parameters)
-    }
     if (json.reasoningStrategyOverride !== undefined) {
       model.reasoningStrategyOverride = json.reasoningStrategyOverride
     }
@@ -675,7 +609,6 @@ export class ModelInfo {
       inputMode: this.inputMode,
       outputMode: this.outputMode,
       capabilities: this.capabilities.toJson(),
-      parameters: this.parameters.toJson(),
       reasoningStrategyOverride: this.reasoningStrategyOverride
     }
     return json
@@ -693,7 +626,6 @@ export interface ModelInfoExtendedJson {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
-  parameters?: ModelParametersJson
   reasoningStrategyOverride?: string
 }
 

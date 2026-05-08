@@ -109,6 +109,12 @@ struct AssistantManagePage {
   @Local formDefaultModelName: string = ''
   @Local formTemperatureEnabled: boolean = false
   @Local formTemperature: number = 0.7
+  @Local formTopPEnabled: boolean = false
+  @Local formTopP: number = 1.0
+  @Local formPresencePenaltyEnabled: boolean = false
+  @Local formPresencePenalty: number = 0
+  @Local formFrequencyPenaltyEnabled: boolean = false
+  @Local formFrequencyPenalty: number = 0
   @Local showModelSheet: boolean = false
   @Local showAvatarEditorSheet: boolean = false
   @Local assistantAvatarRenderTick: number = 0
@@ -217,6 +223,12 @@ struct AssistantManagePage {
     this.formDefaultModelName = assistant.defaultModelName
     this.formTemperatureEnabled = assistant.temperatureEnabled
     this.formTemperature = assistant.temperature
+    this.formTopPEnabled = assistant.topPEnabled
+    this.formTopP = assistant.topP
+    this.formPresencePenaltyEnabled = assistant.presencePenaltyEnabled
+    this.formPresencePenalty = assistant.presencePenalty
+    this.formFrequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
+    this.formFrequencyPenalty = assistant.frequencyPenalty
   }
 
   private startNewAssistant(): void {
@@ -234,6 +246,12 @@ struct AssistantManagePage {
     this.formDefaultModelName = ''
     this.formTemperatureEnabled = false
     this.formTemperature = 0.7
+    this.formTopPEnabled = false
+    this.formTopP = 1.0
+    this.formPresencePenaltyEnabled = false
+    this.formPresencePenalty = 0
+    this.formFrequencyPenaltyEnabled = false
+    this.formFrequencyPenalty = 0
   }
 
   private patchAssistantInMemory(assistant: Assistant): void {
@@ -257,18 +275,13 @@ struct AssistantManagePage {
     this.bumpAssistantAvatarRenderTick()
   }
 
-  private buildAssistantAvatarStateKey(assistants: Assistant[]): string {
-    const parts: string[] = []
-    for (let i = 0; i < assistants.length; i++) {
-      parts.push(`${assistants[i].id}:${assistants[i].avatarSymbol}:${assistants[i].color}`)
-    }
-    return parts.join('|')
-  }
-
   private getAssistantRenderKey(assistant: Assistant): string {
     return `${assistant.id}:${assistant.name}:${assistant.avatarSymbol}:${assistant.color}:` +
       `${assistant.defaultProviderId}:${assistant.defaultModelId}:${assistant.defaultModelName}:` +
       `${assistant.systemPrompt}:${assistant.temperatureEnabled ? '1' : '0'}:${assistant.temperature}:` +
+      `${assistant.topPEnabled ? '1' : '0'}:${assistant.topP}:` +
+      `${assistant.presencePenaltyEnabled ? '1' : '0'}:${assistant.presencePenalty}:` +
+      `${assistant.frequencyPenaltyEnabled ? '1' : '0'}:${assistant.frequencyPenalty}:` +
       `${assistant.isDefault ? '1' : '0'}:${assistant.sortOrder}:${this.assistantAvatarRenderTick}`
   }
 
@@ -367,6 +380,12 @@ struct AssistantManagePage {
     assistant.defaultModelName = this.formDefaultModelName
     assistant.temperatureEnabled = this.formTemperatureEnabled
     assistant.temperature = this.formTemperature
+    assistant.topPEnabled = this.formTopPEnabled
+    assistant.topP = this.formTopP
+    assistant.presencePenaltyEnabled = this.formPresencePenaltyEnabled
+    assistant.presencePenalty = this.formPresencePenalty
+    assistant.frequencyPenaltyEnabled = this.formFrequencyPenaltyEnabled
+    assistant.frequencyPenalty = this.formFrequencyPenalty
     assistant.createdAt = this.editingCreatedAt
     assistant.sortOrder = this.editingSortOrder
     assistant.isDefault = this.editingIsDefault
@@ -689,6 +708,9 @@ struct AssistantManagePage {
 
       this.DefaultModelRow()
       this.TemperatureRow()
+      this.TopPRow()
+      this.PresencePenaltyRow()
+      this.FrequencyPenaltyRow()
 
       Row({ space: 12 }) {
         Button($r('app.string.save'))
@@ -1020,6 +1042,126 @@ struct AssistantManagePage {
   }
 
   @Builder
+  private TopPRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text($r('app.string.assistant_top_p_override'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.formTopPEnabled })
+          .onChange((value: boolean) => {
+            this.formTopPEnabled = value
+          })
+      }
+      .width('100%')
+
+      if (this.formTopPEnabled) {
+        Row({ space: 10 }) {
+          Slider({ value: this.formTopP, min: 0, max: 1, step: 0.05, style: SliderStyle.InSet })
+            .layoutWeight(1)
+            .selectedColor(this.themePrimary)
+            .onChange((value: number, _mode: SliderChangeMode) => {
+              this.formTopP = Math.round(value * 100) / 100
+            })
+          Text(this.formTopP.toFixed(2))
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private PresencePenaltyRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text($r('app.string.assistant_presence_penalty_override'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.formPresencePenaltyEnabled })
+          .onChange((value: boolean) => {
+            this.formPresencePenaltyEnabled = value
+          })
+      }
+      .width('100%')
+
+      if (this.formPresencePenaltyEnabled) {
+        Row({ space: 10 }) {
+          Slider({ value: this.formPresencePenalty, min: -2, max: 2, step: 0.1, style: SliderStyle.InSet })
+            .layoutWeight(1)
+            .selectedColor(this.themePrimary)
+            .onChange((value: number, _mode: SliderChangeMode) => {
+              this.formPresencePenalty = Math.round(value * 10) / 10
+            })
+          Text(this.formPresencePenalty.toFixed(1))
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private FrequencyPenaltyRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text($r('app.string.assistant_frequency_penalty_override'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.formFrequencyPenaltyEnabled })
+          .onChange((value: boolean) => {
+            this.formFrequencyPenaltyEnabled = value
+          })
+      }
+      .width('100%')
+
+      if (this.formFrequencyPenaltyEnabled) {
+        Row({ space: 10 }) {
+          Slider({ value: this.formFrequencyPenalty, min: -2, max: 2, step: 0.1, style: SliderStyle.InSet })
+            .layoutWeight(1)
+            .selectedColor(this.themePrimary)
+            .onChange((value: number, _mode: SliderChangeMode) => {
+              this.formFrequencyPenalty = Math.round(value * 10) / 10
+            })
+          Text(this.formFrequencyPenalty.toFixed(1))
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .width(40)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
+  @Builder
   private ModelSheetBuilder() {
     Column() {
       ModelSelectorContent({
@@ -1102,7 +1244,7 @@ struct AssistantManagePage {
 }
 
 @Builder
-export function AssistantManagePageBuilder(name: string, param: Object) {
+export function AssistantManagePageBuilder(_name: string, param: Object) {
   NavDestination() {
     AssistantManagePage({
       initialAction: resolveAssistantManageRouteParams(param).action ?? ''

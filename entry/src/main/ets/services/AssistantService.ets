@@ -10,6 +10,12 @@ export class AssistantRuntimeConfig {
   systemPrompt: string = ''
   temperatureEnabled: boolean = false
   temperature: number = 0.7
+  topPEnabled: boolean = false
+  topP: number = 1.0
+  presencePenaltyEnabled: boolean = false
+  presencePenalty: number = 0
+  frequencyPenaltyEnabled: boolean = false
+  frequencyPenalty: number = 0
 }
 
 export class AssistantService {
@@ -200,6 +206,12 @@ export class AssistantService {
     config.systemPrompt = assistant.systemPrompt.trim()
     config.temperatureEnabled = assistant.temperatureEnabled
     config.temperature = assistant.temperature
+    config.topPEnabled = assistant.topPEnabled
+    config.topP = assistant.topP
+    config.presencePenaltyEnabled = assistant.presencePenaltyEnabled
+    config.presencePenalty = assistant.presencePenalty
+    config.frequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
+    config.frequencyPenalty = assistant.frequencyPenalty
     return config
   }
 

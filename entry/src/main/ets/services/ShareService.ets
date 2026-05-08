@@ -8,6 +8,7 @@ import { fileUri } from '@kit.CoreFileKit'
 import { image } from '@kit.ImageKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
 import { common } from '@kit.AbilityKit'
+import { display, componentSnapshot } from '@kit.ArkUI'
 import { ChatMessage, MessageRole } from '../models/ChatModels'
 
 // 分享模式枚举
@@ -23,12 +24,27 @@ export interface ShareResult {
   errorMessage: string
 }
 
+// 滚动截图选项
+export interface CaptureScrollableOptions {
+  scroller: Scroller
+  scrollAreaId: string
+  uiContext: UIContext
+  totalContentVp: number
+  viewportVp: number
+  scale: number
+}
+
+interface ScrollSegment {
+  pixelMap: image.PixelMap
+  yOffsetVp: number
+}
+
 export class ShareService {
   private context: common.UIAbilityContext | null = null
   private readonly snapshotRetryCount: number = 5
   private readonly snapshotRetryDelayMs: number = 200
-  private readonly snapshotScale: number = 1
-  private readonly snapshotBuilderDelayMs: number = 600
+  private readonly scrollSettleMs: number = 220
+  private readonly maxScrollSegments: number = 80
 
   // 初始化服务
   init(context: common.UIAbilityContext): void {
@@ -164,68 +180,154 @@ export class ShareService {
     }
   }
 
-  // 通过离屏 Builder 渲染长图并保存，避免受当前页面滚动区域和父布局裁剪影响。
-  async captureBuilderAsImage(builder: CustomBuilder, uiContext: UIContext,
-    scale?: number): Promise<string> {
-    let pixelMap: image.PixelMap | null = null
-    const effectiveScale = scale ?? this.snapshotScale
+  // 滚动截图并拼接成完整长图。复用预览态 Scroll 内已渲染的 ShareMessageCard,
+  // 利用每段 viewport 的 componentSnapshot.get 截取已绘制像素,再按偏移拼接,
+  // 绕开 Sheet 父链 clip 与 createFromBuilder 离屏 Markdown 异步未完成的问题。
+  async captureScrollableAsImage(opts: CaptureScrollableOptions): Promise<string> {
+    if (opts.totalContentVp <= 0 || opts.viewportVp <= 0) {
+      throw new Error(`截图失败: 无效尺寸 (content=${opts.totalContentVp}, viewport=${opts.viewportVp})`)
+    }
+
+    const segments: ScrollSegment[] = []
+    let stitched: image.PixelMap | null = null
+
     try {
-      const snapshot = uiContext.getComponentSnapshot()
-      let lastSnapshotError: Object | null = null
+      const density = display.getDefaultDisplaySync().densityPixels
+      const maxScrollVp = Math.max(0, opts.totalContentVp - opts.viewportVp)
 
-      for (let attempt = 0; attempt < this.snapshotRetryCount; attempt++) {
-        try {
-          pixelMap = await snapshot.createFromBuilder(
-            builder,
-            this.snapshotBuilderDelayMs,
-            true,
-            {
-              scale: effectiveScale,
-              waitUntilRenderFinished: true
-            })
+      // 先回到顶部,确保起始截图对齐
+      opts.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+      await this.sleep(this.scrollSettleMs)
+
+      let currentTargetVp = 0
+      const stepVp = opts.viewportVp
+      let safety = 0
+      while (safety < this.maxScrollSegments) {
+        safety += 1
+        opts.scroller.scrollTo({ xOffset: 0, yOffset: currentTargetVp, animation: false })
+        await this.sleep(this.scrollSettleMs)
+
+        const pm = await this.captureScrollSnapshot(opts.uiContext, opts.scrollAreaId, opts.scale)
+        segments.push({ pixelMap: pm, yOffsetVp: currentTargetVp })
+
+        if (currentTargetVp >= maxScrollVp) {
           break
-        } catch (error) {
-          lastSnapshotError = error
-          console.error('ShareService',
-            `[captureBuilderAsImage] snapshot attempt ${(attempt + 1).toString()} failed: ${this.describeError(error)}`)
-          if (attempt < this.snapshotRetryCount - 1) {
-            await this.sleep(this.snapshotRetryDelayMs)
-          }
         }
+        currentTargetVp = Math.min(currentTargetVp + stepVp, maxScrollVp)
       }
 
-      if (pixelMap === null && this.isImageNotReadyError(lastSnapshotError)) {
-        console.warn('ShareService',
-          '[captureBuilderAsImage] falling back to snapshot without image-ready check')
-        try {
-          pixelMap = await snapshot.createFromBuilder(
-            builder,
-            this.snapshotBuilderDelayMs,
-            false,
-            {
-              scale: effectiveScale,
-              waitUntilRenderFinished: true
-            })
-        } catch (error) {
-          lastSnapshotError = error
-          console.error('ShareService',
-            `[captureBuilderAsImage] fallback snapshot failed: ${this.describeError(error)}`)
-        }
+      if (segments.length === 0) {
+        throw new Error('截图失败: 未生成任何片段')
       }
 
-      if (pixelMap === null) {
-        throw new Error(`snapshot.createFromBuilder failed: ${this.describeError(lastSnapshotError)}`)
-      }
-      return await this.writePixelMapToImageFile(pixelMap)
+      stitched = await this.stitchSegments(segments, opts.totalContentVp, opts.scale, density)
+      const filePath = await this.writePixelMapToImageFile(stitched)
+      return filePath
     } catch (e) {
-      const errorMsg = `截图失败: ${this.describeError(e)}`
-      console.error('ShareService', errorMsg)
-      throw new Error(errorMsg)
+      const msg = `截图失败: ${this.describeError(e)}`
+      console.error('ShareService', `[captureScrollableAsImage] ${msg}`)
+      throw new Error(msg)
     } finally {
-      if (pixelMap !== null) {
-        pixelMap.release()
+      for (let i = 0; i < segments.length; i++) {
+        try {
+          segments[i].pixelMap.release()
+        } catch (_e) {
+          // ignore
+        }
+      }
+      if (stitched !== null) {
+        try {
+          stitched.release()
+        } catch (_e) {
+          // ignore
+        }
+      }
+      try {
+        opts.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+      } catch (_e) {
+        // ignore
       }
     }
+  }
+
+  private async captureScrollSnapshot(uiContext: UIContext, id: string, scale: number): Promise<image.PixelMap> {
+    const snapshot = uiContext.getComponentSnapshot()
+    let lastError: Object | null = null
+    for (let attempt = 0; attempt < this.snapshotRetryCount; attempt++) {
+      try {
+        const options: componentSnapshot.SnapshotOptions = {
+          scale: scale,
+          waitUntilRenderFinished: true
+        }
+        return await snapshot.get(id, options)
+      } catch (error) {
+        lastError = error
+        console.error('ShareService',
+          `[captureScrollSnapshot] attempt ${(attempt + 1).toString()} failed: ${this.describeError(error)}`)
+        if (attempt < this.snapshotRetryCount - 1) {
+          await this.sleep(this.snapshotRetryDelayMs)
+        }
+      }
+    }
+    throw new Error(`snapshot.get failed: ${this.describeError(lastError)}`)
+  }
+
+  private async stitchSegments(
+    segments: ScrollSegment[],
+    totalContentVp: number,
+    scale: number,
+    density: number
+  ): Promise<image.PixelMap> {
+    const firstInfo = await segments[0].pixelMap.getImageInfo()
+    const widthPx = firstInfo.size.width
+    const segHeightPx = firstInfo.size.height
+
+    let totalHeightPx = Math.round(totalContentVp * density * scale)
+    if (totalHeightPx <= 0) {
+      totalHeightPx = segHeightPx
+    }
+
+    const totalBuffer = new ArrayBuffer(widthPx * totalHeightPx * 4)
+    const initOpts: image.InitializationOptions = {
+      size: { width: widthPx, height: totalHeightPx },
+      pixelFormat: image.PixelMapFormat.RGBA_8888,
+      alphaType: image.AlphaType.UNPREMUL,
+      editable: true
+    }
+    const stitched = image.createPixelMapSync(totalBuffer, initOpts)
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      let yPx = Math.round(seg.yOffsetVp * density * scale)
+      if (yPx < 0) {
+        yPx = 0
+      }
+      if (yPx >= totalHeightPx) {
+        continue
+      }
+      // 仅写入落在 [yPx, totalHeightPx) 区间内的行,避免把 Scroll viewport 末尾的空白复制进去
+      const effectiveHeight = Math.min(segHeightPx, totalHeightPx - yPx)
+      if (effectiveHeight <= 0) {
+        continue
+      }
+
+      const segBuffer = new ArrayBuffer(widthPx * segHeightPx * 4)
+      await seg.pixelMap.readPixelsToBuffer(segBuffer)
+
+      const area: image.PositionArea = {
+        pixels: segBuffer,
+        offset: 0,
+        stride: widthPx * 4,
+        region: {
+          size: { width: widthPx, height: effectiveHeight },
+          x: 0,
+          y: yPx
+        }
+      }
+      await stitched.writePixels(area)
+    }
+
+    return stitched
   }
 
   private async writePixelMapToImageFile(pixelMap: image.PixelMap): Promise<string> {
@@ -282,10 +384,6 @@ export class ShareService {
       return json
     }
     return 'unknown error'
-  }
-
-  private isImageNotReadyError(error: Object | null): boolean {
-    return this.describeError(error).indexOf('160001') >= 0
   }
 
   // 格式化时间

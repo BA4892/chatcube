@@ -2097,6 +2097,18 @@
       "value": "Override Temperature"
     },
     {
+      "name": "assistant_top_p_override",
+      "value": "Override Top P"
+    },
+    {
+      "name": "assistant_presence_penalty_override",
+      "value": "Override Presence Penalty"
+    },
+    {
+      "name": "assistant_frequency_penalty_override",
+      "value": "Override Frequency Penalty"
+    },
+    {
       "name": "assistant_name_required",
       "value": "Please enter an assistant name"
     },

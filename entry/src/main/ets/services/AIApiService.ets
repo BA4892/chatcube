@@ -9,7 +9,6 @@ import {
   ReasoningLevel,
   ToolDefinition,
   ToolCall,
-  ToolResult,
   OpenAITransport
 } from '../models/ChatModels'
 import {
@@ -157,7 +156,8 @@ interface MessageContent {
 interface TestRequestBody {
   model: string
   messages: RequestMessage[]
-  max_tokens: number
+  max_tokens?: number
+  max_completion_tokens?: number
 }
 
 // OpenAI 工具定义接口（用于 API 请求）
@@ -170,6 +170,13 @@ interface OpenAIToolFunction {
 interface OpenAITool {
   type: string
   function: OpenAIToolFunction
+}
+
+interface OpenAIResponsesTool {
+  type: string
+  name: string
+  description: string
+  parameters: object
 }
 
 // OpenAI 工具调用接口（用于 API 响应）
@@ -217,7 +224,8 @@ interface OpenAIRequestBody {
   model: string
   messages: (MessageContent | MultimodalMessageContent | ToolResultMessageContent | AssistantMessageWithToolCalls)[]
   temperature?: number
-  max_tokens: number
+  max_tokens?: number
+  max_completion_tokens?: number  // OpenAI gpt-5 / o-系列推理模型必须使用此字段替代 max_tokens
   stream?: boolean
   reasoning_effort?: string  // OpenAI/OpenAI-compatible 推理级别: none, low, medium, high, xhigh/max
   reasoning?: OpenRouterReasoningConfig  // OpenRouter 统一推理控制
@@ -240,8 +248,14 @@ interface OpenAIResponsesContentPart {
 }
 
 interface OpenAIResponsesInputItem {
-  role: string
-  content: OpenAIResponsesContentPart[]
+  type?: string
+  role?: string
+  content?: OpenAIResponsesContentPart[]
+  call_id?: string
+  name?: string
+  arguments?: string
+  output?: string
+  id?: string
 }
 
 interface OpenAIResponsesReasoningConfig {
@@ -258,6 +272,8 @@ interface OpenAIResponsesRequestBody {
   reasoning?: OpenAIResponsesReasoningConfig
   enable_thinking?: boolean
   thinking_budget?: number
+  tools?: OpenAIResponsesTool[]
+  tool_choice?: string
   stream?: boolean
 }
 
@@ -517,6 +533,11 @@ interface OpenAIResponsesResponse {
 interface OpenAIResponsesStreamEvent {
   type?: string
   delta?: string
+  arguments?: string
+  text?: string
+  output_index?: number
+  item_id?: string
+  item?: OpenAIResponsesInputItem
   error?: ApiError
 }
 
@@ -744,6 +765,36 @@ export class AIApiService {
       config.openaiTransport === OpenAITransport.RESPONSES
   }
 
+  private buildOpenAIChatTools(tools: ToolDefinition[]): OpenAITool[] {
+    const openaiTools: OpenAITool[] = []
+    for (let i = 0; i < tools.length; i++) {
+      const tool = tools[i]
+      openaiTools.push({
+        type: 'function',
+        function: {
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters: tool.function.parameters.toJsonObject()
+        }
+      })
+    }
+    return openaiTools
+  }
+
+  private buildOpenAIResponsesTools(tools: ToolDefinition[]): OpenAIResponsesTool[] {
+    const responseTools: OpenAIResponsesTool[] = []
+    for (let i = 0; i < tools.length; i++) {
+      const tool = tools[i]
+      responseTools.push({
+        type: 'function',
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters.toJsonObject()
+      })
+    }
+    return responseTools
+  }
+
   private buildResponsesUsageInfo(usage?: OpenAIResponsesUsageInfo): UsageInfo | null {
     if (usage === undefined || usage === null) {
       return null
@@ -868,6 +919,54 @@ export class AIApiService {
     }
   }
 
+  private getOpenAIResponsesToolCallIndex(event: OpenAIResponsesStreamEvent): number {
+    if (event.output_index !== undefined && event.output_index >= 0) {
+      return event.output_index
+    }
+    return this.streamToolCalls.size
+  }
+
+  private upsertOpenAIResponsesToolCall(
+    index: number,
+    callId: string,
+    functionName: string,
+    argumentsChunk: string,
+    replaceArguments: boolean
+  ): ToolCallDelta {
+    let existingToolCall = this.streamToolCalls.get(index)
+    if (existingToolCall === undefined) {
+      existingToolCall = new ToolCall('', '', '')
+      this.streamToolCalls.set(index, existingToolCall)
+    }
+
+    const normalizedCallId = callId.trim()
+    if (normalizedCallId !== '') {
+      existingToolCall.id = normalizedCallId
+    }
+
+    const normalizedName = this.normalizeToolFunctionName(functionName)
+    if (normalizedName !== '') {
+      existingToolCall.functionName = this.mergeToolFunctionName(existingToolCall.functionName, normalizedName)
+    }
+
+    const normalizedArgs = this.normalizeToolArgumentsChunk(argumentsChunk)
+    if (normalizedArgs !== '') {
+      if (replaceArguments) {
+        existingToolCall.arguments = normalizedArgs
+      } else {
+        existingToolCall.arguments += normalizedArgs
+      }
+    }
+
+    const delta: ToolCallDelta = {
+      index: index,
+      id: normalizedCallId !== '' ? normalizedCallId : undefined,
+      functionName: normalizedName !== '' ? normalizedName : undefined,
+      arguments: normalizedArgs !== '' ? normalizedArgs : undefined
+    }
+    return delta
+  }
+
   // 说明：不做“内容像推理”的启发式判断（Kelivo 策略）
   // 若供应商未提供结构化推理字段（reasoning_content/reasoning_details 等）或显式 <think> 标签，
   // 则不尝试拆分，避免出现“推理被拆出一部分、另一部分仍在正文”的不一致体验。
@@ -956,8 +1055,12 @@ export class AIApiService {
     } else {
       const openaiBody: TestRequestBody = {
         model: testModel,
-        messages: testMessages,
-        max_tokens: 10
+        messages: testMessages
+      }
+      if (this.requiresMaxCompletionTokens(testModel)) {
+        openaiBody.max_completion_tokens = 10
+      } else {
+        openaiBody.max_tokens = 10
       }
       requestBodyStr = JSON.stringify(openaiBody)
     }
@@ -1450,8 +1553,7 @@ export class AIApiService {
       return body
     }
 
-    const useOpenAIResponses = this.shouldUseOpenAIResponses(config, forceChatCompletions) &&
-      (tools === undefined || tools.length === 0)
+    const useOpenAIResponses = this.shouldUseOpenAIResponses(config, forceChatCompletions)
 
     if (useOpenAIResponses) {
       const responseInputs: OpenAIResponsesInputItem[] = []
@@ -1463,6 +1565,26 @@ export class AIApiService {
           if (msg.content.trim() !== '') {
             instructionParts.push(msg.content.trim())
           }
+          continue
+        }
+        if (msg.hasToolCalls()) {
+          for (let j = 0; j < msg.toolCalls.length; j++) {
+            const toolCall = msg.toolCalls[j]
+            responseInputs.push({
+              type: 'function_call',
+              call_id: toolCall.id,
+              name: toolCall.functionName,
+              arguments: toolCall.arguments
+            })
+          }
+          continue
+        }
+        if (msg.isToolResultMessage()) {
+          responseInputs.push({
+            type: 'function_call_output',
+            call_id: msg.toolCallId,
+            output: msg.content
+          })
           continue
         }
 
@@ -1510,6 +1632,10 @@ export class AIApiService {
         temperature: temperature,
         max_output_tokens: maxTokens
       }
+      // gpt-5 / o-系列推理模型在 Responses API 也只接受 temperature=1,与 Chat Completions 一致。
+      if (this.requiresMaxCompletionTokens(model)) {
+        responsesBody.temperature = undefined
+      }
       if (instructionParts.length > 0) {
         responsesBody.instructions = instructionParts.join('\n\n')
       }
@@ -1527,6 +1653,12 @@ export class AIApiService {
         }
       } else if (reasoningRequestStrategy === ReasoningRequestStrategy.DASHSCOPE_THINKING) {
         this.applyDashScopeReasoningConfig(responsesBody, normalizedReasoningLevel, reasoningTokenLimit)
+      }
+      if (tools !== undefined && tools.length > 0) {
+        responsesBody.tools = this.buildOpenAIResponsesTools(tools)
+        if (toolChoice !== undefined && toolChoice !== '') {
+          responsesBody.tool_choice = toolChoice
+        }
       }
       return responsesBody
     }
@@ -1650,8 +1782,15 @@ export class AIApiService {
     const requestBody: OpenAIRequestBody = {
       model: model,
       messages: openaiMessages,
-      temperature: temperature,
-      max_tokens: maxTokens
+      temperature: temperature
+    }
+    if (this.requiresMaxCompletionTokens(model)) {
+      requestBody.max_completion_tokens = maxTokens
+      // gpt-5 / o-系列推理模型只接受 temperature=1,自定义值会被官方接口拒绝(HTTP 400)。
+      // 不下发字段即走默认 1,既不破坏行为又规避 400。
+      requestBody.temperature = undefined
+    } else {
+      requestBody.max_tokens = maxTokens
     }
 
     // 添加模型参数（仅在非默认值时发送，避免不支持这些参数的 API 返回 400）
@@ -1716,20 +1855,7 @@ export class AIApiService {
     }
     // 添加 Function Calling 工具定义
     if (tools !== undefined && tools.length > 0) {
-      const openaiTools: OpenAITool[] = []
-      for (let i = 0; i < tools.length; i++) {
-        const tool = tools[i]
-        const openaiTool: OpenAITool = {
-          type: 'function',
-          function: {
-            name: tool.function.name,
-            description: tool.function.description,
-            parameters: tool.function.parameters.toJsonObject()
-          }
-        }
-        openaiTools.push(openaiTool)
-      }
-      requestBody.tools = openaiTools
+      requestBody.tools = this.buildOpenAIChatTools(tools)
       if (toolChoice !== undefined && toolChoice !== '') {
         requestBody.tool_choice = toolChoice
       }
@@ -2122,6 +2248,17 @@ export class AIApiService {
     return modelLower.startsWith('gpt-5')
   }
 
+  // OpenAI gpt-5 系列与 o-系列推理模型在 Chat Completions 必须用 max_completion_tokens,
+  // 下发 max_tokens 会被官方接口拒绝(HTTP 400 unsupported_parameter)。
+  // AiHubMix / 各种 OpenAI 代理透传请求,因此也会触发同样错误。
+  private requiresMaxCompletionTokens(model: string): boolean {
+    const modelLower = this.normalizeModelId(model)
+    return modelLower.startsWith('gpt-5') ||
+      modelLower.startsWith('o1') ||
+      modelLower.startsWith('o3') ||
+      modelLower.startsWith('o4')
+  }
+
   private supportsOpenAIXhighReasoning(model: string): boolean {
     const modelLower = this.normalizeModelId(model)
     return modelLower.startsWith('gpt-5.4') ||
@@ -2401,16 +2538,21 @@ export class AIApiService {
   ): http.HttpRequest {
     this.resetThinkingState()
 
-    let url = this.buildChatUrl(config, model, true)
+    const useOpenAIResponses = this.shouldUseOpenAIResponses(config)
+    let url = this.buildChatUrl(config, model)
     const headers = this.buildHeaders(config)
     if (config.apiStyle !== ApiStyle.GOOGLE) {
       headers['Accept'] = 'text/event-stream'
     }
-    const requestBody = this.buildRequestBody(config, messages, model, temperature, maxTokens, reasoningLevel, tools, toolChoice, true)
+    const requestBody = this.buildRequestBody(config, messages, model, temperature, maxTokens, reasoningLevel, tools, toolChoice)
     this.configureStreamState(config, model)
 
     if (config.apiStyle === ApiStyle.OPENAI) {
-      (requestBody as OpenAIRequestBody).stream = true
+      if (useOpenAIResponses) {
+        (requestBody as OpenAIResponsesRequestBody).stream = true
+      } else {
+        (requestBody as OpenAIRequestBody).stream = true
+      }
     } else if (config.apiStyle === ApiStyle.ANTHROPIC) {
       (requestBody as AnthropicRequestBody).stream = true
     }
@@ -2439,7 +2581,7 @@ export class AIApiService {
           buffer = lines.pop() || ''
 
           for (let i = 0; i < lines.length; i++) {
-            this.handleStreamLineWithTools(config.apiStyle, false, lines[i], onData, onError, onReasoningData, onImageData, onToolCallDelta)
+            this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, lines[i], onData, onError, onReasoningData, onImageData, onToolCallDelta)
           }
         } catch (e) {
           console.error('AIApiService', `Stream decode error: ${JSON.stringify(e)}`)
@@ -2447,7 +2589,7 @@ export class AIApiService {
       },
       (response) => {
         if (buffer.trim() !== '') {
-          this.handleStreamLineWithTools(config.apiStyle, false, buffer, onData, onError, onReasoningData, onImageData, onToolCallDelta)
+          this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, buffer, onData, onError, onReasoningData, onImageData, onToolCallDelta)
           buffer = ''
         }
         if (!response.success) {
@@ -2654,6 +2796,39 @@ export class AIApiService {
         const event = json as OpenAIResponsesStreamEvent
         if (event.type === 'response.output_text.delta' && event.delta !== undefined) {
           result.content = event.delta
+        } else if (event.type === 'response.reasoning_text.delta' && event.delta !== undefined) {
+          result.reasoningContent = event.delta
+          result.reasoningIsStructured = true
+        } else if ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') &&
+          event.item !== undefined && event.item.type === 'function_call') {
+          const item = event.item
+          const index = this.getOpenAIResponsesToolCallIndex(event)
+          const replaceArguments = event.type === 'response.output_item.done'
+          result.toolCallDeltas = [
+            this.upsertOpenAIResponsesToolCall(
+              index,
+              item.call_id !== undefined ? item.call_id : '',
+              item.name !== undefined ? item.name : '',
+              item.arguments !== undefined ? item.arguments : '',
+              replaceArguments
+            )
+          ]
+        } else if (event.type === 'response.function_call_arguments.delta' && event.delta !== undefined) {
+          const index = this.getOpenAIResponsesToolCallIndex(event)
+          result.toolCallDeltas = [
+            this.upsertOpenAIResponsesToolCall(index, '', '', event.delta, false)
+          ]
+        } else if (event.type === 'response.function_call_arguments.done') {
+          const index = this.getOpenAIResponsesToolCallIndex(event)
+          result.toolCallDeltas = [
+            this.upsertOpenAIResponsesToolCall(
+              index,
+              '',
+              '',
+              event.arguments !== undefined ? event.arguments : '',
+              event.arguments !== undefined
+            )
+          ]
         } else if (event.type === 'response.completed') {
           result.finishReason = 'stop'
         } else if (event.type === 'error' && event.error !== undefined) {

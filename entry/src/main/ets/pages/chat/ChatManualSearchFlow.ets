@@ -302,7 +302,8 @@ export class ChatManualSearchFlow {
                 effectiveApiKey,
                 provider.baseUrl,
                 searchOptModel.modelId,
-                provider.customHeadersJson || undefined
+                provider.customHeadersJson || undefined,
+                provider.openaiTransport
               )
               optimizationApplied = true
             }
@@ -321,7 +322,8 @@ export class ChatManualSearchFlow {
               effectiveApiKey,
               currentProvider.baseUrl,
               this.deps.getCurrentModelId(),
-              currentProvider.customHeadersJson || undefined
+              currentProvider.customHeadersJson || undefined,
+              currentProvider.openaiTransport
             )
             optimizationApplied = true
           }
@@ -580,7 +582,8 @@ export class ChatManualSearchFlow {
       },
       this.deps.getReasoningLevel(),
       currentProvider.apiPath || undefined,
-      currentProvider.customHeadersJson || undefined
+      currentProvider.customHeadersJson || undefined,
+      currentProvider.openaiTransport
     )
   }
 }
