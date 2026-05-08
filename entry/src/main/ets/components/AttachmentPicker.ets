@@ -9,16 +9,9 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { MessageAttachment, AttachmentType } from '../models/ChatModels'
 import { fileIo } from '@kit.CoreFileKit'
 import { util } from '@kit.ArkTS'
-import { BusinessError } from '@kit.BasicServicesKit'
-import { getAttachmentStorageService, AttachmentStorageService } from '../services/AttachmentStorageService'
+import { getAttachmentStorageService } from '../services/AttachmentStorageService'
+import { AttachmentContentService } from '../services/AttachmentContentService'
 import { getAppUiState } from '../state/AppUiState'
-
-// 附件选项
-interface AttachmentOption {
-  icon: Resource
-  label: string
-  action: () => void
-}
 
 @ComponentV2
 export struct AttachmentPicker {
@@ -161,7 +154,7 @@ export struct AttachmentPicker {
     try {
       const documentSelectOptions = new picker.DocumentSelectOptions()
       documentSelectOptions.maxSelectNumber = 3
-      documentSelectOptions.fileSuffixFilters = ['.pdf', '.doc', '.docx', '.txt', '.md']
+      documentSelectOptions.fileSuffixFilters = AttachmentContentService.getDocumentSuffixFilters()
 
       const context = this.getUIContext().getHostContext()
       if (context === undefined) {
@@ -247,7 +240,7 @@ export struct AttachmentPicker {
       const uint8Array = new Uint8Array(buffer)
       const base64Data = base64Helper.encodeToStringSync(uint8Array)
 
-      const mimeType = this.getMimeType(fileName)
+      const mimeType = AttachmentContentService.resolveMimeType(fileName)
       const attachmentId = `file_${Date.now()}`
       const attachment = new MessageAttachment(
         attachmentId,
@@ -283,21 +276,4 @@ export struct AttachmentPicker {
     }
   }
 
-  // 根据文件扩展名获取 MIME 类型
-  private getMimeType(fileName: string): string {
-    const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    const mimeTypes: Record<string, string> = {
-      'pdf': 'application/pdf',
-      'doc': 'application/msword',
-      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'txt': 'text/plain',
-      'md': 'text/markdown',
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp'
-    }
-    return mimeTypes[ext] || 'application/octet-stream'
-  }
 }

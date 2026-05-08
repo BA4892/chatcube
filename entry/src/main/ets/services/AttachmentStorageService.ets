@@ -7,6 +7,7 @@ import { fileIo } from '@kit.CoreFileKit'
 import { util } from '@kit.ArkTS'
 import { Context } from '@kit.AbilityKit'
 import { MessageAttachment, AttachmentType } from '../models/ChatModels'
+import { AttachmentContentService } from './AttachmentContentService'
 
 // 附件存储目录名
 const ATTACHMENTS_DIR = 'attachments'
@@ -175,17 +176,7 @@ export class AttachmentStorageService {
       return fileName.substring(dotIndex)
     }
 
-    // 从 MIME 类型推断
-    const mimeToExt: Record<string, string> = {
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/gif': '.gif',
-      'image/webp': '.webp',
-      'application/pdf': '.pdf',
-      'text/plain': '.txt',
-      'text/markdown': '.md'
-    }
-    return mimeToExt[mimeType] || ''
+    return AttachmentContentService.resolveExtensionForMimeType(mimeType)
   }
 }
 

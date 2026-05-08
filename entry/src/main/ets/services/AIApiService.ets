@@ -23,6 +23,7 @@ import {
   resolveProviderCompatibilityProfile,
   resolveReasoningRequestStrategyWithOverride
 } from './ProviderCompatibilityRegistry'
+import { AttachmentContentService } from './AttachmentContentService'
 import { normalizeCustomHeaderName, parseCustomHeadersMap } from '../utils/CustomHeaderUtils'
 
 // URL 解析工具类
@@ -1297,7 +1298,7 @@ export class AIApiService {
           if (msg.hasAttachments()) {
             for (let j = 0; j < msg.attachments.length; j++) {
               const attachment = msg.attachments[j]
-              if (attachment.base64Data !== '') {
+              if (attachment.base64Data !== '' && !AttachmentContentService.canExtractInlineText(attachment)) {
                 // Google Gemini 支持通过 inline_data 直接发送图片和 PDF
                 const inlineDataPart: GoogleContentPart = {
                   inline_data: {
@@ -1311,9 +1312,10 @@ export class AIApiService {
           }
 
           // 添加文本
-          if (msg.content !== '') {
+          const textContent = AttachmentContentService.appendInlineTextAttachments(msg.content, msg.attachments)
+          if (textContent !== '') {
             const textPart: GoogleContentPart = {
-              text: msg.content
+              text: textContent
             }
             parts.push(textPart)
           }
@@ -1375,7 +1377,7 @@ export class AIApiService {
                   }
                 }
                 contentParts.push(imagePart)
-              } else {
+              } else if (!AttachmentContentService.canExtractInlineText(attachment)) {
                 // PDF 等文件使用 document 类型
                 const docPart: AnthropicContentPart = {
                   type: 'document',
@@ -1391,10 +1393,11 @@ export class AIApiService {
           }
 
           // 添加文本
-          if (msg.content !== '') {
+          const textContent = AttachmentContentService.appendInlineTextAttachments(msg.content, msg.attachments)
+          if (textContent !== '') {
             const textPart: AnthropicContentPart = {
               type: 'text',
-              text: msg.content
+              text: textContent
             }
             contentParts.push(textPart)
           }
@@ -1464,7 +1467,7 @@ export class AIApiService {
         }
 
         const contentParts: OpenAIResponsesContentPart[] = []
-        let fileTextContent = ''
+        const fileTextContent = AttachmentContentService.buildNonInlineFileAttachmentText(msg.attachments)
 
         for (let j = 0; j < msg.attachments.length; j++) {
           const attachment = msg.attachments[j]
@@ -1477,12 +1480,10 @@ export class AIApiService {
               image_url: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
               detail: 'auto'
             })
-          } else {
-            fileTextContent += `[附件: ${attachment.name} (${attachment.mimeType})]`
           }
         }
 
-        let textContent = msg.content
+        let textContent = AttachmentContentService.appendInlineTextAttachments(msg.content, msg.attachments)
         if (fileTextContent !== '') {
           textContent = textContent !== '' ? `${fileTextContent}\n${textContent}` : fileTextContent
         }
@@ -1579,7 +1580,7 @@ export class AIApiService {
       if (msg.hasAttachments()) {
         // 构建多模态消息
         const contentParts: MultimodalContentPart[] = []
-        let fileTextContent = ''
+        const fileTextContent = AttachmentContentService.buildNonInlineFileAttachmentText(msg.attachments)
 
         // 处理附件
         for (let j = 0; j < msg.attachments.length; j++) {
@@ -1595,18 +1596,14 @@ export class AIApiService {
                 }
               }
               contentParts.push(imagePart)
-            } else {
-              // OpenAI 不原生支持 PDF，将文件信息添加到文本中提示
-              // 注意：某些 OpenAI 兼容的第三方 API 可能支持文件
-              fileTextContent += `[附件: ${attachment.name} (${attachment.mimeType})]`
             }
           }
         }
 
         // 添加文本（包含文件提示信息）
-        let textContent = msg.content
+        let textContent = AttachmentContentService.appendInlineTextAttachments(msg.content, msg.attachments)
         if (fileTextContent !== '') {
-          textContent = fileTextContent + '\n' + textContent
+          textContent = textContent !== '' ? `${fileTextContent}\n${textContent}` : fileTextContent
         }
         if (textContent !== '') {
           const textPart: MultimodalContentPart = {
