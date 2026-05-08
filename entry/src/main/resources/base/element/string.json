@@ -346,11 +346,11 @@
     },
     {
       "name": "settings_support_development",
-      "value": "Support Development"
+      "value": "Sponsor Development"
     },
     {
       "name": "settings_support_development_desc",
-      "value": "WeChat support for token costs and ongoing development"
+      "value": "Voluntary support to keep ChatCube growing"
     },
     {
       "name": "settings_privacy_policy",
@@ -1677,24 +1677,100 @@
       "value": "Unable to open QQ or the invite link. Please use the QR code to join."
     },
     {
-      "name": "about_wechat_support",
-      "value": "WeChat Support"
+      "name": "sponsor_page_subtitle",
+      "value": "Your support keeps ChatCube evolving"
     },
     {
-      "name": "about_wechat_pay_note",
-      "value": "If ChatCube helps you, optional support is appreciated. Your transfer will mainly be used for model token costs, integration testing, and ongoing development."
+      "name": "sponsor_disclaimer",
+      "value": "All features remain free. Sponsorship is voluntary and unlocks nothing hidden."
     },
     {
-      "name": "about_save_payment_code",
-      "value": "Save Payment Code"
+      "name": "sponsor_afdian_title",
+      "value": "Afdian"
     },
     {
-      "name": "about_payment_code_saved",
-      "value": "Payment code saved to album"
+      "name": "sponsor_afdian_recommended",
+      "value": "Recommended"
     },
     {
-      "name": "about_payment_code_save_failed",
-      "value": "Failed to save payment code"
+      "name": "sponsor_afdian_desc",
+      "value": "One-time sponsorship; leave a note and the author will follow up in the QQ group"
+    },
+    {
+      "name": "sponsor_afdian_action",
+      "value": "Sponsor on Afdian"
+    },
+    {
+      "name": "sponsor_afdian_open_failed",
+      "value": "Failed to open external page. Please try again later."
+    },
+    {
+      "name": "sponsor_wechat_title",
+      "value": "WeChat Tip"
+    },
+    {
+      "name": "sponsor_wechat_desc",
+      "value": "Scan or long-press to recognize"
+    },
+    {
+      "name": "sponsor_wechat_save",
+      "value": "Save to album"
+    },
+    {
+      "name": "sponsor_wechat_saved",
+      "value": "Saved to album"
+    },
+    {
+      "name": "sponsor_wechat_save_failed",
+      "value": "Failed to save. Please try again."
+    },
+    {
+      "name": "sponsor_usage_title",
+      "value": "Your support goes to"
+    },
+    {
+      "name": "sponsor_usage_1",
+      "value": "API token costs across model providers"
+    },
+    {
+      "name": "sponsor_usage_2",
+      "value": "Server, domain, and beta-release infrastructure"
+    },
+    {
+      "name": "sponsor_usage_3",
+      "value": "Continuous iteration and bug fixes"
+    },
+    {
+      "name": "sponsor_perks_title",
+      "value": "Sponsor perks"
+    },
+    {
+      "name": "sponsor_perk_priority_title",
+      "value": "Priority response"
+    },
+    {
+      "name": "sponsor_perk_priority_desc",
+      "value": "Your feature requests and bug reports get fast-tracked"
+    },
+    {
+      "name": "sponsor_perk_channel_title",
+      "value": "Dedicated channel"
+    },
+    {
+      "name": "sponsor_perk_channel_desc",
+      "value": "Join the sponsor-only chat to talk to the author directly"
+    },
+    {
+      "name": "sponsor_perk_resource_title",
+      "value": "Shared API gateway resources"
+    },
+    {
+      "name": "sponsor_perk_resource_desc",
+      "value": "Occasional sharing of self-hosted gateway keys for personal learning and testing — see plan details"
+    },
+    {
+      "name": "sponsor_qq_hint",
+      "value": "💡 Please leave your QQ number in the sponsorship note. The author will reach out via the QQ group to verify and grant perks (group number listed under About ChatCube)."
     },
     {
       "name": "about_open_source",

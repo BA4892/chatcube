@@ -346,11 +346,11 @@
     },
     {
       "name": "settings_support_development",
-      "value": "支持开发"
+      "value": "赞助开发者"
     },
     {
       "name": "settings_support_development_desc",
-      "value": "微信打赏，支持 token 与持续开发"
+      "value": "自愿支持,继续打磨产品"
     },
     {
       "name": "settings_privacy_policy",
@@ -1677,24 +1677,100 @@
       "value": "无法打开 QQ 或群邀请链接，请使用二维码进群"
     },
     {
-      "name": "about_wechat_support",
+      "name": "sponsor_page_subtitle",
+      "value": "你的支持,是 ChatCube 持续迭代的底气"
+    },
+    {
+      "name": "sponsor_disclaimer",
+      "value": "全部功能始终免费,赞助完全自愿,不解锁任何隐藏内容"
+    },
+    {
+      "name": "sponsor_afdian_title",
+      "value": "爱发电"
+    },
+    {
+      "name": "sponsor_afdian_recommended",
+      "value": "推荐"
+    },
+    {
+      "name": "sponsor_afdian_desc",
+      "value": "一次性赞助,留言可写需求,作者会在 QQ 群联系你"
+    },
+    {
+      "name": "sponsor_afdian_action",
+      "value": "前往爱发电赞助"
+    },
+    {
+      "name": "sponsor_afdian_open_failed",
+      "value": "打开外部页面失败,请稍后再试"
+    },
+    {
+      "name": "sponsor_wechat_title",
       "value": "微信打赏"
     },
     {
-      "name": "about_wechat_pay_note",
-      "value": "如果 ChatCube 对你有帮助，欢迎自愿打赏支持开发。你的转账将主要用于购买模型 token、接口测试和持续迭代。"
+      "name": "sponsor_wechat_desc",
+      "value": "扫码或长按识别"
     },
     {
-      "name": "about_save_payment_code",
-      "value": "保存收款码"
+      "name": "sponsor_wechat_save",
+      "value": "保存到相册"
     },
     {
-      "name": "about_payment_code_saved",
-      "value": "收款码已保存到相册"
+      "name": "sponsor_wechat_saved",
+      "value": "已保存到相册"
     },
     {
-      "name": "about_payment_code_save_failed",
-      "value": "收款码保存失败"
+      "name": "sponsor_wechat_save_failed",
+      "value": "保存失败,请重试"
+    },
+    {
+      "name": "sponsor_usage_title",
+      "value": "你的支持将用于"
+    },
+    {
+      "name": "sponsor_usage_1",
+      "value": "支付各模型 API token 费用"
+    },
+    {
+      "name": "sponsor_usage_2",
+      "value": "服务器、域名、邀测发布等基础开支"
+    },
+    {
+      "name": "sponsor_usage_3",
+      "value": "持续迭代、修复问题"
+    },
+    {
+      "name": "sponsor_perks_title",
+      "value": "赞助者福利"
+    },
+    {
+      "name": "sponsor_perk_priority_title",
+      "value": "优先响应"
+    },
+    {
+      "name": "sponsor_perk_priority_desc",
+      "value": "你提的需求 / Bug 进入优先处理队列"
+    },
+    {
+      "name": "sponsor_perk_channel_title",
+      "value": "专属交流通道"
+    },
+    {
+      "name": "sponsor_perk_channel_desc",
+      "value": "加入赞助者群,直接和作者沟通"
+    },
+    {
+      "name": "sponsor_perk_resource_title",
+      "value": "API 中转资源"
+    },
+    {
+      "name": "sponsor_perk_resource_desc",
+      "value": "不定期分享作者自建中转代理的可用 Key,用于个人学习测试,具体见赞助方案说明"
+    },
+    {
+      "name": "sponsor_qq_hint",
+      "value": "💡 赞助时请在留言里写下你的 QQ 号,作者将通过 QQ 群联系你并兑现福利(群号见「关于 ChatCube」)"
     },
     {
       "name": "about_open_source",
