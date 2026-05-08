@@ -171,6 +171,22 @@ export struct ShareMessageCard {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+
+        // AI 生成合规标识（分享图片底部）
+        Divider()
+          .color(this.getDividerColor())
+          .margin({ left: 16, right: 16 })
+
+        Row() {
+          Text($r('app.string.ai_generated_label'))
+            .fontSize(11)
+            .fontColor(this.getSecondaryTextColor())
+            .opacity(0.8)
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: 16, right: 16, top: 10, bottom: 14 })
       }
       .width('100%')
       .backgroundColor(this.getCardBackground())
