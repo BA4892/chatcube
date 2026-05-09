@@ -4,6 +4,7 @@ import { buffer } from '@kit.ArkTS'
 import { common } from '@kit.AbilityKit'
 import { showToast } from '../utils/ToastUtil'
 import { hilog } from '@kit.PerformanceAnalysisKit'
+import { http } from '@kit.NetworkKit'
 
 /**
  * 图片预览组件
@@ -56,6 +57,10 @@ export struct ImagePreview {
 
   // 拖动方向锁定
   private panDirection: string = 'none'
+  private cachedRemoteImageUris: Map<string, string> = new Map()
+  private cachedRemoteImagePaths: string[] = []
+  private pendingRemoteImageDownloads: Map<string, Promise<string>> = new Map()
+  private isPreviewDisposed: boolean = false
   private readonly overlayHorizontalMarginVp: number = 16
   private readonly overlayBottomMarginVp: number = 20
   private readonly overlayTopMarginVp: number = 12
@@ -63,7 +68,14 @@ export struct ImagePreview {
   private readonly saveButtonHeightVp: number = 48
 
   aboutToAppear(): void {
+    this.isPreviewDisposed = false
     this.displayIndex = this.currentIndex
+    this.prefetchRemoteImage(this.images[this.displayIndex])
+  }
+
+  aboutToDisappear(): void {
+    this.isPreviewDisposed = true
+    this.cleanupCachedRemoteImages()
   }
 
   /**
@@ -179,6 +191,7 @@ export struct ImagePreview {
       .onChange((index: number) => {
         this.displayIndex = index
         this.resetGestureState()
+        this.prefetchRemoteImage(this.images[index])
       })
       .width('100%')
       .height('100%')
@@ -251,6 +264,7 @@ export struct ImagePreview {
     }
     .width('100%')
     .height('100%')
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     // 双指缩放：parallelGesture 使其与其他手势并行，互不干扰
     .parallelGesture(
       PinchGesture({ fingers: 2 })
@@ -385,6 +399,8 @@ export struct ImagePreview {
     try {
       if (imageUri.startsWith('data:')) {
         await this.saveFromBase64(imageUri)
+      } else if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+        await this.saveFromRemoteUri(imageUri)
       } else {
         await this.saveFromFileUri(imageUri)
       }
@@ -405,12 +421,7 @@ export struct ImagePreview {
     }
     const context = hostContext as common.UIAbilityContext
     try {
-      // 将 file:// URI 转换为规范格式
-      let filePath = imageUri
-      if (filePath.startsWith('file://')) {
-        filePath = filePath.replace('file://', '')
-      }
-      const srcUri = fileUri.getUriFromPath(filePath)
+      const srcUri = imageUri.startsWith('file://') ? imageUri : fileUri.getUriFromPath(imageUri)
 
       const ext = this.getExtensionFromUri(imageUri)
       const config: photoAccessHelper.PhotoCreationConfig = {
@@ -432,8 +443,123 @@ export struct ImagePreview {
       fileIo.closeSync(srcFile)
       fileIo.closeSync(desFile)
     } catch (error) {
-      throw new Error(`Save from file uri failed: ${JSON.stringify(error)}`)
+      throw new Error(`Save from file uri failed: ${this.formatSaveError(error)}`)
     }
+  }
+
+  private async saveFromRemoteUri(imageUri: string): Promise<void> {
+    try {
+      const localUri = await this.cacheRemoteImage(imageUri)
+      await this.saveFromFileUri(localUri)
+    } catch (error) {
+      throw new Error(`Save from remote uri failed: ${this.formatSaveError(error)}`)
+    }
+  }
+
+  private prefetchRemoteImage(imageUri: string): void {
+    if (!this.isRemoteImageUri(imageUri)) {
+      return
+    }
+    this.cacheRemoteImage(imageUri).catch((error: Object): void => {
+      hilog.error(0x0000, 'ImagePreview', 'Prefetch remote image failed: %{public}s', this.formatSaveError(error))
+    })
+  }
+
+  private isRemoteImageUri(imageUri: string): boolean {
+    return imageUri.startsWith('http://') || imageUri.startsWith('https://')
+  }
+
+  private async cacheRemoteImage(imageUri: string): Promise<string> {
+    const cachedUri = this.cachedRemoteImageUris.get(imageUri)
+    if (cachedUri !== undefined && cachedUri !== '') {
+      return cachedUri
+    }
+
+    const pending = this.pendingRemoteImageDownloads.get(imageUri)
+    if (pending !== undefined) {
+      return await pending
+    }
+
+    const promise = this.downloadRemoteImageToTempUri(imageUri)
+    this.pendingRemoteImageDownloads.set(imageUri, promise)
+    try {
+      const localUri = await promise
+      this.cachedRemoteImageUris.set(imageUri, localUri)
+      return localUri
+    } finally {
+      this.pendingRemoteImageDownloads.delete(imageUri)
+    }
+  }
+
+  private async downloadRemoteImageToTempUri(imageUri: string): Promise<string> {
+    const hostContext = this.getUIContext().getHostContext()
+    if (!hostContext) {
+      throw new Error('UI context is unavailable')
+    }
+    const context = hostContext as common.UIAbilityContext
+    const httpRequest = http.createHttp()
+    let tempFilePath = ''
+
+    try {
+      const response = await httpRequest.request(imageUri, {
+        method: http.RequestMethod.GET,
+        connectTimeout: 15000,
+        readTimeout: 60000,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER
+      })
+      if (response.responseCode !== 200) {
+        throw new Error(`HTTP ${response.responseCode}`)
+      }
+
+      const imageBuffer = response.result as ArrayBuffer
+      if (imageBuffer.byteLength <= 0) {
+        throw new Error('Empty image data')
+      }
+
+      const contentType = response.header?.['content-type'] as string | undefined
+      const ext = this.getExtensionForRemoteImage(imageUri, contentType)
+      tempFilePath = `${context.cacheDir}/temp_save_${Date.now()}.${ext}`
+      const tempFile = fileIo.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
+      fileIo.writeSync(tempFile.fd, imageBuffer)
+      fileIo.closeSync(tempFile)
+
+      if (this.isPreviewDisposed) {
+        fileIo.unlinkSync(tempFilePath)
+        tempFilePath = ''
+        throw new Error('Image preview has been closed')
+      }
+
+      this.cachedRemoteImagePaths.push(tempFilePath)
+      const tempFileUriStr = fileUri.getUriFromPath(tempFilePath)
+      return tempFileUriStr
+    } catch (error) {
+      if (tempFilePath !== '') {
+        try {
+          fileIo.unlinkSync(tempFilePath)
+        } catch (cleanupError) {
+          hilog.error(0x0000, 'ImagePreview', 'Cleanup failed remote temp file failed: %{public}s',
+            JSON.stringify(cleanupError))
+        }
+      }
+      throw new Error(`Download remote image failed: ${this.formatSaveError(error)}`)
+    } finally {
+      httpRequest.destroy()
+    }
+  }
+
+  private cleanupCachedRemoteImages(): void {
+    for (let i = 0; i < this.cachedRemoteImagePaths.length; i++) {
+      const filePath = this.cachedRemoteImagePaths[i]
+      if (filePath !== '') {
+        try {
+          fileIo.unlinkSync(filePath)
+        } catch (cleanupError) {
+          hilog.error(0x0000, 'ImagePreview', 'Cleanup remote temp file failed: %{public}s', JSON.stringify(cleanupError))
+        }
+      }
+    }
+    this.cachedRemoteImageUris.clear()
+    this.cachedRemoteImagePaths = []
   }
 
   private async saveFromBase64(dataUri: string): Promise<void> {
@@ -469,7 +595,7 @@ export struct ImagePreview {
       const tempFileUriStr = fileUri.getUriFromPath(tempFilePath)
       await this.saveFromFileUri(tempFileUriStr)
     } catch (error) {
-      throw new Error(`Save from base64 failed: ${JSON.stringify(error)}`)
+      throw new Error(`Save from base64 failed: ${this.formatSaveError(error)}`)
     } finally {
       // 清理临时文件
       try {
@@ -491,6 +617,35 @@ export struct ImagePreview {
       return ext
     }
     return 'jpg'
+  }
+
+  private getExtensionForRemoteImage(uri: string, contentType?: string): string {
+    if (contentType !== undefined && contentType !== '') {
+      const mimeType = contentType.split(';')[0].trim().toLowerCase()
+      if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+        return 'jpg'
+      }
+      if (mimeType === 'image/png') {
+        return 'png'
+      }
+      if (mimeType === 'image/gif') {
+        return 'gif'
+      }
+      if (mimeType === 'image/webp') {
+        return 'webp'
+      }
+      if (mimeType === 'image/bmp') {
+        return 'bmp'
+      }
+    }
+    return this.getExtensionFromUri(uri)
+  }
+
+  private formatSaveError(error: Object): string {
+    if (error instanceof Error) {
+      return error.message
+    }
+    return JSON.stringify(error)
   }
 
   private resetGestureState(): void {

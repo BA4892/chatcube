@@ -448,6 +448,9 @@ export struct MessageBubble {
       .setHyperlinkClickListener((title: string, src: string): boolean => {
         return this.openWebSheetForLink(title, src)
       })
+      .setImageClickListener((src: string): boolean => {
+        return this.openImagePreviewForMarkdownSource(src, this.message.content)
+      })
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
@@ -486,6 +489,9 @@ export struct MessageBubble {
       .setHyperlinkClickListener((title: string, src: string): boolean => {
         return this.openWebSheetForLink(title, src)
       })
+      .setImageClickListener((src: string): boolean => {
+        return this.openImagePreviewForMarkdownSource(src, this.message.reasoningContent)
+      })
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
@@ -519,6 +525,9 @@ export struct MessageBubble {
       .setFootnoteTextColor(linkColor)
       .setHyperlinkClickListener((title: string, src: string): boolean => {
         return this.openWebSheetForLink(title, src)
+      })
+      .setImageClickListener((src: string): boolean => {
+        return this.openImagePreviewForMarkdownSource(src, this.translatedText)
       })
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
@@ -649,6 +658,50 @@ export struct MessageBubble {
       }
     }
     return false
+  }
+
+  private normalizeMarkdownImageSource(src: string): string {
+    let normalized = src.trim()
+    if (normalized.startsWith('<') && normalized.endsWith('>')) {
+      normalized = normalized.substring(1, normalized.length - 1).trim()
+    }
+    return normalized
+  }
+
+  private collectMarkdownImageSources(content: string): Array<string> {
+    const images: Array<string> = []
+    if (content.trim().length === 0) {
+      return images
+    }
+
+    const markdownText = content.replace(/```[\s\S]*?```/g, '')
+    const pattern = /!\[[^\]]*]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s*\)/g
+    let match = pattern.exec(markdownText)
+    while (match !== null) {
+      const src = this.normalizeMarkdownImageSource(match[1])
+      if (src.length > 0) {
+        images.push(src)
+      }
+      match = pattern.exec(markdownText)
+    }
+    return images
+  }
+
+  private openImagePreviewForMarkdownSource(src: string, content: string): boolean {
+    const imageSrc = this.normalizeMarkdownImageSource(src)
+    if (imageSrc.length === 0) {
+      return false
+    }
+
+    let images = this.collectMarkdownImageSources(content)
+    let imageIndex = images.indexOf(imageSrc)
+    if (imageIndex < 0) {
+      images = [imageSrc]
+      imageIndex = 0
+    }
+
+    this.onImageClick(images, imageIndex)
+    return true
   }
 
   private computeNeedsWideAssistantLayout(content: string): boolean {
