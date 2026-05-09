@@ -12,6 +12,9 @@ import {
   ReasoningLevel,
   SearchReference,
   ToolCall,
+  ToolDefinition,
+  ToolFunction,
+  ToolParameters,
   ToolResult
 } from '../main/ets/models/ChatModels'
 import {
@@ -94,6 +97,14 @@ import {
   normalizeStoredChatReasoningLevel,
   resolveModelSwitchReasoningLevel
 } from '../main/ets/pages/chat/ChatReasoningStateHelper'
+import {
+  applyToolCallBudget,
+  createWebSearchLimitToolResult,
+  filterToolsForWebSearchBudget,
+  isWebSearchFunctionName,
+  MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE,
+  stripLeakedToolInvocationText
+} from '../main/ets/pages/chat/ChatToolBudgetHelper'
 
 class TestDataChangeListener implements DataChangeListener {
   reloadCount: number = 0
@@ -142,6 +153,10 @@ function createRow(id: string, signature: string): ChatMessageRowData {
     false,
     signature
   )
+}
+
+function createToolDefinition(name: string): ToolDefinition {
+  return new ToolDefinition(new ToolFunction(name, `${name} description`, new ToolParameters()))
 }
 
 function buildTestChatMessageSignature(
@@ -1112,6 +1127,51 @@ export default function refactorGuardTest() {
       expect(resolveModelSwitchReasoningLevel(ReasoningControlMode.TOGGLE)).assertEqual(ReasoningLevel.OFF)
       expect(resolveModelSwitchReasoningLevel(ReasoningControlMode.EFFORT)).assertEqual(ReasoningLevel.OFF)
       expect(resolveModelSwitchReasoningLevel(ReasoningControlMode.HIGH_MAX)).assertEqual(ReasoningLevel.OFF)
+    })
+
+    it('chatToolBudget_should_block_web_search_after_hard_limit', 0, () => {
+      const firstSearch = new ToolCall('search-1', 'websearch', '{"query":"first"}')
+      const blockedSearch = new ToolCall('search-2', 'exa_search', '{"query":"second"}')
+      const otherTool = new ToolCall('tool-1', 'calendar_lookup', '{}')
+
+      const decision = applyToolCallBudget(
+        [firstSearch, blockedSearch, otherTool],
+        MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE - 1
+      )
+
+      expect(decision.executableToolCalls.length).assertEqual(2)
+      expect(decision.executableToolCalls[0].id).assertEqual('search-1')
+      expect(decision.executableToolCalls[1].id).assertEqual('tool-1')
+      expect(decision.blockedToolCalls.length).assertEqual(1)
+      expect(decision.blockedToolCalls[0].id).assertEqual('search-2')
+      expect(decision.webSearchCallCount).assertEqual(MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE)
+      expect(decision.searchLimitReached).assertTrue()
+      expect(isWebSearchFunctionName(blockedSearch.functionName)).assertTrue()
+
+      const blockedResult = createWebSearchLimitToolResult(blockedSearch)
+      expect(blockedResult.isError).assertTrue()
+      expect(blockedResult.content.includes('searchLimitReached')).assertTrue()
+    })
+
+    it('chatToolBudget_should_remove_web_search_tool_when_budget_is_exhausted', 0, () => {
+      const tools: ToolDefinition[] = [
+        createToolDefinition('web_search'),
+        createToolDefinition('mcp_lookup')
+      ]
+
+      const activeTools = filterToolsForWebSearchBudget(tools, MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE - 1)
+      const exhaustedTools = filterToolsForWebSearchBudget(tools, MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE)
+
+      expect(activeTools.length).assertEqual(2)
+      expect(exhaustedTools.length).assertEqual(1)
+      expect(exhaustedTools[0].function.name).assertEqual('mcp_lookup')
+    })
+
+    it('chatToolBudget_should_strip_raw_tool_markup_from_final_answer', 0, () => {
+      const leaked = '可以优先看 K-Silver 的 TMR 模块。\n< | | DSML | | toolcalls>\n< / | | DSML | | invoke name="websearch">'
+
+      expect(stripLeakedToolInvocationText(leaked)).assertEqual('可以优先看 K-Silver 的 TMR 模块。')
+      expect(stripLeakedToolInvocationText('正常回答')).assertEqual('正常回答')
     })
 
     it('messageBubbleDisplayUtils_should_hide_assistant_toolbar_while_generating', 0, () => {
