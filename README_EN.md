@@ -49,13 +49,16 @@ These screenshots reflect the current HarmonyOS 6 (API 23) build:
 ## Highlights in 1.1.3
 
 - Added Huawei ID one-tap sign-in: a login page on first launch, with an avatar entry in Settings to sign out
+- Moved advanced generation parameters such as temperature and Top K into Assistant settings for per-assistant behavior control
+- Added an AI-generated content notice under the chat composer for release compliance
+- Improved attachment upload and parsing so more file types can inject readable content into chat context
+- Wide assistant bubbles now adapt for tables, code blocks, HTML, and Mermaid content
+- Mermaid diagrams can be previewed directly from `mermaid` code blocks, with source view, copy, and fullscreen preview
 - OpenAI Responses support is tighter, including tool calls, reasoning summaries, history encoding, and share exports
-- Text attachments can now read their body content and inject it into the request as usable context
-- Assistant messages and share cards now widen their layout for tables, code blocks, and HTML so wide content is no longer cramped
-- Mermaid diagrams can be previewed directly from `mermaid` code blocks, with source view, copy, fullscreen preview, and offline local rendering
-- Multi-session streaming, background tasks, and assistant-message avatars are more stable and no longer leak state across sessions
+- Web search, multi-session streaming, background tasks, and assistant-message avatars are more stable
 - The About section now includes a beta invite entry, and the README invite link points to a live redirect for the latest build
 - The sponsor page now supports Afdian and includes clearer sponsorship notes, usage details, and contact guidance
+- Fixed Markdown image saving, missing content in image sharing, Assistant tab overlap, and Responses edge cases
 
 ## Features
 
