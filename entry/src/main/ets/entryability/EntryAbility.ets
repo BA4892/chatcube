@@ -33,7 +33,7 @@ export default class EntryAbility extends UIAbility {
   // 而 this.context.config.colorMode 在 setColorMode 异步生效前可能仍为旧的应用覆盖值。
   private systemColorMode: ConfigurationConstant.ColorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
 
-  onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+  onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
 
     // 检查是否从卡片点击进入
@@ -61,7 +61,7 @@ export default class EntryAbility extends UIAbility {
     this.servicesInitPromise = this.initializeServices();
   }
 
-  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', 'Ability onNewWant');
 
     // 处理卡片点击跳转
@@ -188,7 +188,7 @@ export default class EntryAbility extends UIAbility {
   // 注册设置变化回调
   private registerSettingsCallback(): void {
     this.settingsCallback = {
-      onThemeModeChanged: (mode: ThemeMode, colorMode: ConfigurationConstant.ColorMode): void => {
+      onThemeModeChanged: (_mode: ThemeMode, colorMode: ConfigurationConstant.ColorMode): void => {
         this.setAppColorMode(colorMode);
         // 立即同步深浅模式与主题服务，避免等待系统配置回调导致的短暂闪动/状态不同步。
         // 注意：此时 SettingsManager 已写入新的 mode，resolveIsDarkMode 内部读取

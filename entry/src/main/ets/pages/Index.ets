@@ -32,7 +32,7 @@ import {
   getIndexPageHorizontalPadding,
   LayoutSizeClass
 } from '../config/LayoutProfile'
-import { createButtonTouchHandler, getButtonAnimation, getButtonScale } from '../utils/ButtonAnimationUtils'
+import { createButtonTouchHandler, getButtonScale } from '../utils/ButtonAnimationUtils'
 import {
   countSelectedIdsInCandidates,
   mergeSelectAllIds,
@@ -67,7 +67,6 @@ import {
   getFabOffsetYForIndex,
   INDEX_NEW_CHAT_FAB_BOTTOM_SPACING,
   INDEX_NEW_CHAT_FAB_STACK_HEIGHT,
-  INDEX_NEW_CHAT_FAB_STACK_WIDTH,
   INDEX_NEW_CHAT_FAB_SIZE,
   isHandAdaptiveActiveForIndex,
   shouldPlaceFabOnLeftForIndex
@@ -200,10 +199,6 @@ struct Index {
   }
   private get fabShadowColor(): string {
     return this.isDarkMode ? 'rgba(0, 0, 0, 0.38)' : 'rgba(15, 23, 42, 0.18)'
-  }
-  private get sessionListThemeRenderKey(): string {
-    const uiState = getAppUiState()
-    return `${this.currentColorTheme}_${uiState.isDarkMode ? '1' : '0'}`
   }
   @Local chatFontSize: number = 15
   @Local chatInputEnterKeySend: boolean = false
@@ -595,8 +590,8 @@ struct Index {
   aboutToAppear(): void {
     this.registerAppUiStateObservers()
     this.chatTabNavStack.setInterception({
-      didShow: (from: NavDestinationContext | "navBar", to: NavDestinationContext | "navBar",
-        operation: NavigationOperation, isAnimated: boolean): void => {
+      didShow: (_from: NavDestinationContext | "navBar", to: NavDestinationContext | "navBar",
+        _operation: NavigationOperation, _isAnimated: boolean): void => {
         const size = this.chatTabNavStack.size()
         if (to === 'navBar' || size <= 0) {
           this.currentChatRouteName = ''
@@ -620,8 +615,8 @@ struct Index {
       }
     })
     this.settingsNavPathStack.setInterception({
-      didShow: (from: NavDestinationContext | "navBar", to: NavDestinationContext | "navBar",
-        operation: NavigationOperation, isAnimated: boolean): void => {
+      didShow: (_from: NavDestinationContext | "navBar", to: NavDestinationContext | "navBar",
+        _operation: NavigationOperation, _isAnimated: boolean): void => {
         if (to === 'navBar' || this.settingsNavPathStack.size() <= 0) {
           this.currentSettingsRouteName = ''
           setAppUiStateValue(AppStorageKeys.SETTINGS_DETAIL_PRESENTATION_MODE, SettingsPagePresentationMode.PAGE)
@@ -2333,21 +2328,6 @@ struct Index {
     })
   }
 
-  private async moveAssistant(from: number, to: number): Promise<void> {
-    if (from === to || from < 0 || to < 0 || from >= this.assistants.length || to >= this.assistants.length) {
-      return
-    }
-    const reordered: Assistant[] = [...this.assistants]
-    const moving = reordered[from]
-    reordered.splice(from, 1)
-    reordered.splice(to, 0, moving)
-    for (let i = 0; i < reordered.length; i++) {
-      reordered[i].sortOrder = i
-    }
-    this.assistants = reordered
-    await this.assistantService.reorderAssistants(reordered)
-  }
-
   @Builder
   private AssistantsTabContent(applyTopInset: boolean) {
     Stack({ alignContent: Alignment.BottomEnd }) {
@@ -3878,7 +3858,7 @@ struct Index {
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
       .title($r('app.string.tab_settings'))
       .titleMode(NavigationTitleMode.Mini)
-      .menus((): void => this.SettingsNavigationMenus())
+      .menus(this.SettingsNavigationMenus)
       .mode(NavigationMode.Split)
       .navBarWidth(this.getExpandedSettingsListWidth())
       .hideBackButton(true)
@@ -4088,15 +4068,6 @@ struct Index {
 
   // ========== 系统提示词 ==========
 
-  private async openSystemPromptSheet(): Promise<void> {
-    const saved = await this.preferencesService.getString(
-      PreferenceKeys.CUSTOM_SYSTEM_PROMPT,
-      SystemPromptTemplateDefaults.DEFAULT_TEMPLATE
-    )
-    this.customSystemPrompt = normalizeSystemPromptTemplate(saved)
-    this.showSystemPromptSheet = true
-  }
-
   private async saveSystemPrompt(): Promise<void> {
     const normalizedTemplate = normalizeSystemPromptTemplate(this.customSystemPrompt)
     this.customSystemPrompt = normalizedTemplate
@@ -4196,21 +4167,6 @@ struct Index {
   }
 
   // ========== 多选模式相关方法 ==========
-
-  // 处理主题配色选择
-  private async handleColorThemeSelected(theme: ColorTheme): Promise<void> {
-    // 先本地更新，确保摘要先刷新，再持久化
-    this.currentColorTheme = theme
-    this.syncSettingsSummaryToStorage()
-    this.closeAllSettingsSheets()
-    try {
-      await this.settingsManager.setColorTheme(theme)
-      this.showIndexSnack($r('app.string.theme_switched'), 2000, SnackBarTone.SUCCESS)
-    } catch (error) {
-      console.error('Index', `Failed to set color theme: ${JSON.stringify(error)}`)
-      this.refreshSettingsState()
-    }
-  }
 
   private async openSystemNotificationSettings(): Promise<void> {
     try {

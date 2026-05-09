@@ -1,4 +1,4 @@
-import { ChatMessage, MessageRole, MessageAttachment, AttachmentType, ToolCall, ToolResult } from '../models/ChatModels'
+import { ChatMessage, MessageRole, MessageAttachment, AttachmentType, ToolCall } from '../models/ChatModels'
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
@@ -528,11 +528,6 @@ export struct MessageBubble {
   @Monitor('chatFontSize')
   onFontSizeChange(): void {
     this.configureMarkdownStyles()
-  }
-
-  // 计算是否应该显示推理内容（生成中自动展开）
-  private get shouldShowReasoning(): boolean {
-    return this.isReasoningExpanded || (this.message.isGenerating && this.message.reasoningContent.length > 0)
   }
 
   build() {
