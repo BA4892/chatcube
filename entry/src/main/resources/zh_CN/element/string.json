@@ -601,6 +601,10 @@
       "value": "联网搜索"
     },
     {
+      "name": "web_scrape",
+      "value": "网页读取"
+    },
+    {
       "name": "chat_toolbar_web_search",
       "value": "联网查询"
     },
@@ -646,7 +650,7 @@
     },
     {
       "name": "search_engine_runtime_hint",
-      "value": "聊天里的搜索卡片会显示实际执行引擎；Exa 失败会自动回退 Bing（本地），Brave 和 Tavily 则直接使用所选 provider。"
+      "value": "保存后，聊天中的联网查询会使用这里选择的搜索服务。"
     },
     {
       "name": "search_query_optimization",
@@ -662,7 +666,7 @@
     },
     {
       "name": "search_tavily_base_url_hint",
-      "value": "填写 Tavily 根地址。Tavily 搜索会调用 /search；只输入 URL 时会调用 /extract，basic 无正文会重试 advanced。其它搜索引擎读取 URL 时使用本地抓取，不会调用 Tavily 扩展接口。"
+      "value": "填写 Tavily 服务地址。一般保持默认即可，使用代理或自定义服务时再修改。"
     },
     {
       "name": "search_exa_api_key",
@@ -1406,7 +1410,7 @@
     },
     {
       "name": "search_service_config_desc",
-      "value": "配置聊天里的联网查询能力，并选择它实际使用的搜索 provider。"
+      "value": "开启聊天里的联网查询，并选择使用哪个搜索服务。"
     },
     {
       "name": "search_service_card_title",

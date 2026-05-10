@@ -10,6 +10,7 @@ import { HdsListItemCard } from '@kit.UIDesignKit'
 import { getAppUiState } from '../state/AppUiState'
 import { formatLocalizedCount, pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { getSearchToolIds, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import {
   buildCustomHeadersJson,
   isSensitiveCustomHeaderName,
@@ -88,7 +89,6 @@ export struct ToolsCenterPanel {
   private toolRegistry: ToolRegistry = ServiceRegistry.toolRegistry()
   private mcpService: McpService = ServiceRegistry.mcp()
   private preferencesService: PreferencesService = getPreferencesService()
-  private readonly searchToolId: string = 'web_search'
   private readonly searchEngineOptions: Array<SelectOption> = [
     { value: 'Bing(local)' },
     { value: 'Brave Search' },
@@ -131,7 +131,7 @@ export struct ToolsCenterPanel {
     const allTools = this.toolRegistry.getAllToolConfigs()
     const builtin: ToolConfig[] = []
     for (let i = 0; i < allTools.length; i++) {
-      if (allTools[i].sourceType === ToolSourceType.BUILTIN && allTools[i].id !== this.searchToolId) {
+      if (allTools[i].sourceType === ToolSourceType.BUILTIN && !isSearchToolId(allTools[i].id)) {
         builtin.push(allTools[i])
       }
     }
@@ -319,9 +319,12 @@ export struct ToolsCenterPanel {
 
   private applySearchServiceEnabledState(enabled: boolean): void {
     this.searchServiceEnabled = enabled
-    const registeredTool = this.toolRegistry.getTool(this.searchToolId)
-    if (registeredTool !== undefined) {
-      registeredTool.config.enabled = enabled
+    const searchToolIds = getSearchToolIds()
+    for (let i = 0; i < searchToolIds.length; i++) {
+      const registeredTool = this.toolRegistry.getTool(searchToolIds[i])
+      if (registeredTool !== undefined) {
+        registeredTool.config.enabled = enabled
+      }
     }
   }
 

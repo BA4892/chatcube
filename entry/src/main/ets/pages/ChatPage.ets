@@ -87,6 +87,7 @@ import { applyModelDraft } from '../utils/ModelDraftUtils'
 import { ToolPreviewEntry, buildToolArgumentsPreview } from '../utils/ToolPayloadSummaryUtils'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
+import { getSearchToolIds, isSearchToolFunctionName, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
 
 const DOMAIN = 0x0003
@@ -1006,7 +1007,7 @@ export struct ChatPage {
     const configs = this.toolRegistry.getAllToolConfigs()
     const tools: ToolConfig[] = []
     for (let i = 0; i < configs.length; i++) {
-      if (configs[i].enabled && configs[i].id !== 'web_search') {
+      if (configs[i].enabled && !isSearchToolId(configs[i].id)) {
         tools.push(configs[i])
       }
     }
@@ -1028,7 +1029,7 @@ export struct ChatPage {
     const normalizedToolIds: string[] = []
     for (let i = 0; i < toolIds.length; i++) {
       const toolId = toolIds[i].trim()
-      if (toolId === '' || toolId === 'web_search') {
+      if (toolId === '' || isSearchToolId(toolId)) {
         continue
       }
       if (!normalizedToolIds.includes(toolId)) {
@@ -1057,9 +1058,12 @@ export struct ChatPage {
       PreferenceKeys.SEARCH_CONVERSATION_ENABLED,
       webSearchAvailable
     )
-    const webSearchTool = this.toolRegistry.getTool('web_search')
-    if (webSearchTool !== undefined) {
-      webSearchTool.config.enabled = webSearchAvailable
+    const searchToolIds = getSearchToolIds()
+    for (let i = 0; i < searchToolIds.length; i++) {
+      const searchTool = this.toolRegistry.getTool(searchToolIds[i])
+      if (searchTool !== undefined) {
+        searchTool.config.enabled = webSearchAvailable
+      }
     }
     this.rebuildAvailableChatTools()
     const enabledMcpServerIds = await this.loadEnabledMcpServerIds()
@@ -1195,17 +1199,11 @@ export struct ChatPage {
   }
 
   private isWebSearchFunctionName(functionName: string): boolean {
-    const normalizedName = functionName.trim().toLowerCase().replace(/[\s\-]+/g, '_')
-    return normalizedName === 'web_search' ||
-      normalizedName === 'exa_search' ||
-      normalizedName === 'websearch' ||
-      normalizedName === 'search_web' ||
-      normalizedName === 'internet_search' ||
-      normalizedName === 'web_search_exa'
+    return isSearchToolFunctionName(functionName)
   }
 
   private isWebSearchToolCall(toolCall: ToolCall): boolean {
-    if (toolCall.toolId.trim() === 'web_search') {
+    if (isSearchToolId(toolCall.toolId)) {
       return true
     }
     return this.isWebSearchFunctionName(toolCall.functionName)
@@ -1388,6 +1386,7 @@ export struct ChatPage {
       messages: this.messages,
       chatTaskOrchestrator: this.chatTaskOrchestrator,
       toolRegistry: this.toolRegistry,
+      webSearchService: this.webSearchService,
       getSessionId: (): string => this.sessionId,
       getSessionTitle: (): string => this.sessionTitle,
       getCurrentTaskId: (): string => this.currentTaskId,

@@ -31,6 +31,10 @@ import {
   cleanSearchQuery as cleanSearchQueryShared,
   normalizeRelativeTimeForSearchQuery as normalizeRelativeTimeForSearchQueryShared
 } from '../utils/SearchQueryUtils'
+import {
+  isScrapeWebFunctionName,
+  isSearchToolFunctionName
+} from '../utils/SearchToolIdentityUtils'
 
 // 标题生成状态
 export interface TitleGenerationCallbacks {
@@ -46,9 +50,10 @@ export interface ToolCallCallbacks {
   onSearching?: (query: string) => void
 }
 
-// web_search 工具参数接口
+// 搜索工具参数接口
 interface WebSearchArgs {
-  query: string
+  query?: string
+  url?: string
 }
 
 // 搜索结果数据接口
@@ -1571,11 +1576,15 @@ ${limitedSearchContext}
 
     // 检测启用了哪些工具（用于构建 system prompt）
     let hasWebSearchTool = false
+    let hasScrapeWebTool = false
     for (let i = 0; i < tools.length; i++) {
-      if (tools[i].function.name === 'web_search') {
+      if (isSearchToolFunctionName(tools[i].function.name)) {
         hasWebSearchTool = true
       }
-      if (hasWebSearchTool) {
+      if (isScrapeWebFunctionName(tools[i].function.name)) {
+        hasScrapeWebTool = true
+      }
+      if (hasWebSearchTool && hasScrapeWebTool) {
         break
       }
     }
@@ -1612,12 +1621,15 @@ ${limitedSearchContext}
 - 编程、写作、翻译、数学、创意等纯生成任务，若不依赖外部状态，绝对不要调用任何工具。`
     if (hasWebSearchTool) {
       toolUsageSystemPrompt += `
-- 使用 web_search 前先评估是否真的需要联网；普通常识、稳定知识和纯生成任务优先用自身知识回答。
-- 生成 web_search.query 时使用聚焦关键词，优先保留用户原始实体、地点和时间；一次结果不足以回答时，可以用不同关键词继续搜索。
+- 使用 search_web 前先评估是否真的需要联网；普通常识、稳定知识和纯生成任务优先用自身知识回答。
+- 生成 search_web.query 时使用聚焦关键词，优先保留用户原始实体、地点和时间；一次结果不足以回答时，可以用不同关键词继续搜索。
 - 每次搜索都有真实成本，避免重复查询同一含义的问题，拿到足够证据后整理最终回答。
-- 引用搜索结果时使用结果编号标注来源，例如 [1]、[2]。
-- 当用户输入只包含一个 URL，或明确要求读取、总结、分析某个网页时，必须调用 web_search。
-- URL 读取场景下，web_search.query 必须原样传入该 URL，不要改写成标题、关键词或搜索语句。`
+- 引用搜索结果时使用结果编号标注来源，例如 [1]、[2]。`
+      if (hasScrapeWebTool) {
+        toolUsageSystemPrompt += `
+- 当用户给出具体 URL、要求读取/总结/分析网页，或搜索摘要不足以回答时，使用 scrape_web 读取页面内容。
+- scrape_web.url 必须原样传入目标 URL，不要改写成标题、关键词或搜索语句。`
+      }
     }
     toolUsageSystemPrompt += `
 - 若用户提到“今天/昨天/明天/现在/最新”等相对时间，请以当前时间为基准理解，不要编造不一致的绝对日期。
@@ -1960,9 +1972,10 @@ ${limitedSearchContext}
           // 保存工具调用到 AI 消息
           for (let i = 0; i < toolCalls.length; i++) {
             if (this.isWebSearchFunction(toolCalls[i].functionName)) {
-              const normalizedSearchQuery = this.normalizeWebSearchToolCallQuery(toolCalls[i], latestUserQuery)
+              const normalizedSearchQuery = this.normalizeSearchToolCallArguments(toolCalls[i], latestUserQuery)
               if (normalizedSearchQuery !== '') {
-                console.info('ChatViewModel', `[Function Calling] normalized web_search query="${normalizedSearchQuery}"`)
+                console.info('ChatViewModel',
+                  `[Function Calling] normalized search tool request="${normalizedSearchQuery}"`)
               }
             }
             aiMessage.toolCalls.push(toolCalls[i])
@@ -1980,14 +1993,15 @@ ${limitedSearchContext}
               aiMessage.searchSource = 'tool'
               aiMessage.isSearching = true
               try {
-                const args = JSON.parse(toolCalls[i].arguments) as WebSearchArgs
-                aiMessage.searchQuery = args.query
-                console.info('ChatViewModel', `[Function Calling] web_search(query="${args.query}")`)
+                const searchRequestText = this.extractSearchToolRequestText(toolCalls[i])
+                aiMessage.searchQuery = searchRequestText
+                console.info('ChatViewModel',
+                  `[Function Calling] ${toolCalls[i].functionName}(request="${searchRequestText}")`)
                 if (toolCallbacks !== undefined && toolCallbacks.onSearching !== undefined) {
-                  toolCallbacks.onSearching(args.query)
+                  toolCallbacks.onSearching(searchRequestText)
                 }
               } catch (e) {
-                console.warn('ChatViewModel', `Failed to parse web_search args: ${JSON.stringify(e)}`)
+                console.warn('ChatViewModel', `Failed to parse search tool args: ${JSON.stringify(e)}`)
               }
               onAIMessageUpdated(aiMessage)
               break
@@ -2052,7 +2066,7 @@ ${limitedSearchContext}
                   aiMessage.searchEngine = searchData.searchEngine || 'Web'
                   aiMessage.searchSource = 'tool'
                   if (searchData.query !== undefined && searchData.query !== '') {
-                    console.info('ChatViewModel', `[Function Calling] web_search result query="${searchData.query}"`)
+                    console.info('ChatViewModel', `[Function Calling] search tool result query="${searchData.query}"`)
                   }
                   for (let j = 0; j < searchData.results.length; j++) {
                     const item = searchData.results[j]
@@ -2513,13 +2527,7 @@ ${limitedSearchContext}
   }
 
   private isWebSearchFunction(functionName: string): boolean {
-    const raw = functionName as string | null | undefined
-    if (raw === undefined || raw === null) {
-      return false
-    }
-    const normalized = raw.trim().toLowerCase().replace(/[\s\-]+/g, '_')
-    return normalized === 'web_search' || normalized === 'exa_search' || normalized === 'websearch'
-      || normalized === 'search_web' || normalized === 'internet_search' || normalized === 'web_search_exa'
+    return isSearchToolFunctionName(functionName)
   }
 
   private getLatestUserQueryFromRequestMessages(requestMessages: RequestMessage[]): string {
@@ -2532,12 +2540,61 @@ ${limitedSearchContext}
     return ''
   }
 
-  private normalizeWebSearchToolCallQuery(toolCall: ToolCall, latestUserQuery: string): string {
+  private extractSearchToolRequestText(toolCall: ToolCall): string {
+    try {
+      const args = JSON.parse(toolCall.arguments) as WebSearchArgs
+      if (isScrapeWebFunctionName(toolCall.functionName)) {
+        if (args.url !== undefined) {
+          return args.url.trim()
+        }
+        if (args.query !== undefined) {
+          return args.query.trim()
+        }
+        return ''
+      }
+      if (args.query !== undefined) {
+        return args.query.trim()
+      }
+      if (args.url !== undefined) {
+        return args.url.trim()
+      }
+      return ''
+    } catch (error) {
+      console.warn('ChatViewModel', `Failed to parse search tool args: ${JSON.stringify(error)}`)
+      return ''
+    }
+  }
+
+  private normalizeSearchToolCallArguments(toolCall: ToolCall, latestUserQuery: string): string {
+    if (isScrapeWebFunctionName(toolCall.functionName)) {
+      let parsedUrl = ''
+      try {
+        const args = JSON.parse(toolCall.arguments) as WebSearchArgs
+        if (args.url !== undefined) {
+          parsedUrl = args.url.trim()
+        } else if (args.query !== undefined) {
+          parsedUrl = args.query.trim()
+        }
+      } catch (error) {
+        parsedUrl = ''
+        console.warn('ChatViewModel', `Failed to parse scrape_web args before normalize: ${JSON.stringify(error)}`)
+      }
+
+      let finalUrl = parsedUrl
+      if (finalUrl === '' && this.isUrlLikeText(latestUserQuery)) {
+        finalUrl = latestUserQuery.trim()
+      }
+      toolCall.arguments = JSON.stringify({ url: finalUrl })
+      return finalUrl
+    }
+
     let parsedQuery = ''
     try {
       const args = JSON.parse(toolCall.arguments) as WebSearchArgs
       if (args.query !== undefined) {
         parsedQuery = this.cleanSearchQuery(args.query)
+      } else if (args.url !== undefined) {
+        parsedQuery = args.url.trim()
       }
     } catch (error) {
       parsedQuery = ''
@@ -2552,7 +2609,6 @@ ${limitedSearchContext}
       finalQuery = this.cleanSearchQuery(latestUserQuery)
     }
 
-    toolCall.functionName = 'web_search'
     toolCall.arguments = JSON.stringify({ query: finalQuery })
     return finalQuery
   }

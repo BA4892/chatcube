@@ -10,9 +10,16 @@ import {
 import { ChatViewModel, ToolCallCallbacks } from '../../viewmodels/ChatViewModel'
 import { ChatTaskOrchestratorService } from '../../services/ChatTaskOrchestratorService'
 import { ToolRegistry } from '../../services/ToolRegistry'
+import { WebSearchService } from '../../services/WebSearchService'
 import { appendUniqueToolId } from './ChatToolIdHelper'
 import { syncChatMessageFromSource } from './ChatMessageActionHelper'
 import { validateProviderConfig } from '../../utils/ProviderValidationUtils'
+import {
+  LEGACY_WEB_SEARCH_TOOL_ID,
+  SCRAPE_WEB_TOOL_ID,
+  SEARCH_WEB_TOOL_ID,
+  isSearchToolId
+} from '../../utils/SearchToolIdentityUtils'
 
 export class ChatSendPrepareResult {
   shouldSend: boolean = false
@@ -43,6 +50,7 @@ export interface ChatSendFlowDependencies {
   messages: ChatMessage[]
   chatTaskOrchestrator: ChatTaskOrchestratorService
   toolRegistry: ToolRegistry
+  webSearchService: WebSearchService
   getSessionId: () => string
   getSessionTitle: () => string
   getCurrentTaskId: () => string
@@ -146,7 +154,7 @@ export class ChatSendFlow {
     forcedToolIds: string[],
     currentModelId: string
   ): Promise<void> {
-    const plan = this.buildExecutionPlan(
+    const plan = await this.buildExecutionPlan(
       messageContent,
       currentProvider,
       webSearchConversationEnabled,
@@ -230,37 +238,53 @@ export class ChatSendFlow {
     if (webSearchConversationEnabled) {
       return true
     }
-    return forcedToolIds.includes('web_search')
+    for (let i = 0; i < forcedToolIds.length; i++) {
+      if (isSearchToolId(forcedToolIds[i])) {
+        return true
+      }
+    }
+    return false
   }
 
   private filterNonSearchToolIds(toolIds: string[]): string[] {
     const ids: string[] = []
     for (let i = 0; i < toolIds.length; i++) {
-      if (toolIds[i] !== 'web_search') {
+      if (!isSearchToolId(toolIds[i])) {
         ids.push(toolIds[i])
       }
     }
     return ids
   }
 
-  private buildExecutionPlan(
+  private async buildExecutionPlan(
     messageContent: string,
     currentProvider: ModelProvider,
     webSearchConversationEnabled: boolean,
     selectedToolIds: string[],
     forcedToolIds: string[],
     currentModelId: string
-  ): ChatExecutionPlan {
+  ): Promise<ChatExecutionPlan> {
     const searchEnabled = this.shouldEnableWebSearch(webSearchConversationEnabled, forcedToolIds)
-    const enabledToolIds = this.buildEnabledToolIds(selectedToolIds, this.filterNonSearchToolIds(forcedToolIds))
-    if (searchEnabled && this.deps.toolRegistry.isToolRegistered('web_search')) {
-      appendUniqueToolId(enabledToolIds, 'web_search')
+    const enabledToolIds = this.buildEnabledToolIds(
+      this.filterNonSearchToolIds(selectedToolIds),
+      this.filterNonSearchToolIds(forcedToolIds)
+    )
+    if (searchEnabled && this.deps.toolRegistry.isToolRegistered(SEARCH_WEB_TOOL_ID)) {
+      appendUniqueToolId(enabledToolIds, SEARCH_WEB_TOOL_ID)
+    } else if (searchEnabled && this.deps.toolRegistry.isToolRegistered(LEGACY_WEB_SEARCH_TOOL_ID)) {
+      appendUniqueToolId(enabledToolIds, LEGACY_WEB_SEARCH_TOOL_ID)
+    }
+    if (searchEnabled &&
+      this.deps.toolRegistry.isToolRegistered(SCRAPE_WEB_TOOL_ID) &&
+      await this.deps.webSearchService.canExposeScrapeWebToModel()) {
+      appendUniqueToolId(enabledToolIds, SCRAPE_WEB_TOOL_ID)
     }
     if (enabledToolIds.length === 0) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.PLAIN_DIRECT)
     }
 
-    if (searchEnabled && this.allToolsAreWebSearch(enabledToolIds) && this.isPureUrlInput(messageContent)) {
+    if (searchEnabled && this.allToolsAreWebSearch(enabledToolIds) && this.isPureUrlInput(messageContent) &&
+      !enabledToolIds.includes(SCRAPE_WEB_TOOL_ID)) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.MANUAL_SEARCH, enabledToolIds)
     }
 
@@ -293,7 +317,7 @@ export class ChatSendFlow {
       return false
     }
     for (let i = 0; i < toolIds.length; i++) {
-      if (toolIds[i] !== 'web_search') {
+      if (!isSearchToolId(toolIds[i])) {
         return false
       }
     }

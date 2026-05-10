@@ -138,6 +138,16 @@ class ExaSearchRequest {
   }
 }
 
+class ExaContentsRequest {
+  ids: string[] = []
+  text: ExaSearchTextConfig = new ExaSearchTextConfig()
+
+  constructor(url: string) {
+    this.ids = [url]
+    this.text.maxCharacters = 8000
+  }
+}
+
 class TavilyExtractRequest {
   urls: string[] = []
   extract_depth: string = 'basic'
@@ -299,6 +309,20 @@ export class WebSearchService {
   async getPreferredEngineName(runtimeConfig?: SearchRuntimeConfigSnapshot): Promise<string> {
     const runtime = runtimeConfig !== undefined ? runtimeConfig : await this.getRuntimeConfigSnapshot()
     return this.resolvePreferredEngineName(runtime)
+  }
+
+  async canExposeScrapeWebToModel(runtimeConfig?: SearchRuntimeConfigSnapshot): Promise<boolean> {
+    const runtime = runtimeConfig !== undefined ? runtimeConfig : await this.getRuntimeConfigSnapshot()
+    if (!runtime.enabled) {
+      return false
+    }
+    if (runtime.searchEngine === SearchEngine.TAVILY) {
+      return runtime.tavilyApiKey !== ''
+    }
+    if (runtime.searchEngine === SearchEngine.EXA) {
+      return runtime.exaApiKey !== ''
+    }
+    return false
   }
 
   private acquireRequestController(requestId: string): HttpRequestController | null {
@@ -812,8 +836,26 @@ export class WebSearchService {
     }
   }
 
+  private buildExaHeaders(runtime: SearchRuntimeConfigSnapshot): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'x-api-key': runtime.exaApiKey
+    }
+  }
+
   private stripKnownTavilyEndpoint(url: string): string {
     const endpoints: string[] = ['/search', '/extract', '/map', '/crawl', '/research', '/usage']
+    for (let i = 0; i < endpoints.length; i++) {
+      if (url.endsWith(endpoints[i])) {
+        return url.substring(0, url.length - endpoints[i].length)
+      }
+    }
+    return url
+  }
+
+  private stripKnownExaEndpoint(url: string): string {
+    const endpoints: string[] = ['/search', '/contents']
     for (let i = 0; i < endpoints.length; i++) {
       if (url.endsWith(endpoints[i])) {
         return url.substring(0, url.length - endpoints[i].length)
@@ -825,6 +867,12 @@ export class WebSearchService {
   private buildTavilyEndpointUrl(baseUrl: string, endpoint: string): string {
     const normalized = this.normalizeBaseUrl(baseUrl, 'https://api.tavily.com')
     const base = this.stripKnownTavilyEndpoint(normalized)
+    return `${base}/${endpoint}`
+  }
+
+  private buildExaEndpointUrl(baseUrl: string, endpoint: string): string {
+    const normalized = this.normalizeBaseUrl(baseUrl, 'https://api.exa.ai')
+    const base = this.stripKnownExaEndpoint(normalized)
     return `${base}/${endpoint}`
   }
 
@@ -959,18 +1007,12 @@ export class WebSearchService {
         return new BingSearchResponse(false, query, [], '请求已取消')
       }
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'x-api-key': runtime.exaApiKey
-      }
-
       const request = new ExaSearchRequest(query, this.normalizeResultCount(resultCount))
       const body = JSON.stringify(request)
       const response = await this.httpService.postWithTimeout(
-        `${runtime.exaBaseUrl}/search`,
+        this.buildExaEndpointUrl(runtime.exaBaseUrl, 'search'),
         body,
-        headers,
+        this.buildExaHeaders(runtime),
         runtime.timeout,
         this.buildHttpOptions(runtime.timeout, controller)
       )
@@ -992,6 +1034,63 @@ export class WebSearchService {
       return new BingSearchResponse(true, query, results, '')
     } catch (error) {
       return new BingSearchResponse(false, query, [], `Exa 搜索失败: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private async exaFetchUrlContent(
+    url: string,
+    runtime: SearchRuntimeConfigSnapshot,
+    controller: HttpRequestController | null,
+    cancelCheck?: () => boolean
+  ): Promise<WebSearchResult> {
+    if (this.isCancelled(controller, cancelCheck)) {
+      return this.buildCancelledWebResult(url)
+    }
+
+    if (!this.isValidUrl(url)) {
+      return new WebSearchResult(false, url, '', '', 'URL 格式无效', undefined, 'Exa Contents')
+    }
+
+    if (runtime.exaApiKey === '') {
+      return new WebSearchResult(false, url, '', '', 'Exa API Key 未配置，无法调用 Contents', undefined, 'Exa Contents')
+    }
+
+    const fullUrl = this.normalizeContentUrl(url)
+    try {
+      const request = new ExaContentsRequest(fullUrl)
+      console.info('WebSearchService', `[Exa Contents] POST ${this.buildExaEndpointUrl(runtime.exaBaseUrl, 'contents')}`)
+      const response = await this.httpService.postWithTimeout(
+        this.buildExaEndpointUrl(runtime.exaBaseUrl, 'contents'),
+        JSON.stringify(request),
+        this.buildExaHeaders(runtime),
+        this.normalizeTimeout(runtime.timeout),
+        this.buildHttpOptions(runtime.timeout, controller)
+      )
+
+      if (!response.success) {
+        return new WebSearchResult(false, fullUrl, '', '', response.errorMessage, undefined, 'Exa Contents')
+      }
+
+      if (this.isCancelled(controller, cancelCheck)) {
+        return this.buildCancelledWebResult(fullUrl)
+      }
+
+      const errorMessage = this.extractExaErrorMessage(response.data)
+      if (errorMessage !== '') {
+        return new WebSearchResult(false, fullUrl, '', '', errorMessage, undefined, 'Exa Contents')
+      }
+
+      return this.parseExaContentsResult(response.data, fullUrl)
+    } catch (error) {
+      return new WebSearchResult(
+        false,
+        fullUrl,
+        '',
+        '',
+        `Exa Contents 失败: ${JSON.stringify(error)}`,
+        undefined,
+        'Exa Contents'
+      )
     }
   }
 
@@ -1300,6 +1399,83 @@ export class WebSearchService {
     }
 
     return results
+  }
+
+  private parseExaContentsResult(json: string, fallbackUrl: string): WebSearchResult {
+    if (json === '') {
+      return new WebSearchResult(false, fallbackUrl, '', '', 'Exa Contents 未返回内容', undefined, 'Exa Contents')
+    }
+
+    try {
+      const parsed = JSON.parse(json) as Record<string, Object>
+      const resultsValue = parsed['results']
+      if (resultsValue !== undefined && resultsValue !== null && Array.isArray(resultsValue)) {
+        const list = resultsValue as Object[]
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          if (item === null || item === undefined || typeof item !== 'object' || Array.isArray(item)) {
+            continue
+          }
+          const itemObj = item as Record<string, Object>
+          const content = this.extractExaContentsContent(itemObj)
+          if (content === '') {
+            continue
+          }
+          const resultUrl = this.readStringFromObject(itemObj, 'url')
+          const resolvedUrl = resultUrl !== '' ? resultUrl : fallbackUrl
+          let title = this.readStringFromObject(itemObj, 'title').trim()
+          if (title === '') {
+            title = this.extractTitleFromTextContent(content, resolvedUrl)
+          }
+          return new WebSearchResult(
+            true,
+            resolvedUrl,
+            title,
+            this.limitExtractedContent(content),
+            '',
+            undefined,
+            'Exa Contents'
+          )
+        }
+      }
+    } catch (error) {
+      console.error('WebSearchService', `Parse Exa contents failed: ${JSON.stringify(error)}`)
+      return new WebSearchResult(false, fallbackUrl, '', '', `Exa Contents 解析失败: ${JSON.stringify(error)}`,
+        undefined, 'Exa Contents')
+    }
+
+    return new WebSearchResult(false, fallbackUrl, '', '', 'Exa Contents 未返回正文', undefined, 'Exa Contents')
+  }
+
+  private extractExaContentsContent(itemObj: Record<string, Object>): string {
+    const text = this.readStringFromObject(itemObj, 'text').trim()
+    if (text !== '') {
+      return text
+    }
+
+    const summary = this.readStringFromObject(itemObj, 'summary').trim()
+    if (summary !== '') {
+      return summary
+    }
+
+    const highlights = itemObj['highlights']
+    if (highlights !== undefined && highlights !== null && Array.isArray(highlights)) {
+      const parts: string[] = []
+      const list = highlights as Object[]
+      for (let i = 0; i < list.length; i++) {
+        if (typeof list[i] === 'string') {
+          const value = (list[i] as string).trim()
+          if (value !== '') {
+            parts.push(value)
+          }
+        }
+      }
+      if (parts.length > 0) {
+        return parts.join('\n\n')
+      }
+    }
+
+    return ''
   }
 
   private extractExaSnippet(itemObj: Record<string, Object>): string {
@@ -1711,19 +1887,7 @@ export class WebSearchService {
     const controller = this.acquireRequestController(requestId)
 
     try {
-      // 只有 Tavily 当前接入了 provider-side Extract；其它搜索引擎保持本地网页抓取兼容路径。
-      if (runtime.searchEngine === SearchEngine.TAVILY) {
-        if (runtime.tavilyApiKey === '') {
-          return new WebSearchResult(
-            false,
-            this.normalizeContentUrl(url),
-            '',
-            '',
-            'Tavily API Key 未配置，无法调用 Extract',
-            undefined,
-            'Tavily Extract'
-          )
-        }
+      if (runtime.searchEngine === SearchEngine.TAVILY && runtime.tavilyApiKey !== '') {
         const tavilyResult = await this.tavilyExtractUrlContent(url, runtime, controller, options?.cancelCheck)
         if (tavilyResult.success || this.isCancelled(controller, options?.cancelCheck)) {
           return tavilyResult
@@ -1744,6 +1908,29 @@ export class WebSearchService {
           'Tavily Extract'
         )
       }
+
+      if (runtime.searchEngine === SearchEngine.EXA && runtime.exaApiKey !== '') {
+        const exaResult = await this.exaFetchUrlContent(url, runtime, controller, options?.cancelCheck)
+        if (exaResult.success || this.isCancelled(controller, options?.cancelCheck)) {
+          return exaResult
+        }
+        console.warn('WebSearchService', `[Exa Contents] Failed, fallback to local fetch: ${exaResult.errorMessage}`)
+        const localResult = await this.fetchUrlContentInternal(url, runtime.timeout, controller, options?.cancelCheck)
+        if (localResult.success) {
+          localResult.sourceName = 'Exa Contents失败后 URL抓取'
+          return localResult
+        }
+        return new WebSearchResult(
+          false,
+          this.normalizeContentUrl(url),
+          '',
+          '',
+          `Exa Contents 失败: ${exaResult.errorMessage}; 本地 URL 抓取失败: ${localResult.errorMessage}`,
+          undefined,
+          'Exa Contents'
+        )
+      }
+
       return await this.fetchUrlContentInternal(url, runtime.timeout, controller, options?.cancelCheck)
     } finally {
       this.releaseRequestController(requestId)

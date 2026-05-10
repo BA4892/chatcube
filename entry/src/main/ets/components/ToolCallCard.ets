@@ -1,6 +1,7 @@
 import { ToolCall, ToolResult } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
 import { buildToolArgumentsPreview, buildToolResultPreview, ToolPayloadPreview } from '../utils/ToolPayloadSummaryUtils'
+import { isScrapeWebFunctionName, isSearchWebFunctionName } from '../utils/SearchToolIdentityUtils'
 
 // 获取工具显示名称
 function getToolDisplayName(toolCall: ToolCall): string | Resource {
@@ -11,9 +12,10 @@ function getToolDisplayName(toolCall: ToolCall): string | Resource {
   if (raw === undefined || raw === null || raw.trim() === '') {
     return '未知工具'
   }
-  const normalized = raw.toLowerCase().replace(/[\s\-]+/g, '_')
-  if (normalized === 'web_search' || normalized === 'exa_search' || normalized === 'websearch'
-    || normalized === 'search_web' || normalized === 'internet_search' || normalized === 'web_search_exa') {
+  if (isScrapeWebFunctionName(raw)) {
+    return $r('app.string.web_scrape')
+  }
+  if (isSearchWebFunctionName(raw)) {
     return $r('app.string.web_search')
   }
   return raw

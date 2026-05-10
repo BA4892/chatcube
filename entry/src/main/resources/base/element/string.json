@@ -601,6 +601,10 @@
       "value": "Web Search"
     },
     {
+      "name": "web_scrape",
+      "value": "Read Web Page"
+    },
+    {
       "name": "chat_toolbar_web_search",
       "value": "Web Query"
     },
@@ -646,7 +650,7 @@
     },
     {
       "name": "search_engine_runtime_hint",
-      "value": "The search card in chat shows the actual engine used. Exa falls back to Bing(Local) on failure; Brave and Tavily use their selected provider directly."
+      "value": "After saving, chat web search uses the selected search service."
     },
     {
       "name": "search_query_optimization",
@@ -662,7 +666,7 @@
     },
     {
       "name": "search_tavily_base_url_hint",
-      "value": "Enter the Tavily root URL. Tavily search calls /search; URL-only input calls /extract and retries advanced when basic returns no body. Other search engines use local URL fetching instead of Tavily endpoints."
+      "value": "Enter the Tavily service URL. Keep the default unless you use a proxy or custom service."
     },
     {
       "name": "search_exa_api_key",
@@ -1406,7 +1410,7 @@
     },
     {
       "name": "search_service_config_desc",
-      "value": "Configure the chat web search capability and choose which search provider it runs on."
+      "value": "Enable web search in chat and choose a search service."
     },
     {
       "name": "search_service_card_title",

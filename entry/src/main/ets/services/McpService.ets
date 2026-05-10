@@ -19,6 +19,7 @@ import {
 import { HttpService } from './HttpService'
 import { getPreferencesService, PreferenceKeys, PreferencesService } from './PreferencesService'
 import { getToolRegistry, RegisteredTool, ToolExecutor, ToolRegistry } from './ToolRegistry'
+import { isSearchToolId } from '../utils/SearchToolIdentityUtils'
 
 const MCP_PROTOCOL_VERSION = '2025-06-18'
 const MCP_DEFAULT_TIMEOUT_MS = 30000
@@ -149,7 +150,6 @@ export class McpService {
   private toolRegistry: ToolRegistry
   private sessionIds: Map<string, string> = new Map()
   private negotiatedProtocolVersions: Map<string, string> = new Map()
-  private readonly chatSearchToolId: string = 'web_search'
 
   private constructor() {
     this.preferencesService = getPreferencesService()
@@ -227,7 +227,7 @@ export class McpService {
     const ids: string[] = []
     for (let i = 0; i < toolIds.length; i++) {
       const toolId = toolIds[i].trim()
-      if (toolId === '' || toolId === this.chatSearchToolId) {
+      if (toolId === '' || isSearchToolId(toolId)) {
         continue
       }
       if (!ids.includes(toolId)) {

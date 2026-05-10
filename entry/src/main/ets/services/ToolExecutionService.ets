@@ -1,5 +1,12 @@
 import { ToolCall, ToolResult } from '../models/ChatModels'
 import { getToolRegistry, RegisteredTool, ToolRegistry } from './ToolRegistry'
+import {
+  LEGACY_WEB_SEARCH_TOOL_ID,
+  SCRAPE_WEB_TOOL_ID,
+  SEARCH_WEB_TOOL_ID,
+  isScrapeWebFunctionName,
+  isSearchWebFunctionName
+} from '../utils/SearchToolIdentityUtils'
 
 // 取消检查回调类型
 type CancelCheckCallback = () => boolean
@@ -62,11 +69,17 @@ export class ToolExecutionService {
       }
     }
 
-    const normalized = functionName.toLowerCase().replace(/[\s\-]+/g, '_')
-    if ((normalized === 'exa_search' || normalized === 'websearch' || normalized === 'search_web'
-      || normalized === 'internet_search' || normalized === 'web_search_exa')
-      && this.registry.isToolRegistered('web_search')) {
-      return 'web_search'
+    if (isScrapeWebFunctionName(functionName) && this.registry.isToolRegistered(SCRAPE_WEB_TOOL_ID)) {
+      return SCRAPE_WEB_TOOL_ID
+    }
+
+    if (isSearchWebFunctionName(functionName)) {
+      if (this.registry.isToolRegistered(SEARCH_WEB_TOOL_ID)) {
+        return SEARCH_WEB_TOOL_ID
+      }
+      if (this.registry.isToolRegistered(LEGACY_WEB_SEARCH_TOOL_ID)) {
+        return LEGACY_WEB_SEARCH_TOOL_ID
+      }
     }
     return undefined
   }

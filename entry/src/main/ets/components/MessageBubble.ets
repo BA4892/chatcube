@@ -21,6 +21,7 @@ import {
   getMarkdownTitleSizes
 } from '../utils/MarkdownTypographyUtils'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { isSearchToolFunctionName, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 
 const DOMAIN = 0x0002
 const TAG = 'MessageBubble'
@@ -1873,20 +1874,14 @@ export struct MessageBubble {
   }
 
   private isWebSearchToolCall(toolCall: ToolCall): boolean {
-    if (toolCall.toolId.trim() === 'web_search') {
+    if (isSearchToolId(toolCall.toolId)) {
       return true
     }
     return this.isWebSearchFunctionName(toolCall.functionName)
   }
 
   private isWebSearchFunctionName(functionName: string): boolean {
-    const normalizedName = functionName.trim().toLowerCase().replace(/[\s\-]+/g, '_')
-    return normalizedName === 'web_search' ||
-      normalizedName === 'exa_search' ||
-      normalizedName === 'websearch' ||
-      normalizedName === 'search_web' ||
-      normalizedName === 'internet_search' ||
-      normalizedName === 'web_search_exa'
+    return isSearchToolFunctionName(functionName)
   }
 
   private getSearchSourceLabel(): string {
