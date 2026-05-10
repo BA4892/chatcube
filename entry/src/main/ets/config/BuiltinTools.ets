@@ -146,13 +146,13 @@ function createWebSearchToolDefinition(): ToolDefinition {
   const parameters = new ToolParameters()
   parameters.addProperty('query', new ToolParameterProperty(
     'string',
-    '搜索关键词或网页 URL。普通联网问题传入简洁关键词；当用户只提供 URL，或要求读取、总结、分析网页时，必须原样传入该 URL。'
+    '聚焦搜索关键词或网页 URL。普通联网问题传入简洁关键词；当用户只提供 URL，或要求读取、总结、分析网页时，原样传入该 URL。'
   ))
   parameters.addRequired('query')
 
   const func = new ToolFunction(
     'web_search',
-    '搜索互联网或读取网页 URL 获取外部信息。当用户询问实时信息、新闻、天气、股票、最新事件等需要联网查询的内容时使用此工具；当用户只输入 URL 或要求总结/分析网页时，也必须使用此工具并原样传入 URL。',
+    '搜索互联网或读取网页 URL 获取外部信息。先评估是否真的需要联网；普通常识、稳定知识和纯生成任务请用自身知识回答。每次搜索都有真实成本，请生成聚焦关键词，并在需要更多证据时用不同关键词进行多次搜索。回答中引用搜索结果时使用 [1]、[2] 这样的来源编号。当用户只输入 URL 或要求总结/分析网页时，原样传入 URL。',
     parameters
   )
 

@@ -31,16 +31,6 @@ import {
   cleanSearchQuery as cleanSearchQueryShared,
   normalizeRelativeTimeForSearchQuery as normalizeRelativeTimeForSearchQueryShared
 } from '../utils/SearchQueryUtils'
-import {
-  applyToolCallBudget,
-  buildWebSearchLimitFinalAnswerInstruction,
-  createWebSearchLimitToolResult,
-  filterToolsForWebSearchBudget,
-  isWebSearchFunctionName,
-  MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE,
-  stripLeakedToolInvocationText,
-  ToolCallBudgetDecision
-} from '../pages/chat/ChatToolBudgetHelper'
 
 // 标题生成状态
 export interface TitleGenerationCallbacks {
@@ -116,8 +106,8 @@ export class ChatViewModel {
   private titleCallbacks: TitleGenerationCallbacks | null = null
   // 最大重试次数
   private readonly MAX_TITLE_RETRY = 3
-  // 最大工具调用轮次
-  private readonly MAX_TOOL_ITERATIONS = 6
+  // 最大工具步骤数，仅作为防无限循环兜底，不限制单个工具的调用次数
+  private readonly MAX_TOOL_STEPS = 256
   // 取消令牌：用于停止”尚未开始发送的请求”（例如退出页面时）
   private cancelToken: number = 0
   // 历史附件懒加载配置
@@ -1619,12 +1609,13 @@ ${limitedSearchContext}
 - 绝大多数普通问答不需要调用工具，请优先用自身知识直接回答。
 - 只有在用户请求明确依赖外部实时信息、外部文档、外部仓库、外部笔记或其他外部系统状态时才调用工具。
 - 对外部系统有副作用的工具（例如创建、修改、删除、提交、上传）必须先确认用户意图与目标对象，不要擅自操作。
-- 编程、写作、翻译、数学、创意等纯生成任务，若不依赖外部状态，绝对不要调用任何工具。
-- 工具只能通过系统提供的结构化 function calling 通道发起，不要把 DSML、XML、JSON 或 function call 文本输出给用户。`
+- 编程、写作、翻译、数学、创意等纯生成任务，若不依赖外部状态，绝对不要调用任何工具。`
     if (hasWebSearchTool) {
       toolUsageSystemPrompt += `
-- 针对同一个用户问题，最多调用 web_search ${MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE} 次；应用会强制执行该限制，达到上限后必须根据已获取的内容整理并返回结果。
-- 生成 web_search.query 时优先保留用户原始关键词，不要擅自改写实体、地点和时间。
+- 使用 web_search 前先评估是否真的需要联网；普通常识、稳定知识和纯生成任务优先用自身知识回答。
+- 生成 web_search.query 时使用聚焦关键词，优先保留用户原始实体、地点和时间；一次结果不足以回答时，可以用不同关键词继续搜索。
+- 每次搜索都有真实成本，避免重复查询同一含义的问题，拿到足够证据后整理最终回答。
+- 引用搜索结果时使用结果编号标注来源，例如 [1]、[2]。
 - 当用户输入只包含一个 URL，或明确要求读取、总结、分析某个网页时，必须调用 web_search。
 - URL 读取场景下，web_search.query 必须原样传入该 URL，不要改写成标题、关键词或搜索语句。`
     }
@@ -1715,8 +1706,7 @@ ${limitedSearchContext}
       toolCallbacks,
       reasoningLevel,
       requestTemperature,
-      0,  // 初始迭代次数
-      0,  // 初始 web_search 调用次数
+      0,  // 初始工具步骤
       snapshotSessionId,
       snapshotSession,
       shouldAutoGenerateTitle,
@@ -1765,7 +1755,6 @@ ${limitedSearchContext}
     shouldAutoGenerateTitle: boolean,
     requestId: string
   ): Promise<void> {
-    this.stripLeakedToolInvocationIfNeeded(aiMessage)
     this.fillFallbackFromSearchSummaryIfNeeded(aiMessage)
     this.fillEmptyAIContentPlaceholder(aiMessage)
     aiMessage.isGenerating = false
@@ -1785,82 +1774,6 @@ ${limitedSearchContext}
     onComplete()
   }
 
-  private stripLeakedToolInvocationIfNeeded(aiMessage: ChatMessage): void {
-    if (!this.hasToolContext(aiMessage)) {
-      return
-    }
-    aiMessage.content = stripLeakedToolInvocationText(aiMessage.content)
-  }
-
-  private hasToolContext(aiMessage: ChatMessage): boolean {
-    return aiMessage.toolCalls.length > 0 ||
-      aiMessage.toolResults.length > 0 ||
-      aiMessage.searchReferences.length > 0
-  }
-
-  private mergeToolResultsWithBudgetBlocks(
-    toolCalls: ToolCall[],
-    budgetDecision: ToolCallBudgetDecision,
-    executedToolResults: ToolResult[]
-  ): ToolResult[] {
-    const toolResults: ToolResult[] = []
-    let executedIndex = 0
-    for (let i = 0; i < toolCalls.length; i++) {
-      const toolCall = toolCalls[i]
-      if (this.isBudgetBlockedToolCall(toolCall, budgetDecision.blockedToolCalls)) {
-        toolResults.push(createWebSearchLimitToolResult(toolCall))
-      } else {
-        if (executedIndex < executedToolResults.length) {
-          toolResults.push(executedToolResults[executedIndex])
-        } else {
-          toolResults.push(new ToolResult(
-            toolCall.id,
-            JSON.stringify({ error: '工具执行结果缺失' }),
-            true,
-            toolCall.displayName,
-            toolCall.sourceLabel
-          ))
-        }
-        executedIndex++
-      }
-    }
-    return toolResults
-  }
-
-  private isBudgetBlockedToolCall(toolCall: ToolCall, blockedToolCalls: ToolCall[]): boolean {
-    for (let i = 0; i < blockedToolCalls.length; i++) {
-      if (this.isSameToolCall(toolCall, blockedToolCalls[i])) {
-        return true
-      }
-    }
-    return false
-  }
-
-  private isSameToolCall(left: ToolCall, right: ToolCall): boolean {
-    if (left === right) {
-      return true
-    }
-    return left.id !== '' && left.id === right.id
-  }
-
-  private hasCancelledToolResult(toolResults: ToolResult[]): boolean {
-    for (let i = 0; i < toolResults.length; i++) {
-      if (toolResults[i].content.includes('"cancelled":true')) {
-        return true
-      }
-    }
-    return false
-  }
-
-  private hasWebSearchToolCall(toolCalls: ToolCall[]): boolean {
-    for (let i = 0; i < toolCalls.length; i++) {
-      if (this.isWebSearchFunction(toolCalls[i].functionName)) {
-        return true
-      }
-    }
-    return false
-  }
-
   // 工具调用循环
   private async executeToolCallLoop(
     apiConfig: AIApiConfig,
@@ -1874,8 +1787,7 @@ ${limitedSearchContext}
     toolCallbacks: ToolCallCallbacks | undefined,
     reasoningLevel: ReasoningLevel,
     requestTemperature: number,
-    iteration: number,
-    webSearchCallCount: number,
+    toolStepIndex: number,
     snapshotSessionId: string,
     snapshotSession: ChatSession | null,
     shouldAutoGenerateTitle: boolean,
@@ -1894,18 +1806,12 @@ ${limitedSearchContext}
       return
     }
 
-    const toolsForThisRound = filterToolsForWebSearchBudget(tools, webSearchCallCount)
-    const toolsEnabledInThisRound = iteration < this.MAX_TOOL_ITERATIONS && toolsForThisRound.length > 0
+    const toolsEnabledInThisRound = toolStepIndex < this.MAX_TOOL_STEPS
     if (!toolsEnabledInThisRound) {
-      if (iteration >= this.MAX_TOOL_ITERATIONS) {
-        console.warn('ChatViewModel', `Max tool iterations (${this.MAX_TOOL_ITERATIONS}) reached, forcing final answer without tools`)
-      } else if (tools.length > 0 && toolsForThisRound.length === 0) {
-        console.warn('ChatViewModel',
-          `web_search limit (${MAX_WEB_SEARCH_CALLS_PER_USER_MESSAGE}) reached, forcing final answer without search tool`)
-      }
+      console.warn('ChatViewModel', `Max tool steps (${this.MAX_TOOL_STEPS}) reached, forcing final answer without tools`)
     }
 
-    console.info('ChatViewModel', `Tool call loop iteration ${iteration + 1}`)
+    console.info('ChatViewModel', `Tool step ${toolStepIndex + 1}`)
     let roundContentBuffer = ''
     let roundReasoningBuffer = ''
     let toolContinuationReasoningContent = ''
@@ -2051,7 +1957,7 @@ ${limitedSearchContext}
           roundContentBuffer = ''
           roundReasoningBuffer = ''
 
-          // 保存工具调用到 AI 消息，并在执行前应用本轮工具预算。
+          // 保存工具调用到 AI 消息
           for (let i = 0; i < toolCalls.length; i++) {
             if (this.isWebSearchFunction(toolCalls[i].functionName)) {
               const normalizedSearchQuery = this.normalizeWebSearchToolCallQuery(toolCalls[i], latestUserQuery)
@@ -2061,11 +1967,6 @@ ${limitedSearchContext}
             }
             aiMessage.toolCalls.push(toolCalls[i])
           }
-          const budgetDecision = applyToolCallBudget(toolCalls, webSearchCallCount)
-          if (budgetDecision.blockedToolCalls.length > 0) {
-            console.warn('ChatViewModel',
-              `Blocked ${budgetDecision.blockedToolCalls.length} web_search calls because search limit is reached`)
-          }
           onAIMessageUpdated(aiMessage)
 
           // 通知工具调用开始
@@ -2073,13 +1974,13 @@ ${limitedSearchContext}
             toolCallbacks.onToolCallStarted(toolCalls)
           }
 
-          // 检查是否有实际执行的搜索工具，更新搜索状态。被预算拦截的搜索不进入“正在搜索”态。
-          for (let i = 0; i < budgetDecision.executableToolCalls.length; i++) {
-            if (this.isWebSearchFunction(budgetDecision.executableToolCalls[i].functionName)) {
+          // 检查是否是搜索工具，更新搜索状态
+          for (let i = 0; i < toolCalls.length; i++) {
+            if (this.isWebSearchFunction(toolCalls[i].functionName)) {
               aiMessage.searchSource = 'tool'
               aiMessage.isSearching = true
               try {
-                const args = JSON.parse(budgetDecision.executableToolCalls[i].arguments) as WebSearchArgs
+                const args = JSON.parse(toolCalls[i].arguments) as WebSearchArgs
                 aiMessage.searchQuery = args.query
                 console.info('ChatViewModel', `[Function Calling] web_search(query="${args.query}")`)
                 if (toolCallbacks !== undefined && toolCallbacks.onSearching !== undefined) {
@@ -2094,16 +1995,13 @@ ${limitedSearchContext}
           }
 
           // 执行工具调用
-          const executedToolResults = budgetDecision.executableToolCalls.length > 0 ?
-            await this.toolExecutionService.executeToolCalls(budgetDecision.executableToolCalls) :
-            []
+          const toolResults = await this.toolExecutionService.executeToolCalls(toolCalls)
           if (isCancelledFn()) {
             return
           }
-          const toolResults = this.mergeToolResultsWithBudgetBlocks(toolCalls, budgetDecision, executedToolResults)
 
           // 检查工具执行是否被取消
-          if (this.hasCancelledToolResult(toolResults)) {
+          if (toolResults.length > 0 && toolResults[0].content.includes('"cancelled":true')) {
             console.info('ChatViewModel', 'Tool execution was cancelled')
             aiMessage.isGenerating = false
             onAIMessageUpdated(aiMessage)
@@ -2193,9 +2091,6 @@ ${limitedSearchContext}
             )
             requestMessages.push(toolResultMsg)
           }
-          if (budgetDecision.searchLimitReached && this.hasWebSearchToolCall(toolCalls)) {
-            requestMessages.push(new RequestMessage('system', buildWebSearchLimitFinalAnswerInstruction()))
-          }
 
           // 清空 AI 消息内容，准备接收新的回复
           aiMessage.content = ''
@@ -2214,8 +2109,7 @@ ${limitedSearchContext}
             toolCallbacks,
             reasoningLevel,
             requestTemperature,
-            iteration + 1,
-            budgetDecision.webSearchCallCount,
+            toolStepIndex + 1,
             snapshotSessionId,
             snapshotSession,
             shouldAutoGenerateTitle,
@@ -2285,7 +2179,7 @@ ${limitedSearchContext}
         this.clearPendingAIMessageIfMatches(aiMessage.id)
         this.unregisterActiveRequest(requestId)
       },
-	      requestTemperature,
+      requestTemperature,
       this.appStateManager.getDefaultMaxTokens(),
       (reasoningContent: string) => {
         if (isCancelledFn()) {
@@ -2309,8 +2203,8 @@ ${limitedSearchContext}
         }
       },
       reasoningLevel,
-	      toolsEnabledInThisRound ? toolsForThisRound : undefined,
-      toolsEnabledInThisRound ? 'auto' : undefined,
+      toolsEnabledInThisRound ? tools : undefined,
+      undefined,
       (toolCallDeltas: ToolCallDelta[]) => {
         if (isCancelledFn() || !toolsEnabledInThisRound || toolCallDeltas.length <= 0) {
           return
@@ -2618,9 +2512,15 @@ ${limitedSearchContext}
     return contentForAI.includes('URL 读取结果:') && contentForAI.includes('状态: 失败')
   }
 
-	  private isWebSearchFunction(functionName: string): boolean {
-	    return isWebSearchFunctionName(functionName)
-	  }
+  private isWebSearchFunction(functionName: string): boolean {
+    const raw = functionName as string | null | undefined
+    if (raw === undefined || raw === null) {
+      return false
+    }
+    const normalized = raw.trim().toLowerCase().replace(/[\s\-]+/g, '_')
+    return normalized === 'web_search' || normalized === 'exa_search' || normalized === 'websearch'
+      || normalized === 'search_web' || normalized === 'internet_search' || normalized === 'web_search_exa'
+  }
 
   private getLatestUserQueryFromRequestMessages(requestMessages: RequestMessage[]): string {
     for (let i = requestMessages.length - 1; i >= 0; i--) {
