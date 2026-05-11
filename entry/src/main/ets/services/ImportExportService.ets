@@ -129,6 +129,7 @@ export interface AssistantExportData {
   presencePenalty?: number
   frequencyPenaltyEnabled?: boolean
   frequencyPenalty?: number
+  reasoningLevelPreference?: string
   isDefault: boolean
   createdAt: number
   updatedAt: number
@@ -474,6 +475,7 @@ export class ImportExportService {
         presencePenalty: assistant.presencePenalty,
         frequencyPenaltyEnabled: assistant.frequencyPenaltyEnabled,
         frequencyPenalty: assistant.frequencyPenalty,
+        reasoningLevelPreference: assistant.reasoningLevelPreference || '',
         isDefault: assistant.isDefault,
         createdAt: assistant.createdAt,
         updatedAt: assistant.updatedAt,
@@ -1163,6 +1165,7 @@ export class ImportExportService {
       assistant.presencePenalty = assistantData.presencePenalty !== undefined ? assistantData.presencePenalty : 0
       assistant.frequencyPenaltyEnabled = assistantData.frequencyPenaltyEnabled === true
       assistant.frequencyPenalty = assistantData.frequencyPenalty !== undefined ? assistantData.frequencyPenalty : 0
+      assistant.reasoningLevelPreference = assistantData.reasoningLevelPreference || ''
       assistant.isDefault = assistant.id === DEFAULT_ASSISTANT_ID || assistantData.isDefault === true
       assistant.createdAt = assistantData.createdAt
       assistant.updatedAt = assistantData.updatedAt

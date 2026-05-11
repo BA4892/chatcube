@@ -1,5 +1,6 @@
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { ModelProvider } from '../models/ChatModels'
+import { ReasoningLevel } from '../models/ChatModels'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { AssistantService } from '../services/AssistantService'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
@@ -115,6 +116,8 @@ struct AssistantManagePage {
   @Local formPresencePenalty: number = 0
   @Local formFrequencyPenaltyEnabled: boolean = false
   @Local formFrequencyPenalty: number = 0
+  // 助手推理强度偏好,取值为 ReasoningLevel 枚举字符串,空串代表未设置
+  @Local formReasoningLevelPreference: string = ''
   @Local showModelSheet: boolean = false
   @Local showAvatarEditorSheet: boolean = false
   @Local assistantAvatarRenderTick: number = 0
@@ -229,6 +232,7 @@ struct AssistantManagePage {
     this.formPresencePenalty = assistant.presencePenalty
     this.formFrequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     this.formFrequencyPenalty = assistant.frequencyPenalty
+    this.formReasoningLevelPreference = assistant.reasoningLevelPreference || ''
   }
 
   private startNewAssistant(): void {
@@ -252,6 +256,7 @@ struct AssistantManagePage {
     this.formPresencePenalty = 0
     this.formFrequencyPenaltyEnabled = false
     this.formFrequencyPenalty = 0
+    this.formReasoningLevelPreference = ''
   }
 
   private patchAssistantInMemory(assistant: Assistant): void {
@@ -386,6 +391,7 @@ struct AssistantManagePage {
     assistant.presencePenalty = this.formPresencePenalty
     assistant.frequencyPenaltyEnabled = this.formFrequencyPenaltyEnabled
     assistant.frequencyPenalty = this.formFrequencyPenalty
+    assistant.reasoningLevelPreference = this.formReasoningLevelPreference
     assistant.createdAt = this.editingCreatedAt
     assistant.sortOrder = this.editingSortOrder
     assistant.isDefault = this.editingIsDefault
@@ -711,6 +717,7 @@ struct AssistantManagePage {
       this.TopPRow()
       this.PresencePenaltyRow()
       this.FrequencyPenaltyRow()
+      this.ReasoningLevelRow()
 
       Row({ space: 12 }) {
         Button($r('app.string.save'))
@@ -1159,6 +1166,94 @@ struct AssistantManagePage {
     .padding(14)
     .backgroundColor(getAppUiState().themeBackground)
     .borderRadius(16)
+  }
+
+  // 助手级推理强度偏好,空串表示跟随全局/会话;否则按助手打开新会话时会使用此档位
+  @Builder
+  private ReasoningLevelRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text($r('app.string.assistant_reasoning_level_title'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Text(this.getReasoningLevelPreferenceText(this.formReasoningLevelPreference))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ right: 6 })
+
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(12)
+          .fontColor([$r('app.color.text_tertiary')])
+      }
+      .width('100%')
+      .bindMenu(this.ReasoningLevelMenuBuilder())
+
+      Text($r('app.string.assistant_reasoning_level_hint'))
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private ReasoningLevelMenuBuilder() {
+    Menu() {
+      this.ReasoningLevelMenuItem('')
+      this.ReasoningLevelMenuItem(ReasoningLevel.OFF)
+      this.ReasoningLevelMenuItem(ReasoningLevel.AUTO)
+      this.ReasoningLevelMenuItem(ReasoningLevel.LOW)
+      this.ReasoningLevelMenuItem(ReasoningLevel.MEDIUM)
+      this.ReasoningLevelMenuItem(ReasoningLevel.HIGH)
+      this.ReasoningLevelMenuItem(ReasoningLevel.XHIGH)
+    }
+  }
+
+  @Builder
+  private ReasoningLevelMenuItem(value: string) {
+    if (this.formReasoningLevelPreference === value) {
+      MenuItem({
+        startIcon: $r('sys.symbol.checkmark'),
+        content: this.getReasoningLevelPreferenceText(value)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.formReasoningLevelPreference = value
+        })
+    } else {
+      MenuItem({
+        content: this.getReasoningLevelPreferenceText(value)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.formReasoningLevelPreference = value
+        })
+    }
+  }
+
+  private getReasoningLevelPreferenceText(value: string): ResourceStr {
+    switch (value) {
+      case ReasoningLevel.OFF:
+        return $r('app.string.reasoning_level_off')
+      case ReasoningLevel.AUTO:
+        return $r('app.string.reasoning_level_auto')
+      case ReasoningLevel.LOW:
+        return $r('app.string.reasoning_level_low')
+      case ReasoningLevel.MEDIUM:
+        return $r('app.string.reasoning_level_medium')
+      case ReasoningLevel.HIGH:
+        return $r('app.string.reasoning_level_high')
+      case ReasoningLevel.XHIGH:
+        return $r('app.string.reasoning_level_xhigh')
+      default:
+        return $r('app.string.assistant_reasoning_level_follow_global')
+    }
   }
 
   @Builder

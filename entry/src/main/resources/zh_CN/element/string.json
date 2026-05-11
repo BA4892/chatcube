@@ -2141,6 +2141,18 @@
       "value": "覆盖频率惩罚"
     },
     {
+      "name": "assistant_reasoning_level_title",
+      "value": "默认推理强度"
+    },
+    {
+      "name": "assistant_reasoning_level_hint",
+      "value": "使用此助手开启新对话时生效；留空代表跟随全局默认"
+    },
+    {
+      "name": "assistant_reasoning_level_follow_global",
+      "value": "跟随全局"
+    },
+    {
       "name": "assistant_name_required",
       "value": "请输入助手名称"
     },

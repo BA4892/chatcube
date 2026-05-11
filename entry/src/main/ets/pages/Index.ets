@@ -151,6 +151,8 @@ struct Index {
   @Local editingAssistantCreatedAt: number = 0
   @Local editingAssistantSortOrder: number = 0
   @Local editingAssistantIsDefault: boolean = false
+  // 简化编辑器不暴露推理偏好 UI,这里仅用于在 save 时把原值回填到新 Assistant 对象避免丢失
+  @Local editingAssistantReasoningLevelPreference: string = ''
   @Local assistantFormName: string = ''
   @Local assistantFormAvatarSymbol: string = 'AI'
   @Local assistantFormColor: string = DEFAULT_PRIMARY_COLOR
@@ -2190,6 +2192,7 @@ struct Index {
     this.assistantFormDefaultModelName = ''
     this.assistantFormTemperatureEnabled = false
     this.assistantFormTemperature = 0.7
+    this.editingAssistantReasoningLevelPreference = ''
   }
 
   private fillAssistantEditorForm(assistant: Assistant): void {
@@ -2206,6 +2209,7 @@ struct Index {
     this.assistantFormDefaultModelName = assistant.defaultModelName
     this.assistantFormTemperatureEnabled = assistant.temperatureEnabled
     this.assistantFormTemperature = assistant.temperature
+    this.editingAssistantReasoningLevelPreference = assistant.reasoningLevelPreference || ''
   }
 
   private setAssistantFormAvatarSymbol(value: string): void {
@@ -2279,6 +2283,7 @@ struct Index {
     assistant.defaultModelName = this.assistantFormDefaultModelName
     assistant.temperatureEnabled = this.assistantFormTemperatureEnabled
     assistant.temperature = this.assistantFormTemperature
+    assistant.reasoningLevelPreference = this.editingAssistantReasoningLevelPreference
     assistant.createdAt = this.editingAssistantCreatedAt
     assistant.sortOrder = this.editingAssistantSortOrder
     assistant.isDefault = this.editingAssistantIsDefault

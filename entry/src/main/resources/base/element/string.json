@@ -2141,6 +2141,18 @@
       "value": "Override Frequency Penalty"
     },
     {
+      "name": "assistant_reasoning_level_title",
+      "value": "Default Reasoning Effort"
+    },
+    {
+      "name": "assistant_reasoning_level_hint",
+      "value": "Takes effect when starting a new chat with this assistant; empty means follow system default."
+    },
+    {
+      "name": "assistant_reasoning_level_follow_global",
+      "value": "Follow System"
+    },
+    {
       "name": "assistant_name_required",
       "value": "Please enter an assistant name"
     },

@@ -202,6 +202,7 @@ export class DatabaseService {
 	        presence_penalty REAL DEFAULT 0,
 	        frequency_penalty_enabled INTEGER DEFAULT 0,
 	        frequency_penalty REAL DEFAULT 0,
+	        reasoning_level_preference TEXT DEFAULT '',
 	        is_default INTEGER DEFAULT 0,
 	        created_at INTEGER,
 	        updated_at INTEGER,
@@ -625,6 +626,7 @@ export class DatabaseService {
 	      presence_penalty: assistant.presencePenalty,
 	      frequency_penalty_enabled: assistant.frequencyPenaltyEnabled ? 1 : 0,
 	      frequency_penalty: assistant.frequencyPenalty,
+	      reasoning_level_preference: assistant.reasoningLevelPreference || '',
 	      is_default: assistant.isDefault ? 1 : 0,
 	      created_at: assistant.createdAt,
 	      updated_at: assistant.updatedAt,
@@ -686,6 +688,11 @@ export class DatabaseService {
 	      assistant.frequencyPenalty = resultSet.getDouble(resultSet.getColumnIndex('frequency_penalty'))
 	    } catch (error) {
 	      assistant.frequencyPenalty = 0
+	    }
+	    try {
+	      assistant.reasoningLevelPreference = this.safeGetString(resultSet, 'reasoning_level_preference')
+	    } catch (error) {
+	      assistant.reasoningLevelPreference = ''
 	    }
 	    try {
 	      assistant.isDefault = resultSet.getLong(resultSet.getColumnIndex('is_default')) === 1
@@ -789,7 +796,8 @@ export class DatabaseService {
       `presence_penalty_enabled INTEGER DEFAULT 0`,
       `presence_penalty REAL DEFAULT 0`,
       `frequency_penalty_enabled INTEGER DEFAULT 0`,
-      `frequency_penalty REAL DEFAULT 0`
+      `frequency_penalty REAL DEFAULT 0`,
+      `reasoning_level_preference TEXT DEFAULT ''`
     ]
     for (const def of columns) {
       try {
