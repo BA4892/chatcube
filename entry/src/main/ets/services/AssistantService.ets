@@ -1,10 +1,4 @@
-import {
-  Assistant,
-  DEFAULT_ASSISTANT_ID,
-  ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX,
-  ASSISTANT_MAX_TOKENS_LIMIT
-} from '../models/AssistantModels'
-import { ModelRole, ReasoningLevel } from '../models/ChatModels'
+import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { getAppUiState, setAppUiStateValue } from '../state/AppUiState'
@@ -22,34 +16,6 @@ export class AssistantRuntimeConfig {
   presencePenalty: number = 0
   frequencyPenaltyEnabled: boolean = false
   frequencyPenalty: number = 0
-}
-
-export class ResolvedAssistantModel {
-  providerId: string = ''
-  modelId: string = ''
-  modelName: string = ''
-  providerName: string = ''
-
-  constructor(providerId: string = '', modelId: string = '', modelName: string = '', providerName: string = '') {
-    this.providerId = providerId
-    this.modelId = modelId
-    this.modelName = modelName
-    this.providerName = providerName
-  }
-
-  isConfigured(): boolean {
-    return this.providerId !== '' && this.modelId !== ''
-  }
-}
-
-class AssistantPresetMessageData {
-  role: string
-  content: string
-
-  constructor(role: string, content: string) {
-    this.role = role
-    this.content = content
-  }
 }
 
 /**
@@ -105,116 +71,7 @@ export class AssistantService {
     } else if (assistant.temperature > 2) {
       assistant.temperature = 2
     }
-    assistant.contextMessageSize = this.clampInteger(
-      assistant.contextMessageSize,
-      0,
-      ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX
-    )
-    assistant.maxTokens = this.clampInteger(assistant.maxTokens, 0, ASSISTANT_MAX_TOKENS_LIMIT)
-    assistant.reasoningLevel = this.normalizeReasoningLevel(assistant.reasoningLevel)
-    assistant.customHeadersJson = this.normalizeJsonObjectText(assistant.customHeadersJson)
-    assistant.customBodiesJson = this.normalizeJsonObjectText(assistant.customBodiesJson)
-    assistant.mcpServerIdsJson = this.normalizeStringArrayJsonText(assistant.mcpServerIdsJson)
-    assistant.quickMessageIdsJson = this.normalizeStringArrayJsonText(assistant.quickMessageIdsJson)
-    assistant.tagsJson = this.normalizeStringArrayJsonText(assistant.tagsJson)
-    assistant.presetMessagesJson = this.normalizePresetMessagesJsonText(assistant.presetMessagesJson)
     return assistant
-  }
-
-  private clampInteger(value: number, min: number, max: number): number {
-    if (Number.isNaN(value) || value === Infinity || value === -Infinity) {
-      return min
-    }
-    const normalized = Math.floor(value)
-    if (normalized < min) {
-      return min
-    }
-    if (normalized > max) {
-      return max
-    }
-    return normalized
-  }
-
-  private normalizeReasoningLevel(value: string): string {
-    const normalized = value.trim()
-    switch (normalized) {
-      case '':
-      case ReasoningLevel.OFF:
-      case ReasoningLevel.AUTO:
-      case ReasoningLevel.LOW:
-      case ReasoningLevel.MEDIUM:
-      case ReasoningLevel.HIGH:
-      case ReasoningLevel.XHIGH:
-        return normalized
-      default:
-        return ''
-    }
-  }
-
-  private normalizeJsonObjectText(raw: string): string {
-    const trimmed = raw.trim()
-    if (trimmed === '') {
-      return ''
-    }
-    try {
-      const parsed = JSON.parse(trimmed) as Object
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed as Array<Object>)) {
-        return ''
-      }
-      return JSON.stringify(parsed)
-    } catch (_error) {
-      return ''
-    }
-  }
-
-  private normalizeStringArrayJsonText(raw: string): string {
-    const trimmed = raw.trim()
-    if (trimmed === '') {
-      return ''
-    }
-    try {
-      const parsed = JSON.parse(trimmed) as Object[]
-      const values: string[] = []
-      for (let i = 0; i < parsed.length; i++) {
-        if (typeof parsed[i] !== 'string') {
-          continue
-        }
-        const value = (parsed[i] as string).trim()
-        if (value !== '' && !values.includes(value)) {
-          values.push(value)
-        }
-      }
-      return values.length > 0 ? JSON.stringify(values) : ''
-    } catch (_error) {
-      return ''
-    }
-  }
-
-  private normalizePresetMessagesJsonText(raw: string): string {
-    const trimmed = raw.trim()
-    if (trimmed === '') {
-      return ''
-    }
-    try {
-      const parsed = JSON.parse(trimmed) as Array<Record<string, Object>>
-      const messages: AssistantPresetMessageData[] = []
-      for (let i = 0; i < parsed.length; i++) {
-        const role = parsed[i]['role']
-        const content = parsed[i]['content']
-        if (typeof role !== 'string' || typeof content !== 'string') {
-          continue
-        }
-        const normalizedRole = role.trim()
-        const normalizedContent = content.trim()
-        if ((normalizedRole === 'system' || normalizedRole === 'user' || normalizedRole === 'assistant') &&
-          normalizedContent !== '') {
-          messages.push(new AssistantPresetMessageData(normalizedRole, normalizedContent))
-        }
-      }
-      return messages.length > 0 ? JSON.stringify(messages) : ''
-    } catch (_error) {
-      return ''
-    }
   }
 
   private notifyAssistantAvatarChanged(): void {
@@ -418,64 +275,6 @@ export class AssistantService {
     config.frequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     config.frequencyPenalty = assistant.frequencyPenalty
     return config
-  }
-
-  async resolveChatModel(assistant: Assistant): Promise<ResolvedAssistantModel> {
-    await this.store.ensureInitialized()
-    await this.store.ensureDefaultModelsInitialized()
-
-    const assistantModel = this.resolveEnabledModel(
-      assistant.defaultProviderId,
-      assistant.defaultModelId,
-      assistant.defaultModelName,
-      ''
-    )
-    if (assistantModel !== null) {
-      return assistantModel
-    }
-
-    const defaultChatModel = this.store.getDefaultModel(ModelRole.CHAT)
-    const fallbackModel = this.resolveEnabledModel(
-      defaultChatModel.providerId,
-      defaultChatModel.modelId,
-      defaultChatModel.modelName,
-      defaultChatModel.providerName
-    )
-    if (fallbackModel !== null) {
-      return fallbackModel
-    }
-
-    return new ResolvedAssistantModel()
-  }
-
-  private resolveEnabledModel(
-    providerId: string,
-    modelId: string,
-    modelNameFallback: string,
-    providerNameFallback: string
-  ): ResolvedAssistantModel | null {
-    const normalizedProviderId = providerId.trim()
-    const normalizedModelId = modelId.trim()
-    if (normalizedProviderId === '' || normalizedModelId === '') {
-      return null
-    }
-
-    const provider = this.store.getProviderById(normalizedProviderId)
-    if (provider === null || !provider.isConnected) {
-      return null
-    }
-
-    for (let i = 0; i < provider.models.length; i++) {
-      const model = provider.models[i]
-      if (model.id !== normalizedModelId || !model.isEnabled) {
-        continue
-      }
-      const modelName = model.name.trim() !== '' ? model.name.trim() :
-        (modelNameFallback.trim() !== '' ? modelNameFallback.trim() : model.id)
-      const providerName = provider.name.trim() !== '' ? provider.name.trim() : providerNameFallback.trim()
-      return new ResolvedAssistantModel(provider.id, model.id, modelName, providerName)
-    }
-    return null
   }
 
   combineSystemPrompts(globalPrompt: string, assistantPrompt: string): string {

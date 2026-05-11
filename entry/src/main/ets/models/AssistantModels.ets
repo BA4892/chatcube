@@ -1,8 +1,6 @@
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 
 export const DEFAULT_ASSISTANT_ID: string = 'default'
-export const ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX: number = 100
-export const ASSISTANT_MAX_TOKENS_LIMIT: number = 200000
 
 @ObservedV2
 export class Assistant {
@@ -22,15 +20,6 @@ export class Assistant {
   @Trace presencePenalty: number = 0
   @Trace frequencyPenaltyEnabled: boolean = false
   @Trace frequencyPenalty: number = 0
-  @Trace contextMessageSize: number = 0
-  @Trace maxTokens: number = 0
-  @Trace reasoningLevel: string = ''
-  @Trace customHeadersJson: string = ''
-  @Trace customBodiesJson: string = ''
-  @Trace mcpServerIdsJson: string = ''
-  @Trace quickMessageIdsJson: string = ''
-  @Trace presetMessagesJson: string = ''
-  @Trace tagsJson: string = ''
   @Trace isDefault: boolean = false
   @Trace createdAt: number = 0
   @Trace updatedAt: number = 0
@@ -54,15 +43,6 @@ export class Assistant {
     this.presencePenalty = 0
     this.frequencyPenaltyEnabled = false
     this.frequencyPenalty = 0
-    this.contextMessageSize = 0
-    this.maxTokens = 0
-    this.reasoningLevel = ''
-    this.customHeadersJson = ''
-    this.customBodiesJson = ''
-    this.mcpServerIdsJson = ''
-    this.quickMessageIdsJson = ''
-    this.presetMessagesJson = ''
-    this.tagsJson = ''
     this.isDefault = id === DEFAULT_ASSISTANT_ID
     this.createdAt = now
     this.updatedAt = now
