@@ -122,6 +122,25 @@ export struct ToolCallCard {
             .margin({ left: 6 })
         }
 
+        // 审批状态徽章(pending/denied): 让用户在卡片上直接看到工具执行被拦住/拒绝
+        if (this.toolCall.approvalState === 'pending') {
+          Text('待授权')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor(this.themePrimary)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(6)
+            .margin({ left: 8 })
+        } else if (this.toolCall.approvalState === 'denied') {
+          Text('已拒绝')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor($r('app.color.status_error'))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(6)
+            .margin({ left: 8 })
+        }
+
         // 执行状态
         if (this.isExecuting) {
           // 执行中：显示跳动点
