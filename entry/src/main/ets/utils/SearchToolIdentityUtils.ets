@@ -1,6 +1,7 @@
 export const LEGACY_WEB_SEARCH_TOOL_ID: string = 'web_search'
 export const SEARCH_WEB_TOOL_ID: string = 'search_web'
 export const SCRAPE_WEB_TOOL_ID: string = 'scrape_web'
+export const ASK_USER_TOOL_ID: string = 'ask_user'
 
 export function normalizeToolFunctionName(raw: string): string {
   const value = raw as string | null | undefined
@@ -33,6 +34,13 @@ export function isSearchWebFunctionName(functionName: string): boolean {
 
 export function isSearchToolFunctionName(functionName: string): boolean {
   return isSearchWebFunctionName(functionName) || isScrapeWebFunctionName(functionName)
+}
+
+export function isAskUserFunctionName(functionName: string): boolean {
+  const normalized = normalizeToolFunctionName(functionName)
+  return normalized === ASK_USER_TOOL_ID ||
+    normalized === 'user_input' ||
+    normalized === 'ask'
 }
 
 export function getSearchToolIds(): string[] {
