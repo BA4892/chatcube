@@ -75,6 +75,8 @@ export struct MessageBubble {
   @Local reasoningElapsedMs: number = 0         // 流式中已思考毫秒数,驱动 UI 刷新
   @Local reasoningAutoPreview: boolean = false  // 流式中自动进入的预览态,用户切换后置 false
   @Local reasoningShimmerAlpha: number = 1.0    // shimmer 呼吸动画透明度
+  @Local timelineCollapsed: boolean = false     // parts 时间线是否折叠到 "仅显示最近 N 步"
+  @Local timelineUserToggled: boolean = false   // 用户是否手动点过折叠/展开, true 时不再被自动折叠覆盖
   @Local translatedText: string = ''  // 翻译结果
   @Local isTranslating: boolean = false  // 是否正在翻译
   @Local showTranslation: boolean = false  // 是否显示翻译结果
@@ -336,6 +338,8 @@ export struct MessageBubble {
     this.reasoningStartAt = 0
     this.reasoningFinalMs = 0
     this.reasoningShimmerAlpha = 1.0
+    this.timelineCollapsed = false
+    this.timelineUserToggled = false
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
     this.translatedText = ''
@@ -414,6 +418,11 @@ export struct MessageBubble {
       if (!isGenerating) {
         // 生成结束自动收起 preview,让用户看到完整对话内容
         this.reasoningAutoPreview = false
+        // 生成结束且用户没手动切过时,把较长的 parts 时间线默认折叠,只保留最后 2 步;
+        // 用户可点击顶部 "再显示 N 步" 展开全部
+        if (!this.timelineUserToggled && !this.timelineCollapsed && this.getThinkingSteps().length > 2) {
+          this.timelineCollapsed = true
+        }
       }
     }
   }
@@ -1881,16 +1890,37 @@ export struct MessageBubble {
   // 为了最小改动,这里不复用 ChainOfThought 组件,直接在 MessageBubble 里内联 Row/Column。
   @Builder
   PartsTimeline() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      // 竖线
-      Column()
-        .width(1)
-        .height('100%')
-        .margin({ left: 10, top: 10, bottom: 10 })
-        .backgroundColor($r('app.color.divider'))
+    Column() {
+      // 折叠/展开头:当步骤 >2 且当前处于折叠态时显示 "再显示 N 步",展开态显示 "收起"
+      if (this.shouldShowTimelineToggle()) {
+        Row({ space: 6 }) {
+          SymbolGlyph(this.timelineCollapsed ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up'))
+            .fontSize(12)
+            .fontColor([this.themePrimary])
+          Text(this.getTimelineToggleLabel())
+            .fontSize(12)
+            .fontColor(this.themePrimary)
+        }
+        .width('100%')
+        .padding({ top: 6, bottom: 6, left: 4 })
+        .onClick(() => {
+          this.timelineUserToggled = true
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.timelineCollapsed = !this.timelineCollapsed
+          })
+        })
+      }
 
-      Column() {
-        ForEach(this.getThinkingSteps(), (step: MessagePart, index: number) => {
+      Stack({ alignContent: Alignment.TopStart }) {
+        // 竖线
+        Column()
+          .width(1)
+          .height('100%')
+          .margin({ left: 10, top: 10, bottom: 10 })
+          .backgroundColor($r('app.color.divider'))
+
+        Column() {
+          ForEach(this.getVisibleThinkingSteps(), (step: MessagePart, index: number) => {
           Row({ space: 10 }) {
             // 左侧图标 + 背景遮罩压住竖线
             Stack() {
@@ -1976,15 +2006,36 @@ export struct MessageBubble {
         }, (step: MessagePart, index: number) => {
           return step.kind === MessagePartKind.TOOL ? `tool_${step.toolCallId}_${index}` : `reasoning_${step.reasoningCreatedAt}_${index}`
         })
+        }
+        .width('100%')
+        .padding({ left: 0, right: 0 })
       }
       .width('100%')
-      .padding({ left: 0, right: 0 })
     }
     .width('100%')
     .padding(10)
     .backgroundColor($r('app.color.divider'))
     .borderRadius(10)
     .margin({ bottom: 8 })
+  }
+
+  private shouldShowTimelineToggle(): boolean {
+    return this.getThinkingSteps().length > 2
+  }
+
+  private getTimelineToggleLabel(): string {
+    const total = this.getThinkingSteps().length
+    const hidden = total - 2
+    return this.timelineCollapsed ? `再显示 ${hidden} 步` : '收起'
+  }
+
+  private getVisibleThinkingSteps(): MessagePart[] {
+    const all = this.getThinkingSteps()
+    if (!this.timelineCollapsed || all.length <= 2) {
+      return all
+    }
+    // 只保留最后 2 步(rikkahub 同款:生成结束后用户先看到最终工具/推理,再自行展开历史)
+    return all.slice(all.length - 2)
   }
 
   private buildToolStepTitle(part: MessagePart): string {
