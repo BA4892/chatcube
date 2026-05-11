@@ -140,6 +140,11 @@ export class ToolCall {
   @Trace sourceType: string = ToolSourceType.BUILTIN
   @Trace sourceLabel: string = ''
   @Trace permissionLevel: string = ToolPermissionLevel.READ
+  // 工具审批状态,取值: 'auto'(自动放行) / 'pending'(等待人工确认) / 'approved' / 'denied' / 'answered'
+  // 由 ToolExecutionService.requestApprovalIfNeeded 驱动,UI 层根据状态展示审批提示
+  @Trace approvalState: string = 'auto'
+  // 人工拒绝时可选的理由, 或 ask_user 工具的用户回答
+  @Trace approvalReason: string = ''
 
   constructor(
     id: string = '',

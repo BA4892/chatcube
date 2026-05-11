@@ -96,15 +96,21 @@ export class ToolExecutionService {
 
   private async requestApprovalIfNeeded(toolCall: ToolCall, tool: RegisteredTool): Promise<boolean> {
     if (tool.config.permissionLevel !== 'write') {
+      toolCall.approvalState = 'auto'
       return true
     }
     if (this.approvalCallback === null) {
+      toolCall.approvalState = 'denied'
       return false
     }
+    toolCall.approvalState = 'pending'
     try {
-      return await this.approvalCallback(toolCall, tool)
+      const approved = await this.approvalCallback(toolCall, tool)
+      toolCall.approvalState = approved ? 'approved' : 'denied'
+      return approved
     } catch (error) {
       console.error('ToolExecutionService', `Approval callback failed: ${JSON.stringify(error)}`)
+      toolCall.approvalState = 'denied'
       return false
     }
   }
