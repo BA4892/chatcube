@@ -1,6 +1,8 @@
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { ModelProvider } from '../models/ChatModels'
 import { ReasoningLevel } from '../models/ChatModels'
+import { ReasoningLevelSheet } from '../components/ReasoningLevelSheet'
+import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { AssistantService } from '../services/AssistantService'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
@@ -120,6 +122,7 @@ struct AssistantManagePage {
   @Local formReasoningLevelPreference: string = ''
   @Local showModelSheet: boolean = false
   @Local showAvatarEditorSheet: boolean = false
+  @Local showReasoningPreferenceSheet: boolean = false
   @Local assistantAvatarRenderTick: number = 0
   @Local consumedInitialAction: boolean = false
 
@@ -1189,7 +1192,9 @@ struct AssistantManagePage {
           .fontColor([$r('app.color.text_tertiary')])
       }
       .width('100%')
-      .bindMenu(this.ReasoningLevelMenuBuilder())
+      .onClick(() => {
+        this.showReasoningPreferenceSheet = true
+      })
 
       Text($r('app.string.assistant_reasoning_level_hint'))
         .fontSize(12)
@@ -1200,41 +1205,34 @@ struct AssistantManagePage {
     .padding(14)
     .backgroundColor(getAppUiState().themeBackground)
     .borderRadius(16)
+    .bindSheet($$this.showReasoningPreferenceSheet, this.ReasoningPreferenceSheetBuilder(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: false,
+      preferType: SheetType.BOTTOM
+    })
   }
 
   @Builder
-  private ReasoningLevelMenuBuilder() {
-    Menu() {
-      this.ReasoningLevelMenuItem('')
-      this.ReasoningLevelMenuItem(ReasoningLevel.OFF)
-      this.ReasoningLevelMenuItem(ReasoningLevel.AUTO)
-      this.ReasoningLevelMenuItem(ReasoningLevel.LOW)
-      this.ReasoningLevelMenuItem(ReasoningLevel.MEDIUM)
-      this.ReasoningLevelMenuItem(ReasoningLevel.HIGH)
-      this.ReasoningLevelMenuItem(ReasoningLevel.XHIGH)
-    }
-  }
-
-  @Builder
-  private ReasoningLevelMenuItem(value: string) {
-    if (this.formReasoningLevelPreference === value) {
-      MenuItem({
-        startIcon: $r('sys.symbol.checkmark'),
-        content: this.getReasoningLevelPreferenceText(value)
+  private ReasoningPreferenceSheetBuilder() {
+    Column() {
+      ReasoningLevelSheet({
+        value: this.formReasoningLevelPreference,
+        $value: (next: string) => {
+          this.formReasoningLevelPreference = next
+        },
+        // 助手设置不依赖具体模型,展示全量档位供用户按需选择;
+        // 请求阶段再通过 normalizeReasoningLevelForControl 按模型能力裁剪
+        reasoningControlMode: ReasoningControlMode.EFFORT,
+        reasoningXhighAvailable: true,
+        allowFollowGlobal: true,
+        onClose: () => {
+          this.showReasoningPreferenceSheet = false
+        }
       })
-        .contentFont({ size: 14 })
-        .onClick(() => {
-          this.formReasoningLevelPreference = value
-        })
-    } else {
-      MenuItem({
-        content: this.getReasoningLevelPreferenceText(value)
-      })
-        .contentFont({ size: 14 })
-        .onClick(() => {
-          this.formReasoningLevelPreference = value
-        })
     }
+    .width('100%')
+    .height('100%')
   }
 
   private getReasoningLevelPreferenceText(value: string): ResourceStr {

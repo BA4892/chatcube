@@ -641,6 +641,38 @@
       "value": "Extreme"
     },
     {
+      "name": "reasoning_picker_title",
+      "value": "Reasoning Effort"
+    },
+    {
+      "name": "reasoning_picker_hint",
+      "value": "Balance response depth and latency. Higher effort gives richer reasoning at the cost of speed."
+    },
+    {
+      "name": "reasoning_level_off_hint",
+      "value": "Disable reasoning. Fastest replies but may skip multi-step logic."
+    },
+    {
+      "name": "reasoning_level_auto_hint",
+      "value": "Let the model decide how much thinking is needed."
+    },
+    {
+      "name": "reasoning_level_low_hint",
+      "value": "Light reasoning. Good for quick lookups and short answers."
+    },
+    {
+      "name": "reasoning_level_medium_hint",
+      "value": "Balanced reasoning for most use cases."
+    },
+    {
+      "name": "reasoning_level_high_hint",
+      "value": "Deep reasoning. Recommended for code, math and complex analysis."
+    },
+    {
+      "name": "reasoning_level_xhigh_hint",
+      "value": "Maximum reasoning budget. Slowest but most thorough."
+    },
+    {
       "name": "search_service_config",
       "value": "Search Service"
     },

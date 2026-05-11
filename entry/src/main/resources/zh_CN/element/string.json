@@ -641,6 +641,38 @@
       "value": "极限"
     },
     {
+      "name": "reasoning_picker_title",
+      "value": "推理强度"
+    },
+    {
+      "name": "reasoning_picker_hint",
+      "value": "在推理深度和响应速度之间取舍。档位越高思考越充分，但回复更慢。"
+    },
+    {
+      "name": "reasoning_level_off_hint",
+      "value": "关闭推理。响应最快，可能跳过多步推断。"
+    },
+    {
+      "name": "reasoning_level_auto_hint",
+      "value": "由模型自行决定思考深度。"
+    },
+    {
+      "name": "reasoning_level_low_hint",
+      "value": "轻度思考，适合查询类和短回复。"
+    },
+    {
+      "name": "reasoning_level_medium_hint",
+      "value": "常规场景推荐的平衡档。"
+    },
+    {
+      "name": "reasoning_level_high_hint",
+      "value": "深度思考，推荐用于代码、数学和复杂分析。"
+    },
+    {
+      "name": "reasoning_level_xhigh_hint",
+      "value": "最大推理预算。最慢但最彻底。"
+    },
+    {
       "name": "search_service_config",
       "value": "搜索服务"
     },
