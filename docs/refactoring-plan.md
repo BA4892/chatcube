@@ -85,14 +85,17 @@
 
 ### 4.2 编辑页接入
 
-- [x] 在 `AssistantManagePage.ets` 补采样配置入口
-- [x] 在 `AssistantManagePage.ets` 补扩展配置入口
-- [x] `MCP / 快捷消息 / 预设消息` 先只读展示
-- [x] 保存后只写 Store，不改发送链路
+- [x] 在首页助手 Tab 的 `Index.ets / AssistantEditorSheetBuilder` 补采样配置入口
+- [x] 在首页助手 Tab 的 `Index.ets / AssistantEditorSheetBuilder` 补提示词配置入口
+- [x] 保留 `AssistantManagePage.ets` 同步表单能力，但不把它当当前主入口验收
+- [x] 首页主入口改成分组入口，不直接铺开底层字段
+- [x] `MCP / 快捷消息 / 预设消息 / 自定义请求` 未闭环前不在首页主入口展示
+- [x] 保存时保留 Store 中的未闭环字段，但首页主入口不提供编辑入口
 
 验收标准：
 
-- [x] 除只读展示项外的新字段能编辑、能保存
+- [x] 已闭环字段能编辑、能保存
+- [x] 首页助手 Tab 打开的编辑 Sheet 能看到分组入口，而不是底层字段堆叠
 - [x] 老字段行为不回归
 - [x] 页面还能保持现有列表 / 删除 / 排序行为
 
@@ -166,6 +169,7 @@
 
 ### UI 入口
 
+- `entry/src/main/ets/pages/Index.ets`
 - `entry/src/main/ets/pages/AssistantManagePage.ets`
 - `entry/src/main/ets/pages/ModelManagePage.ets`
 - `entry/src/main/ets/pages/DefaultModelPage.ets`

@@ -2125,6 +2125,22 @@
       "value": "Follow global current model"
     },
     {
+      "name": "assistant_editor_basic_section",
+      "value": "Basic Settings"
+    },
+    {
+      "name": "assistant_editor_basic_desc",
+      "value": "Configure name, avatar, model, and sampling"
+    },
+    {
+      "name": "assistant_editor_prompt_section",
+      "value": "Prompts"
+    },
+    {
+      "name": "assistant_editor_prompt_desc",
+      "value": "Configure system prompt"
+    },
+    {
       "name": "assistant_temperature_override",
       "value": "Override Temperature"
     },
