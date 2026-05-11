@@ -1,5 +1,6 @@
 import { AppStorageV2, UIUtils } from '@kit.ArkUI'
 import { ModelProvider } from '../models/ChatModels'
+import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 
 /**
  * 应用配置状态（跟 AppUiState 并列）
@@ -8,17 +9,23 @@ import { ModelProvider } from '../models/ChatModels'
  * - AppUiState 装 UI 临时态 / 主题 / 账号 / 系统状态等 primitive（string/number/boolean），通过 AppStorage 自动持久化
  * - AppSettingsState 装“应用配置”类对象（providers / assistants / favorites 等），由对应 Store 负责 SQLite 持久化
  *
- * 本轮只先落 providers 字段，后续会陆续把 assistants / defaultModels / favoriteModels 等迁过来
+ * 已覆盖：providers / assistants
+ * 计划：defaultModels / favoriteModels 等
  */
 const APP_SETTINGS_STATE_KEY = 'chatbox_app_settings_state'
 
 @ObservedV2
 export class AppSettingsState {
+  // ===== providers =====
   @Trace providers: ModelProvider[] = []
-  // 初始化完成标记：Store 首次拉完 DB + 合并预设后置 true，UI 层可据此区分 “空数组 = 未加载 / 已加载无数据”
   @Trace providersInitialized: boolean = false
-  // 每次 providers 写操作自增；用作 UIUtils.addMonitor 的订阅锚点，保证非结构变更也能触发
   @Trace providersVersion: number = 0
+
+  // ===== assistants =====
+  @Trace assistants: Assistant[] = []
+  @Trace assistantsInitialized: boolean = false
+  @Trace assistantsVersion: number = 0
+  @Trace currentAssistantId: string = DEFAULT_ASSISTANT_ID
 }
 
 function createAppSettingsState(): AppSettingsState {
@@ -45,6 +52,14 @@ function resolveAppSettingsStatePath(path: string): string {
       return 'providersInitialized'
     case 'providersVersion':
       return 'providersVersion'
+    case 'assistants':
+      return 'assistants'
+    case 'assistantsInitialized':
+      return 'assistantsInitialized'
+    case 'assistantsVersion':
+      return 'assistantsVersion'
+    case 'currentAssistantId':
+      return 'currentAssistantId'
     default:
       return path
   }

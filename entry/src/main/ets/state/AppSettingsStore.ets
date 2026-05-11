@@ -1,4 +1,5 @@
 import { getDatabaseService, DatabaseService, ProviderConfig } from '../services/DatabaseService'
+import { getPreferencesService, PreferencesService } from '../services/PreferencesService'
 import {
   ModelProvider,
   ModelInfo,
@@ -12,6 +13,7 @@ import {
   ModelCapabilitiesJson,
   ProviderIconType
 } from '../models/ChatModels'
+import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import {
   getPresetProviderIconPath,
   isPresetProvider,
@@ -76,10 +78,13 @@ const HISTORICAL_BASE_URL_FIXES: BaseUrlFix[] = [
 export class AppSettingsStore {
   private static instance: AppSettingsStore | null = null
   private db: DatabaseService
+  private preferences: PreferencesService
   private initPromise: Promise<void> | null = null
+  private assistantsInitPromise: Promise<void> | null = null
 
   private constructor() {
     this.db = getDatabaseService()
+    this.preferences = getPreferencesService()
   }
 
   static getInstance(): AppSettingsStore {
@@ -466,6 +471,181 @@ export class AppSettingsStore {
       return $r('app.color.brand_deepseek')
     }
     return $r('app.color.primary')
+  }
+
+  // ============================================================================
+  // Assistant —— 查询（不碰 DB）
+  // ============================================================================
+
+  /** 返回当前内存中的所有 assistants，调用方只读 */
+  getAssistants(): Assistant[] {
+    return getAppSettingsState().assistants
+  }
+
+  /** 根据 ID 查找内存中的 assistant；未命中返回 null（不触发回源） */
+  getAssistantById(assistantId: string): Assistant | null {
+    const list = this.getAssistants()
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === assistantId) {
+        return list[i]
+      }
+    }
+    return null
+  }
+
+  /**
+   * 内存未命中时回源 DB，但不会刷新整个 state（单个 assistant 场景不值得整表同步）
+   */
+  async getAssistantByIdAsync(assistantId: string): Promise<Assistant | null> {
+    const cached = this.getAssistantById(assistantId)
+    if (cached !== null) {
+      return cached
+    }
+    return await this.db.getAssistant(assistantId)
+  }
+
+  /** 从 state 读当前助手 id（已是 Preferences 同步值） */
+  getCurrentAssistantIdInMemory(): string {
+    return getAppSettingsState().currentAssistantId
+  }
+
+  // ============================================================================
+  // Assistant —— 加载
+  // ============================================================================
+
+  /** 从 DB 拉一遍 assistants，更新内存 state */
+  async loadAllAssistants(): Promise<Assistant[]> {
+    const list = await this.db.getAllAssistants()
+    this.setAssistants(list)
+    return list
+  }
+
+  /**
+   * 启动初始化：加载所有 assistants + 同步 currentAssistantId 到 state。
+   * 多次调用合并为同一个 promise，不会重复执行
+   */
+  async ensureAssistantsInitialized(): Promise<void> {
+    if (getAppSettingsState().assistantsInitialized) {
+      return
+    }
+    if (this.assistantsInitPromise !== null) {
+      await this.assistantsInitPromise
+      return
+    }
+    this.assistantsInitPromise = this.doInitializeAssistants()
+    try {
+      await this.assistantsInitPromise
+    } finally {
+      this.assistantsInitPromise = null
+    }
+  }
+
+  private async doInitializeAssistants(): Promise<void> {
+    await this.loadAllAssistants()
+    const storedId = await this.preferences.getCurrentAssistantId()
+    const trimmed = storedId.trim() !== '' ? storedId.trim() : DEFAULT_ASSISTANT_ID
+    this.setCurrentAssistantIdInMemory(trimmed)
+    getAppSettingsState().assistantsInitialized = true
+  }
+
+  // ============================================================================
+  // Assistant —— 写入（DB + state）
+  // ============================================================================
+
+  /**
+   * 新增或更新 assistant：写 DB + 同步内存数组。
+   * insert=true 时调用 createAssistant（走自增 sort_order 路径），否则 saveAssistant（原地更新）
+   */
+  async upsertAssistant(assistant: Assistant, insert: boolean): Promise<void> {
+    if (insert) {
+      await this.db.createAssistant(assistant)
+    } else {
+      await this.db.saveAssistant(assistant)
+    }
+    const current = this.getAssistants()
+    const next: Assistant[] = []
+    let replaced = false
+    for (let i = 0; i < current.length; i++) {
+      if (current[i].id === assistant.id) {
+        next.push(assistant)
+        replaced = true
+      } else {
+        next.push(current[i])
+      }
+    }
+    if (!replaced) {
+      next.push(assistant)
+    }
+    this.setAssistants(next)
+  }
+
+  /** 删 assistant：返回 DB 是否真的删了，删掉后从内存过滤 */
+  async removeAssistant(assistantId: string): Promise<boolean> {
+    const deleted = await this.db.deleteAssistant(assistantId)
+    if (!deleted) {
+      return false
+    }
+    const current = this.getAssistants()
+    const next: Assistant[] = []
+    for (let i = 0; i < current.length; i++) {
+      if (current[i].id !== assistantId) {
+        next.push(current[i])
+      }
+    }
+    this.setAssistants(next)
+    return true
+  }
+
+  /**
+   * 按给定顺序 + sortOrder 持久化，同步到内存
+   * 入参数组的 sortOrder 会被覆写成 index，以保持与 DB 一致
+   */
+  async reorderAssistants(assistants: Assistant[]): Promise<void> {
+    if (assistants.length === 0) {
+      return
+    }
+    for (let i = 0; i < assistants.length; i++) {
+      assistants[i].sortOrder = i
+    }
+    await this.db.saveAssistantSortOrders(assistants)
+    // 以入参为新顺序；若原 state 里还有额外项（通常不会），兜底追加
+    const seen = new Set<string>()
+    const next: Assistant[] = []
+    for (let i = 0; i < assistants.length; i++) {
+      next.push(assistants[i])
+      seen.add(assistants[i].id)
+    }
+    const current = this.getAssistants()
+    for (let j = 0; j < current.length; j++) {
+      if (!seen.has(current[j].id)) {
+        next.push(current[j])
+      }
+    }
+    this.setAssistants(next)
+  }
+
+  /**
+   * 更新 currentAssistantId：写 Preferences + 同步到 state。
+   * 空串会被规整为 DEFAULT_ASSISTANT_ID，语义与 PreferencesService 保持一致
+   */
+  async setCurrentAssistantIdPersisted(assistantId: string): Promise<void> {
+    const normalized = assistantId.trim() !== '' ? assistantId.trim() : DEFAULT_ASSISTANT_ID
+    await this.preferences.setCurrentAssistantId(normalized)
+    this.setCurrentAssistantIdInMemory(normalized)
+  }
+
+  // ============================================================================
+  // Assistant —— state 刷新 helpers
+  // ============================================================================
+
+  private setAssistants(next: Assistant[]): void {
+    const state = getAppSettingsState()
+    state.assistants = next
+    state.assistantsVersion = state.assistantsVersion + 1
+  }
+
+  private setCurrentAssistantIdInMemory(id: string): void {
+    getAppSettingsState().currentAssistantId = id
   }
 }
 
