@@ -306,12 +306,15 @@ struct ModelManagePage {
     this.ensureExpandedDetailSelection()
   }
 
-  // 静默刷新数据（从 ViewModel 缓存同步，不访问数据库）
-  // 复用现有对象引用以保持子组件 @Param 绑定稳定，但始终重新赋值数组以触发 @Local 响应式刷新——
-  // 注意：providerViewModel.getCachedProviders() 返回的是内部缓存数组的同一引用，
-  // 而 loadAllProviders/loadProviders 也会把该引用赋给 this.allProviders；
-  // 当 saveProvider 通过 unshift 原地新增时，两个变量指向同一被修改的数组，
-  // 单纯的 length / 顺序比较都会得出“无需重建”的错误结论，导致新建服务商后列表不刷新。
+  // 静默刷新数据（从 AppSettingsStore 缓存同步，不访问数据库）
+  //
+  // 背景：providerViewModel.getCachedProviders() 委托到 AppSettingsStore，
+  // 每次 upsertProvider / removeProvider 都会以新数组替换 state.providers，
+  // 所以 store 的返回数组引用会随写操作变化——但 this.allProviders 可能仍指向旧数组。
+  //
+  // 为保持子组件 @Param 绑定稳定（避免整个列表重渲染），这里按 id 复用当前 allProviders 里的
+  // 旧 provider 实例，用 syncProviderProperties 把 store 里最新字段拷贝过去；新增项则直接采用
+  // store 的新实例。最后始终给 allProviders 赋新数组以触发 @Local 响应式刷新。
   private refreshFromCache(): void {
     const cachedProviders = this.providerViewModel.getCachedProviders()
     if (cachedProviders.length === 0) {
