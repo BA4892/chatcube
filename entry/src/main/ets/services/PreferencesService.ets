@@ -15,6 +15,7 @@ export class PreferenceKeys {
   static readonly LANGUAGE: string = 'language'
   static readonly PROVIDERS_CONFIG: string = 'providers_config'
   static readonly PROVIDER_MIGRATION_VERSION: string = 'provider_migration_version'
+  static readonly ASSISTANT_MIGRATION_VERSION: string = 'assistant_migration_version'
 
   // 默认模型配置
   static readonly DEFAULT_CHAT_MODEL_ID: string = 'default_chat_model_id'

@@ -14,9 +14,15 @@ import {
   ModelCapabilitiesJson,
   ProviderIconType,
   DefaultModelConfig,
-  ModelRole
+  ModelRole,
+  ReasoningLevel
 } from '../models/ChatModels'
-import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
+import {
+  Assistant,
+  DEFAULT_ASSISTANT_ID,
+  ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX,
+  ASSISTANT_MAX_TOKENS_LIMIT
+} from '../models/AssistantModels'
 import { DefaultPrompts } from '../config/DefaultPrompts'
 import {
   getPresetProviderIconPath,
@@ -32,6 +38,7 @@ import {
 import { AppSettingsState, getAppSettingsState } from './AppSettingsState'
 import { MigrationContext } from './migrations/MigrationContext'
 import { runProviderMigrations } from './migrations/ProviderMigrations'
+import { runAssistantMigrations } from './migrations/AssistantMigrations'
 
 /**
  * 模型 JSON 中的扩展字段（跟 ProviderViewModel 里原先的 ModelData 同构）
@@ -52,6 +59,11 @@ interface ModelJsonRow {
 interface BalancePathTerm {
   path: string
   sign: number
+}
+
+interface AssistantPresetMessageJson {
+  role: string
+  content: string
 }
 
 export class BalanceResult {
@@ -673,8 +685,9 @@ export class AppSettingsStore {
   /** 从 DB 拉一遍 assistants，更新内存 state */
   async loadAllAssistants(): Promise<Assistant[]> {
     const list = await this.db.getAllAssistants()
-    this.setAssistants(list)
-    return list
+    const normalized = await this.normalizeLoadedAssistants(list)
+    this.setAssistants(normalized)
+    return normalized
   }
 
   /**
@@ -698,11 +711,247 @@ export class AppSettingsStore {
   }
 
   private async doInitializeAssistants(): Promise<void> {
+    await this.runAssistantMigrations()
+    await this.ensureInitialized()
     await this.loadAllAssistants()
     const storedId = await this.preferences.getCurrentAssistantId()
     const trimmed = storedId.trim() !== '' ? storedId.trim() : DEFAULT_ASSISTANT_ID
     this.setCurrentAssistantIdInMemory(trimmed)
     getAppSettingsState().assistantsInitialized = true
+  }
+
+  private async runAssistantMigrations(): Promise<void> {
+    const ctx = new MigrationContext(this.db, this.preferences, getAppSettingsState())
+    await runAssistantMigrations(ctx)
+  }
+
+  private async normalizeLoadedAssistants(list: Assistant[]): Promise<Assistant[]> {
+    const mcpServerIds = await this.loadExistingMcpServerIds()
+    const result: Assistant[] = []
+    let changed = false
+    for (let i = 0; i < list.length; i++) {
+      const assistant = list[i]
+      if (this.normalizeAssistantTemplateFields(assistant, mcpServerIds)) {
+        changed = true
+        await this.db.saveAssistant(assistant)
+      }
+      result.push(assistant)
+    }
+    if (changed) {
+      return result
+    }
+    return list
+  }
+
+  private normalizeAssistantTemplateFields(assistant: Assistant, mcpServerIds: Set<string>): boolean {
+    let changed = false
+    const contextMessageSize = this.clampInteger(
+      assistant.contextMessageSize,
+      0,
+      ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX
+    )
+    if (assistant.contextMessageSize !== contextMessageSize) {
+      assistant.contextMessageSize = contextMessageSize
+      changed = true
+    }
+
+    const maxTokens = this.clampInteger(assistant.maxTokens, 0, ASSISTANT_MAX_TOKENS_LIMIT)
+    if (assistant.maxTokens !== maxTokens) {
+      assistant.maxTokens = maxTokens
+      changed = true
+    }
+
+    const reasoningLevel = this.normalizeAssistantReasoningLevel(assistant.reasoningLevel)
+    if (assistant.reasoningLevel !== reasoningLevel) {
+      assistant.reasoningLevel = reasoningLevel
+      changed = true
+    }
+
+    const customHeadersJson = this.normalizeJsonObjectText(assistant.customHeadersJson)
+    if (assistant.customHeadersJson !== customHeadersJson) {
+      assistant.customHeadersJson = customHeadersJson
+      changed = true
+    }
+
+    const customBodiesJson = this.normalizeJsonObjectText(assistant.customBodiesJson)
+    if (assistant.customBodiesJson !== customBodiesJson) {
+      assistant.customBodiesJson = customBodiesJson
+      changed = true
+    }
+
+    const quickMessageIdsJson = this.normalizeJsonStringArrayText(assistant.quickMessageIdsJson)
+    if (assistant.quickMessageIdsJson !== quickMessageIdsJson) {
+      assistant.quickMessageIdsJson = quickMessageIdsJson
+      changed = true
+    }
+
+    const tagsJson = this.normalizeJsonStringArrayText(assistant.tagsJson)
+    if (assistant.tagsJson !== tagsJson) {
+      assistant.tagsJson = tagsJson
+      changed = true
+    }
+
+    const mcpServerIdsJson = this.normalizeJsonStringArrayText(assistant.mcpServerIdsJson, mcpServerIds)
+    if (assistant.mcpServerIdsJson !== mcpServerIdsJson) {
+      assistant.mcpServerIdsJson = mcpServerIdsJson
+      changed = true
+    }
+
+    const presetMessagesJson = this.normalizePresetMessagesJsonText(assistant.presetMessagesJson)
+    if (assistant.presetMessagesJson !== presetMessagesJson) {
+      assistant.presetMessagesJson = presetMessagesJson
+      changed = true
+    }
+
+    if (!this.hasProviderModel(assistant.defaultProviderId, assistant.defaultModelId)) {
+      if (assistant.defaultProviderId !== '' || assistant.defaultModelId !== '' || assistant.defaultModelName !== '') {
+        assistant.defaultProviderId = ''
+        assistant.defaultModelId = ''
+        assistant.defaultModelName = ''
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  private hasProviderModel(providerId: string, modelId: string): boolean {
+    const normalizedProviderId = providerId.trim()
+    const normalizedModelId = modelId.trim()
+    if (normalizedProviderId === '' && normalizedModelId === '') {
+      return true
+    }
+    if (normalizedProviderId === '' || normalizedModelId === '') {
+      return false
+    }
+    const provider = this.getProviderById(normalizedProviderId)
+    if (provider === null) {
+      return false
+    }
+    for (let i = 0; i < provider.models.length; i++) {
+      if (provider.models[i].id === normalizedModelId) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private async loadExistingMcpServerIds(): Promise<Set<string>> {
+    const ids = new Set<string>()
+    const raw = await this.preferences.getString(PreferenceKeys.MCP_SERVER_CONFIGS_JSON, '[]')
+    if (raw.trim() === '') {
+      return ids
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<Record<string, Object>>
+      for (let i = 0; i < parsed.length; i++) {
+        const id = parsed[i]['id']
+        if (typeof id === 'string' && id.trim() !== '') {
+          ids.add(id.trim())
+        }
+      }
+    } catch (_error) {
+    }
+    return ids
+  }
+
+  private normalizeAssistantReasoningLevel(value: string): string {
+    const normalized = value.trim()
+    switch (normalized) {
+      case '':
+      case ReasoningLevel.OFF:
+      case ReasoningLevel.AUTO:
+      case ReasoningLevel.LOW:
+      case ReasoningLevel.MEDIUM:
+      case ReasoningLevel.HIGH:
+      case ReasoningLevel.XHIGH:
+        return normalized
+      default:
+        return ''
+    }
+  }
+
+  private clampInteger(value: number, min: number, max: number): number {
+    if (!this.isFiniteNumber(value)) {
+      return min
+    }
+    const normalized = Math.floor(value)
+    if (normalized < min) {
+      return min
+    }
+    if (normalized > max) {
+      return max
+    }
+    return normalized
+  }
+
+  private normalizeJsonObjectText(raw: string): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Object
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed as Array<Object>)) {
+        return ''
+      }
+      return JSON.stringify(parsed)
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  private normalizeJsonStringArrayText(raw: string, allowList?: Set<string>): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Object[]
+      const values: string[] = []
+      for (let i = 0; i < parsed.length; i++) {
+        if (typeof parsed[i] !== 'string') {
+          continue
+        }
+        const value = (parsed[i] as string).trim()
+        if (value === '' || values.includes(value)) {
+          continue
+        }
+        if (allowList !== undefined && !allowList.has(value)) {
+          continue
+        }
+        values.push(value)
+      }
+      return values.length > 0 ? JSON.stringify(values) : ''
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  private normalizePresetMessagesJsonText(raw: string): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Array<Record<string, Object>>
+      const messages: AssistantPresetMessageJson[] = []
+      for (let i = 0; i < parsed.length; i++) {
+        const role = parsed[i]['role']
+        const content = parsed[i]['content']
+        if (typeof role !== 'string' || typeof content !== 'string') {
+          continue
+        }
+        const normalizedRole = role.trim()
+        const normalizedContent = content.trim()
+        if ((normalizedRole === 'system' || normalizedRole === 'user' || normalizedRole === 'assistant') &&
+          normalizedContent !== '') {
+          messages.push({ role: normalizedRole, content: normalizedContent })
+        }
+      }
+      return messages.length > 0 ? JSON.stringify(messages) : ''
+    } catch (_error) {
+      return ''
+    }
   }
 
   // ============================================================================

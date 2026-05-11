@@ -1,4 +1,10 @@
-import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
+import {
+  Assistant,
+  DEFAULT_ASSISTANT_ID,
+  ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX,
+  ASSISTANT_MAX_TOKENS_LIMIT
+} from '../models/AssistantModels'
+import { ReasoningLevel } from '../models/ChatModels'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { getAppUiState, setAppUiStateValue } from '../state/AppUiState'
@@ -16,6 +22,16 @@ export class AssistantRuntimeConfig {
   presencePenalty: number = 0
   frequencyPenaltyEnabled: boolean = false
   frequencyPenalty: number = 0
+}
+
+class AssistantPresetMessageData {
+  role: string
+  content: string
+
+  constructor(role: string, content: string) {
+    this.role = role
+    this.content = content
+  }
 }
 
 /**
@@ -71,7 +87,116 @@ export class AssistantService {
     } else if (assistant.temperature > 2) {
       assistant.temperature = 2
     }
+    assistant.contextMessageSize = this.clampInteger(
+      assistant.contextMessageSize,
+      0,
+      ASSISTANT_CONTEXT_MESSAGE_SIZE_MAX
+    )
+    assistant.maxTokens = this.clampInteger(assistant.maxTokens, 0, ASSISTANT_MAX_TOKENS_LIMIT)
+    assistant.reasoningLevel = this.normalizeReasoningLevel(assistant.reasoningLevel)
+    assistant.customHeadersJson = this.normalizeJsonObjectText(assistant.customHeadersJson)
+    assistant.customBodiesJson = this.normalizeJsonObjectText(assistant.customBodiesJson)
+    assistant.mcpServerIdsJson = this.normalizeStringArrayJsonText(assistant.mcpServerIdsJson)
+    assistant.quickMessageIdsJson = this.normalizeStringArrayJsonText(assistant.quickMessageIdsJson)
+    assistant.tagsJson = this.normalizeStringArrayJsonText(assistant.tagsJson)
+    assistant.presetMessagesJson = this.normalizePresetMessagesJsonText(assistant.presetMessagesJson)
     return assistant
+  }
+
+  private clampInteger(value: number, min: number, max: number): number {
+    if (Number.isNaN(value) || value === Infinity || value === -Infinity) {
+      return min
+    }
+    const normalized = Math.floor(value)
+    if (normalized < min) {
+      return min
+    }
+    if (normalized > max) {
+      return max
+    }
+    return normalized
+  }
+
+  private normalizeReasoningLevel(value: string): string {
+    const normalized = value.trim()
+    switch (normalized) {
+      case '':
+      case ReasoningLevel.OFF:
+      case ReasoningLevel.AUTO:
+      case ReasoningLevel.LOW:
+      case ReasoningLevel.MEDIUM:
+      case ReasoningLevel.HIGH:
+      case ReasoningLevel.XHIGH:
+        return normalized
+      default:
+        return ''
+    }
+  }
+
+  private normalizeJsonObjectText(raw: string): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Object
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed as Array<Object>)) {
+        return ''
+      }
+      return JSON.stringify(parsed)
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  private normalizeStringArrayJsonText(raw: string): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Object[]
+      const values: string[] = []
+      for (let i = 0; i < parsed.length; i++) {
+        if (typeof parsed[i] !== 'string') {
+          continue
+        }
+        const value = (parsed[i] as string).trim()
+        if (value !== '' && !values.includes(value)) {
+          values.push(value)
+        }
+      }
+      return values.length > 0 ? JSON.stringify(values) : ''
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  private normalizePresetMessagesJsonText(raw: string): string {
+    const trimmed = raw.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as Array<Record<string, Object>>
+      const messages: AssistantPresetMessageData[] = []
+      for (let i = 0; i < parsed.length; i++) {
+        const role = parsed[i]['role']
+        const content = parsed[i]['content']
+        if (typeof role !== 'string' || typeof content !== 'string') {
+          continue
+        }
+        const normalizedRole = role.trim()
+        const normalizedContent = content.trim()
+        if ((normalizedRole === 'system' || normalizedRole === 'user' || normalizedRole === 'assistant') &&
+          normalizedContent !== '') {
+          messages.push(new AssistantPresetMessageData(normalizedRole, normalizedContent))
+        }
+      }
+      return messages.length > 0 ? JSON.stringify(messages) : ''
+    } catch (_error) {
+      return ''
+    }
   }
 
   private notifyAssistantAvatarChanged(): void {

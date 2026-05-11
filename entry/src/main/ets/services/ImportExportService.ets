@@ -129,6 +129,15 @@ export interface AssistantExportData {
   presencePenalty?: number
   frequencyPenaltyEnabled?: boolean
   frequencyPenalty?: number
+  contextMessageSize?: number
+  maxTokens?: number
+  reasoningLevel?: string
+  customHeadersJson?: string
+  customBodiesJson?: string
+  mcpServerIdsJson?: string
+  quickMessageIdsJson?: string
+  presetMessagesJson?: string
+  tagsJson?: string
   isDefault: boolean
   createdAt: number
   updatedAt: number
@@ -473,6 +482,15 @@ export class ImportExportService {
         presencePenalty: assistant.presencePenalty,
         frequencyPenaltyEnabled: assistant.frequencyPenaltyEnabled,
         frequencyPenalty: assistant.frequencyPenalty,
+        contextMessageSize: assistant.contextMessageSize,
+        maxTokens: assistant.maxTokens,
+        reasoningLevel: assistant.reasoningLevel,
+        customHeadersJson: assistant.customHeadersJson,
+        customBodiesJson: assistant.customBodiesJson,
+        mcpServerIdsJson: assistant.mcpServerIdsJson,
+        quickMessageIdsJson: assistant.quickMessageIdsJson,
+        presetMessagesJson: assistant.presetMessagesJson,
+        tagsJson: assistant.tagsJson,
         isDefault: assistant.isDefault,
         createdAt: assistant.createdAt,
         updatedAt: assistant.updatedAt,
@@ -1160,6 +1178,15 @@ export class ImportExportService {
       assistant.presencePenalty = assistantData.presencePenalty !== undefined ? assistantData.presencePenalty : 0
       assistant.frequencyPenaltyEnabled = assistantData.frequencyPenaltyEnabled === true
       assistant.frequencyPenalty = assistantData.frequencyPenalty !== undefined ? assistantData.frequencyPenalty : 0
+      assistant.contextMessageSize = assistantData.contextMessageSize !== undefined ? assistantData.contextMessageSize : 0
+      assistant.maxTokens = assistantData.maxTokens !== undefined ? assistantData.maxTokens : 0
+      assistant.reasoningLevel = assistantData.reasoningLevel || ''
+      assistant.customHeadersJson = assistantData.customHeadersJson || ''
+      assistant.customBodiesJson = assistantData.customBodiesJson || ''
+      assistant.mcpServerIdsJson = assistantData.mcpServerIdsJson || ''
+      assistant.quickMessageIdsJson = assistantData.quickMessageIdsJson || ''
+      assistant.presetMessagesJson = assistantData.presetMessagesJson || ''
+      assistant.tagsJson = assistantData.tagsJson || ''
       assistant.isDefault = assistant.id === DEFAULT_ASSISTANT_ID || assistantData.isDefault === true
       assistant.createdAt = assistantData.createdAt
       assistant.updatedAt = assistantData.updatedAt

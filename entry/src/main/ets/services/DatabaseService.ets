@@ -202,6 +202,15 @@ export class DatabaseService {
 	        presence_penalty REAL DEFAULT 0,
 	        frequency_penalty_enabled INTEGER DEFAULT 0,
 	        frequency_penalty REAL DEFAULT 0,
+	        context_message_size INTEGER DEFAULT 0,
+	        max_tokens INTEGER DEFAULT 0,
+	        reasoning_level TEXT DEFAULT '',
+	        custom_headers_json TEXT DEFAULT '',
+	        custom_bodies_json TEXT DEFAULT '',
+	        mcp_server_ids_json TEXT DEFAULT '',
+	        quick_message_ids_json TEXT DEFAULT '',
+	        preset_messages_json TEXT DEFAULT '',
+	        tags_json TEXT DEFAULT '',
 	        is_default INTEGER DEFAULT 0,
 	        created_at INTEGER,
 	        updated_at INTEGER,
@@ -313,6 +322,8 @@ export class DatabaseService {
       await this.addMessageModelIdColumnIfNeeded()
       // 尝试添加助手采样参数列(top_p / presence_penalty / frequency_penalty)
       await this.addAssistantSamplingColumnsIfNeeded()
+      // 尝试添加完整助手模板配置列(context/maxTokens/reasoning/extensions)
+      await this.addAssistantTemplateColumnsIfNeeded()
 	      // 迁移现有供应商数据
 	      await this.migrateExistingProviders()
 	      await this.ensureDefaultAssistant()
@@ -610,6 +621,15 @@ export class DatabaseService {
 	      presence_penalty: assistant.presencePenalty,
 	      frequency_penalty_enabled: assistant.frequencyPenaltyEnabled ? 1 : 0,
 	      frequency_penalty: assistant.frequencyPenalty,
+	      context_message_size: assistant.contextMessageSize,
+	      max_tokens: assistant.maxTokens,
+	      reasoning_level: assistant.reasoningLevel,
+	      custom_headers_json: assistant.customHeadersJson,
+	      custom_bodies_json: assistant.customBodiesJson,
+	      mcp_server_ids_json: assistant.mcpServerIdsJson,
+	      quick_message_ids_json: assistant.quickMessageIdsJson,
+	      preset_messages_json: assistant.presetMessagesJson,
+	      tags_json: assistant.tagsJson,
 	      is_default: assistant.isDefault ? 1 : 0,
 	      created_at: assistant.createdAt,
 	      updated_at: assistant.updatedAt,
@@ -672,6 +692,23 @@ export class DatabaseService {
 	    } catch (error) {
 	      assistant.frequencyPenalty = 0
 	    }
+	    try {
+	      assistant.contextMessageSize = resultSet.getLong(resultSet.getColumnIndex('context_message_size'))
+	    } catch (error) {
+	      assistant.contextMessageSize = 0
+	    }
+	    try {
+	      assistant.maxTokens = resultSet.getLong(resultSet.getColumnIndex('max_tokens'))
+	    } catch (error) {
+	      assistant.maxTokens = 0
+	    }
+	    assistant.reasoningLevel = this.safeGetString(resultSet, 'reasoning_level')
+	    assistant.customHeadersJson = this.safeGetString(resultSet, 'custom_headers_json')
+	    assistant.customBodiesJson = this.safeGetString(resultSet, 'custom_bodies_json')
+	    assistant.mcpServerIdsJson = this.safeGetString(resultSet, 'mcp_server_ids_json')
+	    assistant.quickMessageIdsJson = this.safeGetString(resultSet, 'quick_message_ids_json')
+	    assistant.presetMessagesJson = this.safeGetString(resultSet, 'preset_messages_json')
+	    assistant.tagsJson = this.safeGetString(resultSet, 'tags_json')
 	    try {
 	      assistant.isDefault = resultSet.getLong(resultSet.getColumnIndex('is_default')) === 1
 	    } catch (error) {
@@ -783,6 +820,35 @@ export class DatabaseService {
         // 列已存在会抛错,忽略
       }
     }
+  }
+
+  private async addAssistantTemplateColumnsIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    const columns: string[] = [
+      `context_message_size INTEGER DEFAULT 0`,
+      `max_tokens INTEGER DEFAULT 0`,
+      `reasoning_level TEXT DEFAULT ''`,
+      `custom_headers_json TEXT DEFAULT ''`,
+      `custom_bodies_json TEXT DEFAULT ''`,
+      `mcp_server_ids_json TEXT DEFAULT ''`,
+      `quick_message_ids_json TEXT DEFAULT ''`,
+      `preset_messages_json TEXT DEFAULT ''`,
+      `tags_json TEXT DEFAULT ''`
+    ]
+    for (const def of columns) {
+      try {
+        await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ASSISTANTS} ADD COLUMN ${def}`)
+      } catch (error) {
+        // 列已存在会抛错,忽略
+      }
+    }
+  }
+
+  async ensureAssistantTemplateColumns(): Promise<void> {
+    await this.waitForInitialization()
+    await this.addAssistantTemplateColumnsIfNeeded()
   }
 
   private normalizePreview(content: string): string {
