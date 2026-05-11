@@ -2126,19 +2126,15 @@
     },
     {
       "name": "assistant_editor_basic_section",
-      "value": "Basic Settings"
-    },
-    {
-      "name": "assistant_editor_basic_desc",
-      "value": "Configure name, avatar, model, and sampling"
+      "value": "Basic"
     },
     {
       "name": "assistant_editor_prompt_section",
-      "value": "Prompts"
+      "value": "Prompt"
     },
     {
-      "name": "assistant_editor_prompt_desc",
-      "value": "Configure system prompt"
+      "name": "assistant_editor_params_section",
+      "value": "Params"
     },
     {
       "name": "assistant_temperature_override",

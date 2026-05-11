@@ -2126,19 +2126,15 @@
     },
     {
       "name": "assistant_editor_basic_section",
-      "value": "基础设定"
-    },
-    {
-      "name": "assistant_editor_basic_desc",
-      "value": "配置名称、头像、模型和参数"
+      "value": "基础"
     },
     {
       "name": "assistant_editor_prompt_section",
       "value": "提示词"
     },
     {
-      "name": "assistant_editor_prompt_desc",
-      "value": "设置系统提示词"
+      "name": "assistant_editor_params_section",
+      "value": "参数"
     },
     {
       "name": "assistant_temperature_override",

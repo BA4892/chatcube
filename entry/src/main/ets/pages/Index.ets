@@ -116,9 +116,9 @@ struct Index {
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
-  private static readonly ASSISTANT_EDITOR_SECTION_OVERVIEW: string = ''
   private static readonly ASSISTANT_EDITOR_SECTION_BASIC: string = 'basic'
   private static readonly ASSISTANT_EDITOR_SECTION_PROMPT: string = 'prompt'
+  private static readonly ASSISTANT_EDITOR_SECTION_PARAMS: string = 'params'
   @Local currentTabIndex: number = Index.TAB_CHAT
   @Local sessions: ChatSession[] = []
   @Local isLoading: boolean = false
@@ -159,7 +159,7 @@ struct Index {
   @Local editingAssistantCreatedAt: number = 0
   @Local editingAssistantSortOrder: number = 0
   @Local editingAssistantIsDefault: boolean = false
-  @Local assistantEditorSection: string = Index.ASSISTANT_EDITOR_SECTION_OVERVIEW
+  @Local assistantEditorSection: string = Index.ASSISTANT_EDITOR_SECTION_BASIC
   @Local assistantFormName: string = ''
   @Local assistantFormAvatarSymbol: string = 'AI'
   @Local assistantFormColor: string = DEFAULT_PRIMARY_COLOR
@@ -1505,7 +1505,7 @@ struct Index {
             this.showAssistantEditorSheet = false
             this.showAssistantModelSheet = false
             this.showAssistantAvatarEditorSheet = false
-            this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_OVERVIEW
+            this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_BASIC
           }
         })
 
@@ -2288,30 +2288,20 @@ struct Index {
 
   private async openAssistantEditorForNew(): Promise<void> {
     this.resetAssistantEditorForm()
-    this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_OVERVIEW
+    this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_BASIC
     this.showAssistantEditorSheet = true
     await this.loadAssistantProvidersIfNeeded()
   }
 
   private async openAssistantEditor(assistant: Assistant): Promise<void> {
     this.fillAssistantEditorForm(assistant)
-    this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_OVERVIEW
+    this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_BASIC
     this.showAssistantEditorSheet = true
     await this.loadAssistantProvidersIfNeeded()
   }
 
   private getAssistantEditorTitle(): Resource {
     return this.editingAssistantId === '' ? $r('app.string.new_assistant') : $r('app.string.edit_assistant')
-  }
-
-  private getAssistantEditorActiveTitle(): ResourceStr {
-    if (this.assistantEditorSection === Index.ASSISTANT_EDITOR_SECTION_BASIC) {
-      return $r('app.string.assistant_editor_basic_section')
-    }
-    if (this.assistantEditorSection === Index.ASSISTANT_EDITOR_SECTION_PROMPT) {
-      return $r('app.string.assistant_prompt')
-    }
-    return this.getAssistantEditorTitle()
   }
 
   private getAssistantFormDefaultModelText(): ResourceStr {
@@ -3003,6 +2993,17 @@ struct Index {
   private AssistantEditorSheetBuilder() {
     Column() {
       this.AssistantEditorHeader()
+      Row() {
+        Column({ space: 6 }) {
+          this.AssistantEditorIdentityHeader()
+          this.AssistantEditorTabs()
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: 640 })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 16, right: 16, bottom: 6 })
 
       Scroll() {
         Row() {
@@ -3012,7 +3013,7 @@ struct Index {
             } else if (this.assistantEditorSection === Index.ASSISTANT_EDITOR_SECTION_PROMPT) {
               this.AssistantPromptSettingsContent()
             } else {
-              this.AssistantEditorOverviewContent()
+              this.AssistantParamsSettingsContent()
             }
           }
           .width('100%')
@@ -3020,11 +3021,13 @@ struct Index {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .padding({ left: 16, right: 16, bottom: 28 })
+        .alignItems(VerticalAlign.Top)
+        .padding({ left: 16, right: 16, top: 8, bottom: 28 })
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
+      .align(Alignment.Top)
     }
     .width('100%')
     .height('100%')
@@ -3035,8 +3038,7 @@ struct Index {
   private AssistantEditorHeader() {
     Row() {
       Button() {
-        SymbolGlyph(this.assistantEditorSection === Index.ASSISTANT_EDITOR_SECTION_OVERVIEW ?
-        $r('sys.symbol.xmark') : $r('sys.symbol.chevron_left'))
+        SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(18)
           .fontColor([$r('app.color.text_secondary')])
       }
@@ -3045,14 +3047,10 @@ struct Index {
       .height(36)
       .backgroundColor($r('app.color.divider'))
       .onClick(() => {
-        if (this.assistantEditorSection === Index.ASSISTANT_EDITOR_SECTION_OVERVIEW) {
-          this.showAssistantEditorSheet = false
-        } else {
-          this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_OVERVIEW
-        }
+        this.showAssistantEditorSheet = false
       })
 
-      Text(this.getAssistantEditorActiveTitle())
+      Text(this.getAssistantEditorTitle())
         .fontSize(17)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -3126,113 +3124,11 @@ struct Index {
   }
 
   @Builder
-  private AssistantEditorOverviewContent() {
-    Column({ space: 18 }) {
-      this.AssistantEditorProfilePreview()
-
-      Column({ space: 0 }) {
-        this.AssistantEditorSectionRow(
-          $r('sys.symbol.gearshape'),
-          $r('app.string.assistant_editor_basic_section'),
-          $r('app.string.assistant_editor_basic_desc'),
-          (): void => {
-            this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_BASIC
-          }
-        )
-
-        Divider()
-          .color($r('app.color.divider'))
-          .margin({ left: 72 })
-
-        this.AssistantEditorSectionRow(
-          $r('sys.symbol.message'),
-          $r('app.string.assistant_editor_prompt_section'),
-          $r('app.string.assistant_editor_prompt_desc'),
-          (): void => {
-            this.assistantEditorSection = Index.ASSISTANT_EDITOR_SECTION_PROMPT
-          }
-        )
-      }
-      .width('100%')
-      .backgroundColor(this.themeSurface)
-      .borderRadius(22)
-      .clip(true)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private AssistantEditorProfilePreview() {
-    Column({ space: 12 }) {
-      this.AssistantFormAvatarBadge(116, 58, 50)
-
-      Text(this.assistantFormName.trim() !== '' ? this.assistantFormName.trim() : $r('app.string.new_assistant'))
-        .fontSize(28)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .width('100%')
-
-      Text(this.assistantFormSystemPrompt.trim() !== '' ? this.assistantFormSystemPrompt.trim() :
-      $r('app.string.assistant_prompt_empty'))
-        .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .width('100%')
-    }
-    .width('100%')
-    .padding({ top: 8, bottom: 10 })
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  private AssistantEditorSectionRow(icon: Resource, title: ResourceStr, desc: ResourceStr, onTap: () => void) {
-    Row({ space: 16 }) {
-      SymbolGlyph(icon)
-        .fontSize(30)
-        .fontColor([$r('app.color.text_secondary')])
-        .width(42)
-        .height(42)
-
-      Column({ space: 4 }) {
-        Text(title)
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(desc)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(18)
-        .fontColor([$r('app.color.text_tertiary')])
-    }
-    .width('100%')
-    .constraintSize({ minHeight: 92 })
-    .padding({ left: 18, right: 16, top: 14, bottom: 14 })
-    .alignItems(VerticalAlign.Center)
-    .onClick(() => {
-      onTap()
-    })
-  }
-
-  @Builder
   private AssistantBasicSettingsContent() {
     Column({ space: 14 }) {
-      this.AssistantNameAvatarRow()
+      this.AssistantNameEditorRow()
+      this.AssistantAvatarEditorRow()
       this.AssistantDefaultModelRow()
-      this.AssistantSamplingConfigSection()
     }
     .width('100%')
   }
@@ -3246,7 +3142,98 @@ struct Index {
   }
 
   @Builder
-  private AssistantNameAvatarRow() {
+  private AssistantParamsSettingsContent() {
+    Column({ space: 14 }) {
+      this.AssistantSamplingConfigSection()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private AssistantEditorTabs() {
+    Row({ space: 20 }) {
+      this.AssistantEditorTabButton(
+        Index.ASSISTANT_EDITOR_SECTION_BASIC,
+        $r('app.string.assistant_editor_basic_section')
+      )
+      this.AssistantEditorTabButton(
+        Index.ASSISTANT_EDITOR_SECTION_PROMPT,
+        $r('app.string.assistant_editor_prompt_section')
+      )
+      this.AssistantEditorTabButton(
+        Index.ASSISTANT_EDITOR_SECTION_PARAMS,
+        $r('app.string.assistant_editor_params_section')
+      )
+      Blank()
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: 4, right: 4, top: 4, bottom: 2 })
+  }
+
+  @Builder
+  private AssistantEditorTabButton(section: string, label: ResourceStr) {
+    Button() {
+      Column({ space: 6 }) {
+        Text(label)
+          .fontSize(15)
+          .fontWeight(this.assistantEditorSection === section ? FontWeight.Bold : FontWeight.Medium)
+          .fontColor(this.assistantEditorSection === section ? $r('app.color.text_primary') :
+          $r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Column()
+          .width(this.assistantEditorSection === section ? 24 : 14)
+          .height(3)
+          .borderRadius(2)
+          .backgroundColor(this.assistantEditorSection === section ? this.themePrimary : Color.Transparent)
+      }
+      .alignItems(HorizontalAlign.Start)
+    }
+    .type(ButtonType.Normal)
+    .stateEffect(false)
+    .padding({ left: 0, right: 0, top: 4, bottom: 4 })
+    .backgroundColor(Color.Transparent)
+    .onClick(() => {
+      if (this.assistantEditorSection === section) {
+        return
+      }
+      this.assistantEditorSection = section
+    })
+  }
+
+  @Builder
+  private AssistantEditorIdentityHeader() {
+    Row({ space: 12 }) {
+      Button() {
+        this.AssistantFormAvatarBadge(56, 19, 31)
+      }
+      .width(56)
+      .height(56)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .borderRadius(19)
+      .onClick(() => {
+        this.showAssistantAvatarEditorSheet = true
+      })
+
+      Text(this.assistantFormName.trim() !== '' ? this.assistantFormName.trim() : $r('app.string.new_assistant'))
+        .layoutWeight(1)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(72)
+    .padding({ left: 4, right: 4 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private AssistantNameEditorRow() {
     Column({ space: 8 }) {
       Text($r('app.string.assistant_name'))
         .fontSize(13)
@@ -3254,36 +3241,51 @@ struct Index {
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
 
-      Row({ space: 12 }) {
-        TextInput({ text: this.assistantFormName, placeholder: $r('app.string.assistant_name_placeholder') })
-          .layoutWeight(1)
-          .height(52)
-          .fontSize(15)
-          .fontColor($r('app.color.text_primary'))
-          .placeholderColor($r('app.color.text_tertiary'))
-          .backgroundColor(this.themeSurface)
-          .borderRadius(18)
-          .padding({ left: 14, right: 14 })
-          .onChange((text: string) => {
-            this.assistantFormName = text
-          })
-
-        Button() {
-          this.AssistantFormAvatarBadge(60, 20, 34)
-        }
-        .width(60)
-        .height(60)
-        .padding(0)
-        .backgroundColor(Color.Transparent)
-        .borderRadius(20)
-        .onClick(() => {
-          this.showAssistantAvatarEditorSheet = true
+      TextInput({ text: this.assistantFormName, placeholder: $r('app.string.assistant_name_placeholder') })
+        .width('100%')
+        .height(52)
+        .fontSize(15)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_tertiary'))
+        .backgroundColor(this.themeSurface)
+        .borderRadius(16)
+        .padding({ left: 14, right: 14 })
+        .onChange((text: string) => {
+          this.assistantFormName = text
         })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
+  }
+
+  @Builder
+  private AssistantAvatarEditorRow() {
+    Row({ space: 12 }) {
+      Column({ space: 3 }) {
+        Text($r('app.string.assistant_avatar_symbol'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text($r('app.string.assistant_avatar_edit_title'))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      this.AssistantFormAvatarBadge(42, 14, 22)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_tertiary')])
+    }
+    .width('100%')
+    .padding({ left: 14, right: 12, top: 12, bottom: 12 })
+    .backgroundColor(this.themeSurface)
+    .borderRadius(16)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.showAssistantAvatarEditorSheet = true
+    })
   }
 
   @Builder
