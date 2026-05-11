@@ -1,44 +1,39 @@
-import { getDatabaseService, DatabaseService, ProviderConfig } from '../services/DatabaseService'
 import { getAIApiService, AIApiService, AIApiConfig, ModelsListResult, AIApiResult } from '../services/AIApiService'
 import {
   ModelProvider,
-  ModelInfo,
   ProviderType,
   ApiStyle,
-  OpenAITransport,
-  ModelCapabilities,
-  ModelType,
-  InputMode,
-  OutputMode,
-  ModelCapabilitiesJson,
-  ProviderIconType
+  OpenAITransport
 } from '../models/ChatModels'
 import {
-  getPresetProviderIconPath,
-  isPresetProvider,
   getEffectiveApiKey,
-  getPresetProviderById,
   isPresetProviderApiKeyRequired,
-  applyPresetIconDefaults,
-  getPresetProviderLogoUrl
+  applyPresetIconDefaults
 } from '../config/PresetProviders'
 import {
   CompatibilityProviderInfo,
   ModelDiscoveryStrategy,
   resolveProviderCompatibilityProfile
 } from '../services/registry/CompatibilityResolver'
+import { getAppSettingsStore, AppSettingsStore } from '../state/AppSettingsStore'
 
-// 服务商状态管理 - 单例模式
+/**
+ * Provider 视图模型：对外公开 API 保持不变，作为 AppSettingsStore 的 facade。
+ *
+ * 本类拆分原则：
+ * - 持久化 / 内存态 / 预设补齐 → AppSettingsStore 统一管理
+ * - 纯业务（连接测试、模型列表刷新、兼容性决策）→ 留在本 VM
+ *
+ * 历史上本类还持有 cachedProviders + syncProviderProperties，已全部迁到 Store
+ */
 export class ProviderViewModel {
   private static instance: ProviderViewModel | null = null
-  private databaseService: DatabaseService
   private aiApiService: AIApiService
-  // 缓存供应商列表
-  private cachedProviders: ModelProvider[] = []
+  private store: AppSettingsStore
 
   private constructor() {
-    this.databaseService = getDatabaseService()
     this.aiApiService = getAIApiService()
+    this.store = getAppSettingsStore()
   }
 
   static getInstance(): ProviderViewModel {
@@ -48,141 +43,61 @@ export class ProviderViewModel {
     return ProviderViewModel.instance
   }
 
-  // 获取所有已保存的服务商配置（只返回启用的供应商，用于模型选择器）
+  // ============================================================================
+  // 列表加载（委托 Store）
+  // ============================================================================
+
+  /** 仅返回启用的服务商，用于模型选择器 */
   async loadProviders(): Promise<ModelProvider[]> {
-    const configs = await this.databaseService.getAllProviders()
-    const providers: ModelProvider[] = []
-
-    for (let i = 0; i < configs.length; i++) {
-      const config = configs[i]
-      // 只加载启用的供应商
-      if (!config.isEnabled) {
-        continue
-      }
-      const provider = this.configToProvider(config)
-      providers.push(provider)
-    }
-
-    this.cachedProviders = providers
-    return providers
+    await this.store.loadAll()
+    return this.store.getEnabledProviders()
   }
 
-  // 获取所有已保存的服务商配置（包括禁用的，用于模型管理页面）
+  /** 返回全部（含未启用），用于模型管理页面 */
   async loadAllProviders(): Promise<ModelProvider[]> {
-    const configs = await this.databaseService.getAllProviders()
-    const providers: ModelProvider[] = []
-
-    for (let i = 0; i < configs.length; i++) {
-      const config = configs[i]
-      const provider = this.configToProvider(config)
-      providers.push(provider)
-    }
-
-    this.cachedProviders = providers
-    return providers
+    return await this.store.loadAll()
   }
 
-  // 根据 ID 获取供应商（从缓存中获取）
+  /** 从内存缓存取 provider；未命中返回 null */
   getProviderById(providerId: string): ModelProvider | null {
-    for (let i = 0; i < this.cachedProviders.length; i++) {
-      if (this.cachedProviders[i].id === providerId) {
-        return this.cachedProviders[i]
-      }
-    }
-    return null
+    return this.store.getProviderById(providerId)
   }
 
-  // 异步根据 ID 获取供应商（从数据库加载后获取）
+  /** 缓存未命中时自动回源 DB */
   async getProviderByIdAsync(providerId: string): Promise<ModelProvider | null> {
-    // 先尝试从缓存获取
-    const cached = this.getProviderById(providerId)
-    if (cached !== null) {
-      return cached
-    }
-    // 如果缓存为空，重新加载
-    await this.loadAllProviders()
-    return this.getProviderById(providerId)
+    return await this.store.getProviderByIdAsync(providerId)
   }
 
-  // 保存服务商配置（同时同步内存缓存）
-  async saveProvider(provider: ModelProvider, insertAtFront: boolean = false): Promise<void> {
-    await this.databaseService.saveProvider(provider, insertAtFront)
-    // 同步缓存：就地更新已有条目，或追加新条目
-    let found = false
-    for (let i = 0; i < this.cachedProviders.length; i++) {
-      if (this.cachedProviders[i].id === provider.id) {
-        this.syncProviderProperties(this.cachedProviders[i], provider)
-        found = true
-        break
-      }
-    }
-    if (!found) {
-      if (insertAtFront) {
-        this.cachedProviders.unshift(provider)
-      } else {
-        this.cachedProviders.push(provider)
-      }
-    }
-  }
-
-  // 删除服务商配置（同时同步内存缓存）
-  async deleteProvider(providerId: string): Promise<void> {
-    await this.databaseService.deleteProvider(providerId)
-    const newCache: ModelProvider[] = []
-    for (let i = 0; i < this.cachedProviders.length; i++) {
-      if (this.cachedProviders[i].id !== providerId) {
-        newCache.push(this.cachedProviders[i])
-      }
-    }
-    this.cachedProviders = newCache
-  }
-
-  // 更新服务商启用状态（同时同步内存缓存）
-  async updateProviderEnabled(providerId: string, isEnabled: boolean): Promise<void> {
-    await this.databaseService.updateProviderEnabled(providerId, isEnabled)
-    for (let i = 0; i < this.cachedProviders.length; i++) {
-      if (this.cachedProviders[i].id === providerId) {
-        this.cachedProviders[i].isConnected = isEnabled
-        break
-      }
-    }
-  }
-
-  // 保存供应商排序顺序
-  async saveProvidersOrder(providerIds: string[]): Promise<void> {
-    await this.databaseService.updateProvidersOrder(providerIds)
-    // 同步缓存排序：按 providerIds 顺序重排 cachedProviders
-    const sorted: ModelProvider[] = []
-    for (let i = 0; i < providerIds.length; i++) {
-      for (let j = 0; j < this.cachedProviders.length; j++) {
-        if (this.cachedProviders[j].id === providerIds[i]) {
-          sorted.push(this.cachedProviders[j])
-          break
-        }
-      }
-    }
-    // 追加不在 providerIds 中的项（防止遗漏）
-    for (let j = 0; j < this.cachedProviders.length; j++) {
-      let found = false
-      for (let i = 0; i < providerIds.length; i++) {
-        if (providerIds[i] === this.cachedProviders[j].id) {
-          found = true
-          break
-        }
-      }
-      if (!found) {
-        sorted.push(this.cachedProviders[j])
-      }
-    }
-    this.cachedProviders = sorted
-  }
-
-  // 获取缓存的服务商列表（不访问数据库，用于快速同步 UI）
+  /** 获取当前内存中的 provider 列表（快速 UI 同步用） */
   getCachedProviders(): ModelProvider[] {
-    return this.cachedProviders
+    return this.store.getProviders()
   }
 
-  // 同步 provider 的所有属性（从 source 复制到 target）
+  // ============================================================================
+  // 写操作（委托 Store）
+  // ============================================================================
+
+  async saveProvider(provider: ModelProvider, insertAtFront: boolean = false): Promise<void> {
+    await this.store.upsertProvider(provider, insertAtFront)
+  }
+
+  async deleteProvider(providerId: string): Promise<void> {
+    await this.store.removeProvider(providerId)
+  }
+
+  async updateProviderEnabled(providerId: string, isEnabled: boolean): Promise<void> {
+    await this.store.setProviderEnabled(providerId, isEnabled)
+  }
+
+  async saveProvidersOrder(providerIds: string[]): Promise<void> {
+    await this.store.reorderProviders(providerIds)
+  }
+
+  /**
+   * 把 source 的所有字段浅拷贝到 target。保留为 stateless helper：
+   * UI 层（ModelManagePage）通过它把 Store 新返的 provider 字段刷到
+   * 已绑定到子组件 @Param 的旧实例上，保证子组件引用稳定、不触发重建
+   */
   syncProviderProperties(target: ModelProvider, source: ModelProvider): void {
     target.name = source.name
     target.isConnected = source.isConnected
@@ -205,7 +120,15 @@ export class ProviderViewModel {
     target.iconSymbol = source.iconSymbol
   }
 
-  // 测试服务商连接
+  /** 预设补齐 + 历史 URL 修复 + 加载到内存（幂等） */
+  async initializeAllPresetProviders(): Promise<void> {
+    await this.store.ensureInitialized()
+  }
+
+  // ============================================================================
+  // 业务：连接测试 / 模型列表
+  // ============================================================================
+
   async testConnection(provider: ModelProvider): Promise<AIApiResult> {
     const config = this.providerToApiConfig(provider)
     let testModelId = this.getPreferredModelId(provider)
@@ -236,7 +159,6 @@ export class ProviderViewModel {
     return await this.aiApiService.testConnection(config, testModelId)
   }
 
-  // 获取服务商的模型列表
   async refreshModels(provider: ModelProvider): Promise<ModelsListResult> {
     const config = this.providerToApiConfig(provider)
     const modelsResult = await this.aiApiService.getModels(config)
@@ -261,110 +183,11 @@ export class ProviderViewModel {
     return modelsResult
   }
 
-  // 将 ProviderConfig 转换为 ModelProvider
-  private configToProvider(config: ProviderConfig): ModelProvider {
-    const providerType = this.stringToProviderType(config.type)
-    const apiStyle = this.stringToApiStyle(config.apiStyle)
-    const provider = new ModelProvider(
-      config.id,
-      config.name,
-      providerType,
-      config.iconSymbol,
-      this.getProviderBrandColor(providerType),
-      config.baseUrl,
-      apiStyle
-    )
-    provider.apiKey = config.apiKey
-    provider.requiresApiKey = (providerType === ProviderType.OLLAMA || providerType === ProviderType.LMSTUDIO) ?
-      false : config.requiresApiKey
-    provider.isConnected = config.isEnabled
+  // ============================================================================
+  // 业务 helpers
+  // ============================================================================
 
-    // 设置新字段
-    provider.isPreset = config.isPreset || isPresetProvider(config.id)
-    provider.iconPath = config.iconPath !== '' ? config.iconPath : getPresetProviderIconPath(config.id)
-    provider.apiPath = config.apiPath !== undefined ? config.apiPath : ''
-    provider.openaiTransport = config.openaiTransport === OpenAITransport.RESPONSES
-      ? OpenAITransport.RESPONSES
-      : OpenAITransport.CHAT_COMPLETIONS
-    provider.customHeadersJson = config.customHeadersJson !== undefined ? config.customHeadersJson : ''
-
-    // 设置图标类型相关字段
-    provider.iconType = (config.iconType !== undefined && config.iconType !== '') ? config.iconType as ProviderIconType : ProviderIconType.SVG
-    provider.textIcon = config.textIcon !== undefined ? config.textIcon : ''
-    provider.textIconBgColor = config.textIconBgColor !== undefined ? config.textIconBgColor : ''
-    provider.customImagePath = config.customImagePath !== undefined ? config.customImagePath : ''
-
-    // 自动迁移：预设服务商优先使用 models.dev 远程 logo + 文字兜底；保留用户自定义图标
-    if (provider.isPreset) {
-      const preset = getPresetProviderById(config.id)
-      if (preset !== null) {
-        // 判断用户是否手动改过图标：
-        // - image 类型且 customImagePath 不等于该预设的远程 logo URL → 用户自定义图片（含 file:// 沙箱图、其他 URL 链接）
-        // - text 类型且 textIcon 与预设不同 → 用户自定义文字
-        const presetLogoUrl = getPresetProviderLogoUrl(preset.id)
-        const isUserCustomImage = provider.iconType === ProviderIconType.IMAGE
-          && provider.customImagePath !== ''
-          && provider.customImagePath !== presetLogoUrl
-        const savedTextIcon: string = config.textIcon !== undefined ? config.textIcon : ''
-        const isUserCustomText = provider.iconType === ProviderIconType.TEXT
-          && savedTextIcon !== '' && savedTextIcon !== preset.textIcon
-
-        if (!isUserCustomImage && !isUserCustomText) {
-          applyPresetIconDefaults(provider, preset.id)
-        } else {
-          provider.iconPath = ''
-        }
-      }
-    }
-
-    // 解析模型列表
-    if (config.modelsJson !== undefined && config.modelsJson !== null && config.modelsJson !== '') {
-      console.info('ProviderViewModel', `Parsing models for ${config.name}: ${config.modelsJson}`)
-      try {
-        const modelsArray: ModelData[] = JSON.parse(config.modelsJson) as ModelData[]
-
-        for (let i = 0; i < modelsArray.length; i++) {
-          const modelObj = modelsArray[i]
-          const shouldEnable = modelObj.isEnabled !== undefined ? modelObj.isEnabled : true
-          const modelInfo = new ModelInfo(
-            modelObj.id,
-            modelObj.name,
-            modelObj.contextLength,
-            shouldEnable,
-            modelObj.isRecommended
-          )
-
-          // 恢复扩展字段
-          if (modelObj.modelType !== undefined) {
-            modelInfo.modelType = modelObj.modelType === 'embedding' ? ModelType.EMBEDDING : ModelType.CHAT
-          }
-          if (modelObj.inputMode !== undefined) {
-            modelInfo.inputMode = modelObj.inputMode === 'vision' ? InputMode.VISION : InputMode.TEXT
-          }
-          if (modelObj.outputMode !== undefined) {
-            modelInfo.outputMode = modelObj.outputMode === 'image' ? OutputMode.IMAGE : OutputMode.TEXT
-          }
-          if (modelObj.capabilities !== undefined) {
-            modelInfo.capabilities = ModelCapabilities.fromJson(modelObj.capabilities)
-          }
-          if (modelObj.reasoningStrategyOverride !== undefined) {
-            modelInfo.reasoningStrategyOverride = modelObj.reasoningStrategyOverride
-          }
-
-          provider.models.push(modelInfo)
-        }
-      } catch (error) {
-        console.error('ProviderViewModel', `Failed to parse models JSON: ${JSON.stringify(error)}`)
-      }
-    } else {
-      // 确保 models 属性被初始化为空数组
-      provider.models = []
-    }
-
-    return provider
-  }
-
-  // 将 ModelProvider 转换为 AIApiConfig
+  /** 把运行时 Provider 转成一次请求所需的最小 AIApiConfig */
   private providerToApiConfig(provider: ModelProvider): AIApiConfig {
     return {
       providerId: provider.id,
@@ -374,57 +197,10 @@ export class ProviderViewModel {
       baseUrl: provider.baseUrl,
       apiPath: provider.apiPath || undefined,
       openaiTransport: provider.openaiTransport,
-      customHeadersJson: provider.customHeadersJson || undefined  // 传递自定义请求头
+      customHeadersJson: provider.customHeadersJson || undefined
     }
   }
 
-  // 字符串转换为 ProviderType
-  private stringToProviderType(typeStr: string): ProviderType {
-    if (typeStr === 'openai') {
-      return ProviderType.OPENAI
-    } else if (typeStr === 'anthropic') {
-      return ProviderType.ANTHROPIC
-    } else if (typeStr === 'azure') {
-      return ProviderType.AZURE
-    } else if (typeStr === 'deepseek') {
-      return ProviderType.DEEPSEEK
-    } else if (typeStr === 'ollama') {
-      return ProviderType.OLLAMA
-    } else if (typeStr === 'lmstudio') {
-      return ProviderType.LMSTUDIO
-    } else if (typeStr === 'custom') {
-      return ProviderType.CUSTOM
-    }
-    return ProviderType.OPENAI
-  }
-
-  // 字符串转换为 ApiStyle
-  private stringToApiStyle(styleStr: string): ApiStyle {
-    if (styleStr === 'openai') {
-      return ApiStyle.OPENAI
-    } else if (styleStr === 'anthropic') {
-      return ApiStyle.ANTHROPIC
-    } else if (styleStr === 'google') {
-      return ApiStyle.GOOGLE
-    }
-    return ApiStyle.OPENAI
-  }
-
-  // 获取服务商品牌颜色
-  private getProviderBrandColor(type: ProviderType): Resource {
-    if (type === ProviderType.OPENAI) {
-      return $r('app.color.brand_openai')
-    } else if (type === ProviderType.ANTHROPIC) {
-      return $r('app.color.brand_anthropic')
-    } else if (type === ProviderType.AZURE) {
-      return $r('app.color.brand_azure')
-    } else if (type === ProviderType.DEEPSEEK) {
-      return $r('app.color.brand_deepseek')
-    }
-    return $r('app.color.primary')
-  }
-
-  // 获取测试连接的优先模型
   private getPreferredModelId(provider: ModelProvider): string {
     for (let i = 0; i < provider.models.length; i++) {
       const model = provider.models[i]
@@ -499,12 +275,13 @@ export class ProviderViewModel {
     return []
   }
 
-  // 获取默认的服务商列表（用于首次启动）
+  // ============================================================================
+  // 首次启动的默认 provider（UI 层在 DB 空时短暂展示用）
+  // ============================================================================
+
   getDefaultProviders(): ModelProvider[] {
-    // 返回默认的硅基流动服务商
     const providers: ModelProvider[] = []
 
-    // 添加硅基流动（内置 API Key，开箱即用）
     const siliconflow = new ModelProvider(
       'siliconflow',
       '硅基流动',
@@ -514,7 +291,7 @@ export class ProviderViewModel {
       'https://api.siliconflow.cn/v1',
       ApiStyle.OPENAI
     )
-    siliconflow.apiKey = ''  // 使用预设 API Key
+    siliconflow.apiKey = ''
     siliconflow.requiresApiKey = isPresetProviderApiKeyRequired(siliconflow.id)
     siliconflow.isConnected = true
     siliconflow.isPreset = true
@@ -526,79 +303,12 @@ export class ProviderViewModel {
 
     return providers
   }
-
-  // 初始化所有预置服务商（确保预置服务商总是存在）
-  async initializeAllPresetProviders(): Promise<void> {
-    const existingProviders = await this.databaseService.getAllProviders()
-
-    // 获取已存在的服务商 ID 集合
-    const existingIds = new Set<string>()
-    for (let i = 0; i < existingProviders.length; i++) {
-      existingIds.add(existingProviders[i].id)
-    }
-
-    // 修复历史错误 URL
-    for (let i = 0; i < existingProviders.length; i++) {
-      const p = existingProviders[i]
-      if (p.id === 'minimax' && p.baseUrl === 'https://api.minimax.chat/v1') {
-        await this.databaseService.updateProviderBaseUrl('minimax', 'https://api.minimaxi.com/v1')
-      }
-    }
-
-    // 所有预置服务商 ID（硅基流动放在最前面）
-    const allPresetIds = ['siliconflow', 'openai', 'anthropic', 'deepseek', 'gemini', 'openrouter', 'qwen', 'kimi', 'zhipu', 'doubao', 'minimax', 'aihubmix', 'grok', 'mimo', 'ollama']
-
-    for (let i = 0; i < allPresetIds.length; i++) {
-      const presetId = allPresetIds[i]
-      // 如果服务商不存在，则添加
-      if (!existingIds.has(presetId)) {
-        const preset = getPresetProviderById(presetId)
-        if (preset !== null) {
-          const provider = new ModelProvider(
-            preset.id,
-            preset.name,
-            preset.type,
-            'message',
-            $r('app.color.brand_custom'),
-            preset.baseUrl,
-            preset.apiStyle
-          )
-          provider.apiKey = ''
-          provider.requiresApiKey = isPresetProviderApiKeyRequired(preset.id)
-          provider.isConnected = preset.id === 'siliconflow'  // 仅硅基流动默认启用
-          provider.isPreset = true
-          provider.iconPath = ''
-          provider.apiPath = ''
-          provider.openaiTransport = preset.openaiTransport !== undefined ? preset.openaiTransport : OpenAITransport.CHAT_COMPLETIONS
-          applyPresetIconDefaults(provider, preset.id)
-          await this.saveProvider(provider)
-        }
-      }
-    }
-  }
 }
 
-// 模型数据接口（支持扩展字段）
-interface ModelData {
-  id: string
-  name: string
-  contextLength: number
-  isEnabled?: boolean
-  isRecommended: boolean
-  // 扩展字段
-  modelType?: string
-  inputMode?: string
-  outputMode?: string
-  capabilities?: ModelCapabilitiesJson
-  reasoningStrategyOverride?: string
-}
-
-// 导出获取实例方法
 export function createProviderViewModel(): ProviderViewModel {
   return ProviderViewModel.getInstance()
 }
 
-// 导出单例获取方法
 export function getProviderViewModel(): ProviderViewModel {
   return ProviderViewModel.getInstance()
 }

@@ -1,0 +1,474 @@
+import { getDatabaseService, DatabaseService, ProviderConfig } from '../services/DatabaseService'
+import {
+  ModelProvider,
+  ModelInfo,
+  ProviderType,
+  ApiStyle,
+  OpenAITransport,
+  ModelCapabilities,
+  ModelType,
+  InputMode,
+  OutputMode,
+  ModelCapabilitiesJson,
+  ProviderIconType
+} from '../models/ChatModels'
+import {
+  getPresetProviderIconPath,
+  isPresetProvider,
+  getPresetProviderById,
+  isPresetProviderApiKeyRequired,
+  applyPresetIconDefaults,
+  getPresetProviderLogoUrl
+} from '../config/PresetProviders'
+import { AppSettingsState, getAppSettingsState } from './AppSettingsState'
+
+/**
+ * 模型 JSON 中的扩展字段（跟 ProviderViewModel 里原先的 ModelData 同构）
+ */
+interface ModelJsonRow {
+  id: string
+  name: string
+  contextLength: number
+  isEnabled?: boolean
+  isRecommended: boolean
+  modelType?: string
+  inputMode?: string
+  outputMode?: string
+  capabilities?: ModelCapabilitiesJson
+  reasoningStrategyOverride?: string
+}
+
+/**
+ * 预置服务商启动时补齐的 ID 顺序（硅基流动放最前）
+ */
+const ALL_PRESET_PROVIDER_IDS: string[] = [
+  'siliconflow', 'openai', 'anthropic', 'deepseek', 'gemini',
+  'openrouter', 'qwen', 'kimi', 'zhipu', 'doubao',
+  'minimax', 'aihubmix', 'grok', 'mimo', 'ollama'
+]
+
+/**
+ * 历史错误 baseUrl 迁移规则：providerId → 期望的 baseUrl
+ * 之前 MiniMax 误用 api.minimax.chat，已切换到 api.minimaxi.com
+ */
+interface BaseUrlFix {
+  providerId: string
+  wrongBaseUrl: string
+  correctBaseUrl: string
+}
+
+const HISTORICAL_BASE_URL_FIXES: BaseUrlFix[] = [
+  { providerId: 'minimax', wrongBaseUrl: 'https://api.minimax.chat/v1', correctBaseUrl: 'https://api.minimaxi.com/v1' }
+]
+
+/**
+ * 应用设置 Store（当前阶段只管 providers）
+ *
+ * 作为 SQLite + 预设补齐 + 运行时内存状态的唯一入口。
+ * - 读：先走内存 state.providers；未初始化时回源 DB
+ * - 写：先写 DB，再整数组替换 state.providers 并自增 providersVersion 触发 @Trace
+ *
+ * 设计原则：
+ * 1. 所有 Provider 的持久化只经过这里，避免多个服务各自缓存导致不一致
+ * 2. 内存写操作采用“新建数组 + 整体赋值”方式，保证即使只改一个子字段也会触发响应式刷新
+ * 3. normalize pipeline（URL 修复、预设补齐、图标迁移）集中在本类内，便于后续扩展
+ */
+export class AppSettingsStore {
+  private static instance: AppSettingsStore | null = null
+  private db: DatabaseService
+  private initPromise: Promise<void> | null = null
+
+  private constructor() {
+    this.db = getDatabaseService()
+  }
+
+  static getInstance(): AppSettingsStore {
+    if (AppSettingsStore.instance === null) {
+      AppSettingsStore.instance = new AppSettingsStore()
+    }
+    return AppSettingsStore.instance
+  }
+
+  // ============================================================================
+  // 查询（不碰 DB）
+  // ============================================================================
+
+  /** 返回当前内存中的所有 providers（含未启用），调用方只读 */
+  getProviders(): ModelProvider[] {
+    return getAppSettingsState().providers
+  }
+
+  /** 只返回启用状态的 providers，用于模型选择等面向用户的入口 */
+  getEnabledProviders(): ModelProvider[] {
+    const all = this.getProviders()
+    const enabled: ModelProvider[] = []
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].isConnected) {
+        enabled.push(all[i])
+      }
+    }
+    return enabled
+  }
+
+  /** 根据 ID 查找内存中的 provider；未命中返回 null（不触发回源） */
+  getProviderById(providerId: string): ModelProvider | null {
+    const list = this.getProviders()
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === providerId) {
+        return list[i]
+      }
+    }
+    return null
+  }
+
+  /** 异步查找：缓存未命中时做一次 loadAll 回源再取 */
+  async getProviderByIdAsync(providerId: string): Promise<ModelProvider | null> {
+    const cached = this.getProviderById(providerId)
+    if (cached !== null) {
+      return cached
+    }
+    await this.loadAll()
+    return this.getProviderById(providerId)
+  }
+
+  // ============================================================================
+  // 加载（DB → normalize → state）
+  // ============================================================================
+
+  /**
+   * 从 DB 拉一遍 providers，更新内存 state；返回同样的数组以兼容原调用方
+   */
+  async loadAll(): Promise<ModelProvider[]> {
+    const configs = await this.db.getAllProviders()
+    const providers: ModelProvider[] = []
+    for (let i = 0; i < configs.length; i++) {
+      providers.push(this.configToProvider(configs[i]))
+    }
+    this.setProviders(providers)
+    return providers
+  }
+
+  /**
+   * 启动初始化：历史 URL 修复 + 预设补齐 + 加载到内存。
+   * 多次调用合并为同一个 promise，不会重复执行
+   */
+  async ensureInitialized(): Promise<void> {
+    if (getAppSettingsState().providersInitialized) {
+      return
+    }
+    if (this.initPromise !== null) {
+      await this.initPromise
+      return
+    }
+    this.initPromise = this.doInitialize()
+    try {
+      await this.initPromise
+    } finally {
+      this.initPromise = null
+    }
+  }
+
+  private async doInitialize(): Promise<void> {
+    const existingConfigs = await this.db.getAllProviders()
+
+    await this.applyHistoricalBaseUrlFixes(existingConfigs)
+
+    const existingIds = new Set<string>()
+    for (let i = 0; i < existingConfigs.length; i++) {
+      existingIds.add(existingConfigs[i].id)
+    }
+
+    for (let i = 0; i < ALL_PRESET_PROVIDER_IDS.length; i++) {
+      const presetId = ALL_PRESET_PROVIDER_IDS[i]
+      if (!existingIds.has(presetId)) {
+        const preset = getPresetProviderById(presetId)
+        if (preset !== null) {
+          const provider = new ModelProvider(
+            preset.id,
+            preset.name,
+            preset.type,
+            'message',
+            this.brandColorFor(preset.type),
+            preset.baseUrl,
+            preset.apiStyle
+          )
+          provider.apiKey = ''
+          provider.requiresApiKey = isPresetProviderApiKeyRequired(preset.id)
+          provider.isConnected = preset.id === 'siliconflow'
+          provider.isPreset = true
+          provider.iconPath = ''
+          provider.apiPath = ''
+          provider.openaiTransport = preset.openaiTransport !== undefined
+            ? preset.openaiTransport
+            : OpenAITransport.CHAT_COMPLETIONS
+          applyPresetIconDefaults(provider, preset.id)
+          // 这里直接写 DB；loadAll 会把最终结果 sync 到 state
+          await this.db.saveProvider(provider)
+        }
+      }
+    }
+
+    await this.loadAll()
+    getAppSettingsState().providersInitialized = true
+  }
+
+  private async applyHistoricalBaseUrlFixes(configs: ProviderConfig[]): Promise<void> {
+    for (let i = 0; i < configs.length; i++) {
+      const cfg = configs[i]
+      for (let j = 0; j < HISTORICAL_BASE_URL_FIXES.length; j++) {
+        const fix = HISTORICAL_BASE_URL_FIXES[j]
+        if (cfg.id === fix.providerId && cfg.baseUrl === fix.wrongBaseUrl) {
+          await this.db.updateProviderBaseUrl(fix.providerId, fix.correctBaseUrl)
+        }
+      }
+    }
+  }
+
+  // ============================================================================
+  // 写入（DB + state）
+  // ============================================================================
+
+  /** 新增或更新 provider：写 DB + 同步内存数组 */
+  async upsertProvider(provider: ModelProvider, insertAtFront: boolean = false): Promise<void> {
+    await this.db.saveProvider(provider, insertAtFront)
+    const current = this.getProviders()
+    const next: ModelProvider[] = []
+    let replaced = false
+    for (let i = 0; i < current.length; i++) {
+      if (current[i].id === provider.id) {
+        next.push(provider)
+        replaced = true
+      } else {
+        next.push(current[i])
+      }
+    }
+    if (!replaced) {
+      if (insertAtFront) {
+        next.unshift(provider)
+      } else {
+        next.push(provider)
+      }
+    }
+    this.setProviders(next)
+  }
+
+  /** 删除 provider：写 DB + 从内存数组过滤掉 */
+  async removeProvider(providerId: string): Promise<void> {
+    await this.db.deleteProvider(providerId)
+    const current = this.getProviders()
+    const next: ModelProvider[] = []
+    for (let i = 0; i < current.length; i++) {
+      if (current[i].id !== providerId) {
+        next.push(current[i])
+      }
+    }
+    this.setProviders(next)
+  }
+
+  /** 改启用状态：写 DB + 同步到内存数组 */
+  async setProviderEnabled(providerId: string, isEnabled: boolean): Promise<void> {
+    await this.db.updateProviderEnabled(providerId, isEnabled)
+    const current = this.getProviders()
+    const next: ModelProvider[] = []
+    for (let i = 0; i < current.length; i++) {
+      const p = current[i]
+      if (p.id === providerId) {
+        p.isConnected = isEnabled
+      }
+      next.push(p)
+    }
+    this.setProviders(next)
+  }
+
+  /** 按给定 id 顺序重排 */
+  async reorderProviders(providerIds: string[]): Promise<void> {
+    await this.db.updateProvidersOrder(providerIds)
+    const current = this.getProviders()
+    const sorted: ModelProvider[] = []
+    for (let i = 0; i < providerIds.length; i++) {
+      const id = providerIds[i]
+      for (let j = 0; j < current.length; j++) {
+        if (current[j].id === id) {
+          sorted.push(current[j])
+          break
+        }
+      }
+    }
+    // 兜底：不在 providerIds 里的也保留，避免误丢数据
+    for (let j = 0; j < current.length; j++) {
+      let found = false
+      for (let i = 0; i < providerIds.length; i++) {
+        if (providerIds[i] === current[j].id) {
+          found = true
+          break
+        }
+      }
+      if (!found) {
+        sorted.push(current[j])
+      }
+    }
+    this.setProviders(sorted)
+  }
+
+  /**
+   * 给 state.providers 换成新数组，并自增 providersVersion。
+   * @Trace 只能追踪数组“整体”变化，所以必须用新引用替换
+   */
+  private setProviders(next: ModelProvider[]): void {
+    const state: AppSettingsState = getAppSettingsState()
+    state.providers = next
+    state.providersVersion = state.providersVersion + 1
+  }
+
+  // ============================================================================
+  // ProviderConfig ↔ ModelProvider 转换
+  // ============================================================================
+
+  /**
+   * 从 DB 行（ProviderConfig）反序列化回运行时 ModelProvider。
+   * 原先在 ProviderViewModel.configToProvider 里，搬到这里让 Store 自洽
+   */
+  configToProvider(config: ProviderConfig): ModelProvider {
+    const providerType = this.stringToProviderType(config.type)
+    const apiStyle = this.stringToApiStyle(config.apiStyle)
+    const provider = new ModelProvider(
+      config.id,
+      config.name,
+      providerType,
+      config.iconSymbol,
+      this.brandColorFor(providerType),
+      config.baseUrl,
+      apiStyle
+    )
+    provider.apiKey = config.apiKey
+    provider.requiresApiKey = (providerType === ProviderType.OLLAMA || providerType === ProviderType.LMSTUDIO)
+      ? false
+      : config.requiresApiKey
+    provider.isConnected = config.isEnabled
+
+    provider.isPreset = config.isPreset || isPresetProvider(config.id)
+    provider.iconPath = config.iconPath !== '' ? config.iconPath : getPresetProviderIconPath(config.id)
+    provider.apiPath = config.apiPath !== undefined ? config.apiPath : ''
+    provider.openaiTransport = config.openaiTransport === OpenAITransport.RESPONSES
+      ? OpenAITransport.RESPONSES
+      : OpenAITransport.CHAT_COMPLETIONS
+    provider.customHeadersJson = config.customHeadersJson !== undefined ? config.customHeadersJson : ''
+
+    provider.iconType = (config.iconType !== undefined && config.iconType !== '')
+      ? config.iconType as ProviderIconType
+      : ProviderIconType.SVG
+    provider.textIcon = config.textIcon !== undefined ? config.textIcon : ''
+    provider.textIconBgColor = config.textIconBgColor !== undefined ? config.textIconBgColor : ''
+    provider.customImagePath = config.customImagePath !== undefined ? config.customImagePath : ''
+
+    // 预设图标迁移：保留用户自定义；其它用预设默认覆盖
+    if (provider.isPreset) {
+      const preset = getPresetProviderById(config.id)
+      if (preset !== null) {
+        const presetLogoUrl = getPresetProviderLogoUrl(preset.id)
+        const isUserCustomImage = provider.iconType === ProviderIconType.IMAGE
+          && provider.customImagePath !== ''
+          && provider.customImagePath !== presetLogoUrl
+        const savedTextIcon: string = config.textIcon !== undefined ? config.textIcon : ''
+        const isUserCustomText = provider.iconType === ProviderIconType.TEXT
+          && savedTextIcon !== ''
+          && savedTextIcon !== preset.textIcon
+
+        if (!isUserCustomImage && !isUserCustomText) {
+          applyPresetIconDefaults(provider, preset.id)
+        } else {
+          provider.iconPath = ''
+        }
+      }
+    }
+
+    if (config.modelsJson !== undefined && config.modelsJson !== null && config.modelsJson !== '') {
+      try {
+        const modelsArray: ModelJsonRow[] = JSON.parse(config.modelsJson) as ModelJsonRow[]
+        for (let i = 0; i < modelsArray.length; i++) {
+          const modelObj = modelsArray[i]
+          const shouldEnable = modelObj.isEnabled !== undefined ? modelObj.isEnabled : true
+          const modelInfo = new ModelInfo(
+            modelObj.id,
+            modelObj.name,
+            modelObj.contextLength,
+            shouldEnable,
+            modelObj.isRecommended
+          )
+          if (modelObj.modelType !== undefined) {
+            modelInfo.modelType = modelObj.modelType === 'embedding' ? ModelType.EMBEDDING : ModelType.CHAT
+          }
+          if (modelObj.inputMode !== undefined) {
+            modelInfo.inputMode = modelObj.inputMode === 'vision' ? InputMode.VISION : InputMode.TEXT
+          }
+          if (modelObj.outputMode !== undefined) {
+            modelInfo.outputMode = modelObj.outputMode === 'image' ? OutputMode.IMAGE : OutputMode.TEXT
+          }
+          if (modelObj.capabilities !== undefined) {
+            modelInfo.capabilities = ModelCapabilities.fromJson(modelObj.capabilities)
+          }
+          if (modelObj.reasoningStrategyOverride !== undefined) {
+            modelInfo.reasoningStrategyOverride = modelObj.reasoningStrategyOverride
+          }
+          provider.models.push(modelInfo)
+        }
+      } catch (error) {
+        console.error('AppSettingsStore', `Failed to parse models JSON: ${JSON.stringify(error)}`)
+      }
+    } else {
+      provider.models = []
+    }
+
+    return provider
+  }
+
+  private stringToProviderType(typeStr: string): ProviderType {
+    if (typeStr === 'openai') {
+      return ProviderType.OPENAI
+    } else if (typeStr === 'anthropic') {
+      return ProviderType.ANTHROPIC
+    } else if (typeStr === 'azure') {
+      return ProviderType.AZURE
+    } else if (typeStr === 'deepseek') {
+      return ProviderType.DEEPSEEK
+    } else if (typeStr === 'ollama') {
+      return ProviderType.OLLAMA
+    } else if (typeStr === 'lmstudio') {
+      return ProviderType.LMSTUDIO
+    } else if (typeStr === 'custom') {
+      return ProviderType.CUSTOM
+    }
+    return ProviderType.OPENAI
+  }
+
+  private stringToApiStyle(styleStr: string): ApiStyle {
+    if (styleStr === 'openai') {
+      return ApiStyle.OPENAI
+    } else if (styleStr === 'anthropic') {
+      return ApiStyle.ANTHROPIC
+    } else if (styleStr === 'google') {
+      return ApiStyle.GOOGLE
+    }
+    return ApiStyle.OPENAI
+  }
+
+  /**
+   * ProviderType 对应的品牌色资源。迁自原 ProviderViewModel.getProviderBrandColor
+   */
+  brandColorFor(type: ProviderType): Resource {
+    if (type === ProviderType.OPENAI) {
+      return $r('app.color.brand_openai')
+    } else if (type === ProviderType.ANTHROPIC) {
+      return $r('app.color.brand_anthropic')
+    } else if (type === ProviderType.AZURE) {
+      return $r('app.color.brand_azure')
+    } else if (type === ProviderType.DEEPSEEK) {
+      return $r('app.color.brand_deepseek')
+    }
+    return $r('app.color.primary')
+  }
+}
+
+export function getAppSettingsStore(): AppSettingsStore {
+  return AppSettingsStore.getInstance()
+}
