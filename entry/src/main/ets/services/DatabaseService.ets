@@ -219,6 +219,7 @@ export class DatabaseService {
         model_name TEXT,
         timestamp INTEGER,
         reasoning_content TEXT,
+        reasoning_signature_blob TEXT DEFAULT '',
         FOREIGN KEY (session_id) REFERENCES ${TableNames.SESSIONS}(id)
       )
     `
@@ -292,6 +293,8 @@ export class DatabaseService {
       await this.addSortOrderColumnIfNeeded()
       // 尝试添加 reasoning_content 字段（用于推理模型）
       await this.addReasoningContentColumnIfNeeded()
+      // 尝试添加 reasoning_signature_blob 字段(用于 OpenAI Responses 跨轮保持推理状态)
+      await this.addReasoningSignatureBlobColumnIfNeeded()
       // 尝试添加 is_preset 和 icon_path 字段（用于供应商图标管理）
       await this.addProviderIconColumnsIfNeeded()
       await this.addApiPathColumnIfNeeded()
@@ -350,6 +353,18 @@ export class DatabaseService {
     } catch (error) {
       // 如果字段已存在，会抛出错误，忽略即可
       console.info('DatabaseService', 'reasoning_content column may already exist')
+    }
+  }
+
+  // 添加 reasoning_signature_blob 字段(用于 OpenAI Responses 跨轮保持推理状态)
+  private async addReasoningSignatureBlobColumnIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN reasoning_signature_blob TEXT DEFAULT ''`)
+    } catch (error) {
+      console.info('DatabaseService', 'reasoning_signature_blob column may already exist')
     }
   }
 
@@ -1615,6 +1630,7 @@ export class DatabaseService {
       model_id: message.modelId || '',
       timestamp: message.timestamp,
       reasoning_content: message.reasoningContent,
+      reasoning_signature_blob: message.reasoningSignatureBlob || '',
       // 保存搜索引用数据
       search_query: message.searchQuery || '',
       search_engine: message.searchEngine || '',
@@ -1756,6 +1772,7 @@ export class DatabaseService {
     message.modelId = this.safeGetString(resultSet, 'model_id')
     message.timestamp = resultSet.getLong(resultSet.getColumnIndex('timestamp'))
     message.reasoningContent = this.safeGetString(resultSet, 'reasoning_content')
+    message.reasoningSignatureBlob = this.safeGetString(resultSet, 'reasoning_signature_blob')
     message.searchQuery = this.safeGetString(resultSet, 'search_query')
     message.searchEngine = this.safeGetString(resultSet, 'search_engine')
     message.searchSource = this.safeGetString(resultSet, 'search_source')

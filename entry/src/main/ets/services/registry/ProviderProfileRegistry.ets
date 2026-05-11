@@ -75,7 +75,9 @@ const PROVIDER_PROFILES: ProviderProfileDef[] = [
     },
     profile: {
       reasoningControlMode: ReasoningControlMode.EFFORT,
-      defaultReasoningRequestStrategy: ReasoningRequestStrategy.OPENAI_REASONING_EFFORT
+      defaultReasoningRequestStrategy: ReasoningRequestStrategy.OPENAI_REASONING_EFFORT,
+      // 官方 Responses API 支持 include=reasoning.encrypted_content, 跨轮保持推理状态
+      supportsOpenAIResponsesEncryptedReasoning: true
     }
   },
 
@@ -241,7 +243,10 @@ function mergeWithDefault(partial: Partial<ProviderCompatibilityProfile>): Provi
       : DEFAULT_PROFILE.reasoningControlMode,
     defaultReasoningRequestStrategy: partial.defaultReasoningRequestStrategy !== undefined
       ? partial.defaultReasoningRequestStrategy
-      : DEFAULT_PROFILE.defaultReasoningRequestStrategy
+      : DEFAULT_PROFILE.defaultReasoningRequestStrategy,
+    supportsOpenAIResponsesEncryptedReasoning: partial.supportsOpenAIResponsesEncryptedReasoning !== undefined
+      ? partial.supportsOpenAIResponsesEncryptedReasoning
+      : DEFAULT_PROFILE.supportsOpenAIResponsesEncryptedReasoning
   }
 }
 

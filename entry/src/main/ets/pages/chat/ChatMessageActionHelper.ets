@@ -76,6 +76,7 @@ export function syncChatMessageFromSource(target: ChatMessage, source: ChatMessa
   target.modelName = source.modelName
   target.modelId = source.modelId
   target.reasoningContent = source.reasoningContent
+  target.reasoningSignatureBlob = source.reasoningSignatureBlob
   target.attachments = source.attachments.slice()
   target.isGenerating = source.isGenerating
   target.searchReferences = source.searchReferences.slice()

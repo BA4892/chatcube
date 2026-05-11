@@ -72,6 +72,9 @@ export class RequestMessage {
   role: string = ''
   content: string = ''
   reasoningContent: string = ''
+  // OpenAI Responses API reasoning item 原文(JSON 字符串,含 encrypted_content)
+  // 仅 role === 'assistant' 时可能有值,用于跨轮保持推理状态
+  reasoningSignatureBlob: string = ''
   // 图片附件（用于多模态请求）
   attachments: MessageAttachment[] = []
   // Function Calling 相关字段
@@ -257,6 +260,9 @@ interface OpenAIResponsesInputItem {
   arguments?: string
   output?: string
   id?: string
+  // reasoning item 专用字段(仅当 type === 'reasoning' 时出现)
+  summary?: OpenAIResponsesReasoningSummaryItem[]
+  encrypted_content?: string
 }
 
 interface OpenAIResponsesReasoningConfig {
@@ -273,6 +279,8 @@ interface OpenAIResponsesRequestBody {
   reasoning?: OpenAIResponsesReasoningConfig
   enable_thinking?: boolean
   thinking_budget?: number
+  // 请求 Responses 在流中返回额外字段,例如 'reasoning.encrypted_content'
+  include?: string[]
   tools?: OpenAIResponsesTool[]
   tool_choice?: string
   stream?: boolean
@@ -426,6 +434,9 @@ export interface AIApiResult {
   // Function Calling 相关字段
   toolCalls?: ToolCall[]     // AI 请求的工具调用
   finishReason?: string      // 完成原因: "stop" | "tool_calls"
+  // OpenAI Responses API reasoning item 原文序列化(JSON 字符串)
+  // 用于下一轮请求原样注入,保持跨轮推理状态
+  reasoningSignatureBlob?: string
 }
 
 // 模型列表结果
@@ -523,6 +534,8 @@ interface OpenAIResponsesOutputItem {
   role?: string
   content?: OpenAIResponsesOutputContentItem[]
   summary?: OpenAIResponsesReasoningSummaryItem[]
+  encrypted_content?: string
+  id?: string
 }
 
 interface OpenAIResponsesUsageInfo {
@@ -652,6 +665,9 @@ interface StreamChunkResult {
   toolCallDeltas?: ToolCallDelta[]
   finishReason?: string
   errorMessage?: string
+  // OpenAI Responses 一个完整的 reasoning output item(type='reasoning',含 encrypted_content)
+  // 来自 response.output_item.done 事件,供 ChatViewModel 累积到 aiMessage.reasoningSignatureBlob
+  reasoningItem?: OpenAIResponsesInputItem
 }
 
 // 工具调用增量（用于流式响应累积）
@@ -686,6 +702,9 @@ export class AIApiService {
   private partialTagBuffer: string = ''
   // Function Calling 工具调用累积状态（流式响应）
   private streamToolCalls: Map<number, ToolCall> = new Map()
+  // OpenAI Responses 流里收集到的完整 reasoning items(含 encrypted_content),
+  // 在 onComplete 之前由 ChatViewModel 通过 consumeLastStreamResponsesReasoningBlob 取走
+  private streamResponsesReasoningItems: OpenAIResponsesInputItem[] = []
 
   private constructor() {
     this.httpService = getHttpService()
@@ -699,6 +718,18 @@ export class AIApiService {
     this.minimaxContentBuffer = ''
     this.partialTagBuffer = ''
     this.streamToolCalls = new Map()
+    this.streamResponsesReasoningItems = []
+  }
+
+  // 取走并清空本轮流式累积的 Responses reasoning items,序列化成可持久化的 JSON blob。
+  // 空串表示没有需透传的 reasoning。
+  consumeLastStreamResponsesReasoningBlob(): string {
+    if (this.streamResponsesReasoningItems.length === 0) {
+      return ''
+    }
+    const blob = this.serializeResponsesReasoningItems(this.streamResponsesReasoningItems)
+    this.streamResponsesReasoningItems = []
+    return blob
   }
 
   private toCompatibilityInfo(config: AIApiConfig): CompatibilityProviderInfo {
@@ -1398,6 +1429,35 @@ export class AIApiService {
     return reasoningParts.join('\n')
   }
 
+  // 从非流式 Responses 响应里收集完整 reasoning items(含 encrypted_content),
+  // 供跨轮推理透传使用。ArkTS 不支持跨 interface 隐式 cast,故显式拷贝需要字段。
+  private collectOpenAIResponsesReasoningItems(response: OpenAIResponsesResponse): OpenAIResponsesInputItem[] {
+    if (response.output === undefined || response.output === null) {
+      return []
+    }
+    const items: OpenAIResponsesInputItem[] = []
+    for (let i = 0; i < response.output.length; i++) {
+      const rawItem = response.output[i]
+      if (rawItem.type !== 'reasoning') {
+        continue
+      }
+      const item: OpenAIResponsesInputItem = {
+        type: 'reasoning'
+      }
+      if (rawItem.id !== undefined) {
+        item.id = rawItem.id
+      }
+      if (rawItem.encrypted_content !== undefined) {
+        item.encrypted_content = rawItem.encrypted_content
+      }
+      if (rawItem.summary !== undefined) {
+        item.summary = rawItem.summary
+      }
+      items.push(item)
+    }
+    return items
+  }
+
   // 构建请求体
   private buildRequestBody(
     config: AIApiConfig,
@@ -1586,6 +1646,10 @@ export class AIApiService {
     if (useOpenAIResponses) {
       const responseInputs: OpenAIResponsesInputItem[] = []
       const instructionParts: string[] = []
+      const compatibilityProfile = this.getCompatibilityProfile(config)
+      const allowEncryptedReasoning = compatibilityProfile.supportsOpenAIResponsesEncryptedReasoning &&
+        (reasoningRequestStrategy === ReasoningRequestStrategy.OPENAI_REASONING_EFFORT ||
+          reasoningRequestStrategy === ReasoningRequestStrategy.OPENAI_COMPAT_REASONING_EFFORT)
 
       for (let i = 0; i < messages.length; i++) {
         const msg = messages[i]
@@ -1594,6 +1658,14 @@ export class AIApiService {
             instructionParts.push(msg.content.trim())
           }
           continue
+        }
+        // 助手消息(含 tool_calls 的 assistant 也算)前注入上一轮保存的 reasoning items,
+        // 配合 include=reasoning.encrypted_content 让官方 Responses API 跨轮保持推理状态。
+        if (msg.role === 'assistant' && allowEncryptedReasoning && msg.reasoningSignatureBlob.trim() !== '') {
+          const reasoningItems = this.parseResponsesReasoningBlob(msg.reasoningSignatureBlob)
+          for (let k = 0; k < reasoningItems.length; k++) {
+            responseInputs.push(reasoningItems[k])
+          }
         }
         if (msg.hasToolCalls()) {
           for (let j = 0; j < msg.toolCalls.length; j++) {
@@ -1689,6 +1761,10 @@ export class AIApiService {
           if (normalizedReasoningLevel !== ReasoningLevel.OFF) {
             responsesBody.reasoning.summary = 'auto'
           }
+        }
+        // 跨轮保持推理状态:请求头里声明需要 encrypted_content,并把上一轮的 reasoning items 一起回传
+        if (allowEncryptedReasoning && normalizedReasoningLevel !== ReasoningLevel.OFF) {
+          responsesBody.include = ['reasoning.encrypted_content']
         }
       } else if (reasoningRequestStrategy === ReasoningRequestStrategy.DASHSCOPE_THINKING) {
         this.applyDashScopeReasoningConfig(responsesBody, normalizedReasoningLevel, reasoningTokenLimit)
@@ -1946,13 +2022,19 @@ export class AIApiService {
     const response = JSON.parse(responseData) as OpenAIResponsesResponse
     const content = this.extractOpenAIResponsesContent(response)
     const reasoningContent = this.extractOpenAIResponsesReasoningContent(response)
-    return {
+    const reasoningItems = this.collectOpenAIResponsesReasoningItems(response)
+    const result: AIApiResult = {
       success: content !== '',
       content: content,
       errorMessage: content !== '' ? '' : 'No output in response',
       usage: this.buildResponsesUsageInfo(response.usage),
       reasoningContent: reasoningContent
     }
+    const blob = this.serializeResponsesReasoningItems(reasoningItems)
+    if (blob !== '') {
+      result.reasoningSignatureBlob = blob
+    }
+    return result
   }
 
   // 解析 OpenAI 响应
@@ -2162,6 +2244,42 @@ export class AIApiService {
       strategy === ReasoningRequestStrategy.DEEPSEEK_THINKING ||
       strategy === ReasoningRequestStrategy.MIMO_THINKING ||
       strategy === ReasoningRequestStrategy.KIMI_THINKING
+  }
+
+  // 反序列化消息里持久化的 Responses reasoning 项。
+  // blob 是 JSON 字符串,内容为 OpenAIResponsesInputItem[];解析失败返回空数组避免把请求打挂。
+  private parseResponsesReasoningBlob(blob: string): OpenAIResponsesInputItem[] {
+    if (blob.trim() === '') {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(blob) as Object
+      if (!Array.isArray(parsed)) {
+        return []
+      }
+      const result: OpenAIResponsesInputItem[] = []
+      for (let i = 0; i < parsed.length; i++) {
+        const item = parsed[i] as OpenAIResponsesInputItem
+        if (item !== null && item !== undefined && item.type === 'reasoning') {
+          result.push(item)
+        }
+      }
+      return result
+    } catch (_e) {
+      return []
+    }
+  }
+
+  // 序列化 Responses reasoning items 到 JSON 字符串,供 ChatMessage.reasoningSignatureBlob 持久化
+  private serializeResponsesReasoningItems(items: OpenAIResponsesInputItem[]): string {
+    if (items.length === 0) {
+      return ''
+    }
+    try {
+      return JSON.stringify(items)
+    } catch (_e) {
+      return ''
+    }
   }
 
   private applyDashScopeReasoningConfig(
@@ -2726,6 +2844,9 @@ export class AIApiService {
             console.error('AIApiService', `Error in onToolCallDelta callback: ${JSON.stringify(e)}`)
           }
         }
+        if (result.reasoningItem !== undefined) {
+          this.streamResponsesReasoningItems.push(result.reasoningItem)
+        }
       }
       return
     }
@@ -2753,6 +2874,9 @@ export class AIApiService {
       } catch (e) {
         console.error('AIApiService', `Error in onToolCallDelta callback: ${JSON.stringify(e)}`)
       }
+    }
+    if (result.reasoningItem !== undefined) {
+      this.streamResponsesReasoningItems.push(result.reasoningItem)
     }
   }
 
@@ -2854,6 +2978,10 @@ export class AIApiService {
               replaceArguments
             )
           ]
+        } else if (event.type === 'response.output_item.done' &&
+          event.item !== undefined && event.item.type === 'reasoning') {
+          // 抓取完整 reasoning item 原文(含 encrypted_content),供下一轮请求原样回传
+          result.reasoningItem = event.item
         } else if (event.type === 'response.function_call_arguments.delta' && event.delta !== undefined) {
           const index = this.getOpenAIResponsesToolCallIndex(event)
           result.toolCallDeltas = [
@@ -3147,6 +3275,9 @@ export class AIApiService {
             console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
           }
         }
+        if (result.reasoningItem !== undefined) {
+          this.streamResponsesReasoningItems.push(result.reasoningItem)
+        }
       }
       return
     }
@@ -3167,6 +3298,9 @@ export class AIApiService {
       } catch (e) {
         console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
       }
+    }
+    if (result.reasoningItem !== undefined) {
+      this.streamResponsesReasoningItems.push(result.reasoningItem)
     }
   }
 }

@@ -471,6 +471,10 @@ export class ChatMessage {
   @Trace toolCalls: ToolCall[]      // AI 请求的工具调用
   @Trace toolResults: ToolResult[]  // 工具执行结果
   @Trace toolCallId: string         // 用于 tool 角色消息，关联到对应的 tool_call
+  // OpenAI Responses API 的 reasoning item 原文(含 encrypted_content)
+  // 仅在官方 Responses + include=reasoning.encrypted_content 时产生
+  // JSON 字符串,值为 OpenAIResponsesInputItem[] 序列化;空串表示没有需透传的推理项
+  @Trace reasoningSignatureBlob: string
 
   constructor(id: string, role: MessageRole, content: string, modelName: string = '', modelId: string = '') {
     this.id = id
@@ -490,6 +494,7 @@ export class ChatMessage {
     this.toolCalls = []
     this.toolResults = []
     this.toolCallId = ''
+    this.reasoningSignatureBlob = ''
   }
 
   // 检查是否有推理内容

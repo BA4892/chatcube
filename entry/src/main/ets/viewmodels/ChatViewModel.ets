@@ -348,6 +348,10 @@ export class ChatViewModel {
 
   // 当 AI 消息内容完全为空时，填充一条兜底提示，避免出现空气泡
   private fillEmptyAIContentPlaceholder(aiMessage: ChatMessage, errorHint: string = ''): void {
+    // 流式完成时顺便把本轮 Responses reasoning 原文持久化到消息上。
+    // 对非官方 Responses 路径来说 blob 始终为空,不影响其他模型。
+    this.harvestResponsesReasoningSignature(aiMessage)
+
     if (aiMessage.content.trim() !== '') {
       return
     }
@@ -367,6 +371,16 @@ export class ChatViewModel {
     }
   }
 
+  // 流式完成时把 AIApiService 本轮累积的 OpenAI Responses reasoning items 持久化到消息上
+  // 仅官方 Responses API + include=reasoning.encrypted_content 时 AIApiService 里才会有累积,
+  // 普通 Chat Completions 拿到的始终是空串,不影响其他路径。
+  private harvestResponsesReasoningSignature(aiMessage: ChatMessage): void {
+    const blob = this.aiApiService.consumeLastStreamResponsesReasoningBlob()
+    if (blob !== '') {
+      aiMessage.reasoningSignatureBlob = blob
+    }
+  }
+
   private buildConversationRequestHistory(messages: ChatMessage[], contextStartIndex: number): RequestMessage[] {
     const historyMessages: RequestMessage[] = []
     for (let i = contextStartIndex; i < messages.length; i++) {
@@ -376,6 +390,7 @@ export class ChatViewModel {
       }
       const requestMessage = new RequestMessage(msg.role, msg.content, this.cloneAttachments(msg.attachments))
       requestMessage.reasoningContent = msg.reasoningContent
+      requestMessage.reasoningSignatureBlob = msg.reasoningSignatureBlob
       historyMessages.push(requestMessage)
     }
     return historyMessages

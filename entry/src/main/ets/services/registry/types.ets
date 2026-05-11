@@ -56,6 +56,10 @@ export interface ProviderCompatibilityProfile {
   preserveAssistantReasoningDetails: boolean
   reasoningControlMode: ReasoningControlMode
   defaultReasoningRequestStrategy: ReasoningRequestStrategy
+  // OpenAI Responses API 是否支持通过 include 透传 reasoning.encrypted_content
+  // 用于在多轮对话里保持推理状态(gpt-5 / o-系列官方 Responses 支持)
+  // 非官方代理默认关闭,避免 include 字段触发 HTTP 400
+  supportsOpenAIResponsesEncryptedReasoning: boolean
 }
 
 export const DEFAULT_PROFILE: ProviderCompatibilityProfile = {
@@ -67,7 +71,8 @@ export const DEFAULT_PROFILE: ProviderCompatibilityProfile = {
   openAIStreamContentMode: OpenAIStreamContentMode.INCREMENTAL,
   preserveAssistantReasoningDetails: false,
   reasoningControlMode: ReasoningControlMode.NONE,
-  defaultReasoningRequestStrategy: ReasoningRequestStrategy.NONE
+  defaultReasoningRequestStrategy: ReasoningRequestStrategy.NONE,
+  supportsOpenAIResponsesEncryptedReasoning: false
 }
 
 export const MINIMAX_COMPATIBLE_MODELS: string[] = [

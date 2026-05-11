@@ -217,6 +217,7 @@ interface MessageData {
   timestamp: number
   modelName: string
   reasoningContent: string
+  reasoningSignatureBlob?: string
   searchQuery: string
   searchEngine: string
   searchSource?: string
@@ -693,6 +694,7 @@ export class ImportExportService {
             timestamp: m.timestamp,
             modelName: m.modelName,
             reasoningContent: m.reasoningContent,
+            reasoningSignatureBlob: m.reasoningSignatureBlob || '',
             searchQuery: m.searchQuery,
             searchEngine: m.searchEngine,
             searchSource: m.searchSource,
@@ -1013,6 +1015,7 @@ export class ImportExportService {
           const message = new ChatMessage(msgData.id, msgData.role as MessageRole, msgData.content, msgData.modelName)
           message.timestamp = msgData.timestamp
           message.reasoningContent = msgData.reasoningContent || ''
+          message.reasoningSignatureBlob = msgData.reasoningSignatureBlob || ''
           message.searchQuery = msgData.searchQuery || ''
           message.searchEngine = msgData.searchEngine || ''
           message.searchSource = msgData.searchSource || ''
