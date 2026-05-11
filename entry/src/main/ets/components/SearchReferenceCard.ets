@@ -8,13 +8,23 @@ export struct SearchReferenceCard {
   @Param searchEngine: string = ''
   @Param references: SearchReference[] = []
   @Param sourceLabel: string = ''
+  // 初始展开态, 流式场景(AI 还在生成)传 true 可以自动展开卡片列表让用户看到结果
+  @Param initialExpanded: boolean = false
   @Local isExpanded: boolean = false
+  @Local private hasAppliedInitial: boolean = false
   @Local showWebSheet: boolean = false
   @Local sheetUrl: string = ''
   @Local sheetTitle: string = ''
   private sheetWebController: webview.WebviewController = new webview.WebviewController()
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
+  }
+
+  aboutToAppear(): void {
+    if (this.initialExpanded && !this.hasAppliedInitial) {
+      this.isExpanded = true
+      this.hasAppliedInitial = true
+    }
   }
 
   // 获取引用数量文本
@@ -186,20 +196,20 @@ export struct SearchReferenceCard {
         // 序号圆圈
         Text(`${index}`)
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Color.White)
           .fontWeight(FontWeight.Medium)
-          .width(18)
-          .height(18)
+          .width(20)
+          .height(20)
           .textAlign(TextAlign.Center)
-          .borderRadius(9)
-          .backgroundColor($r('app.color.divider'))
+          .borderRadius(10)
+          .backgroundColor($r('app.color.text_secondary'))
 
         // 标题
         Text(ref.title)
-          .fontSize(13)
+          .fontSize(14)
           .fontColor($r('app.color.text_primary'))
           .fontWeight(FontWeight.Medium)
-          .maxLines(1)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
       }
@@ -211,9 +221,9 @@ export struct SearchReferenceCard {
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .lineHeight(18)
-          .maxLines(2)
+          .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ left: 26 })
+          .margin({ left: 28 })
       }
 
       // URL
@@ -222,10 +232,13 @@ export struct SearchReferenceCard {
         .fontColor($r('app.color.text_tertiary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ left: 26 })
+        .margin({ left: 28 })
     }
     .width('100%')
-    .padding({ top: 10, bottom: 10, left: 4, right: 4 })
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .borderRadius(14)
+    .margin({ bottom: 8 })
+    .border({ width: 0.5, color: $r('app.color.divider') })
     .stateStyles({
       normal: {
         .backgroundColor($r('app.color.surface'))

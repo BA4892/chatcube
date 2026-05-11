@@ -1536,7 +1536,8 @@ export struct MessageBubble {
                 query: this.extractSearchQuery(),
                 searchEngine: this.message.searchEngine || 'Web',
                 references: this.message.searchReferences,
-                sourceLabel: this.getSearchSourceLabel()
+                sourceLabel: this.getSearchSourceLabel(),
+                initialExpanded: this.message.isGenerating
               })
                 .margin({ bottom: 6 })
             }
