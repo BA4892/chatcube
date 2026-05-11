@@ -7,8 +7,14 @@ import { ProviderType, ApiStyle, OpenAITransport, ProviderIconType, ModelProvide
 import { DEFAULT_PRIMARY_COLOR } from './ThemeDefaults'
 import { DEFAULT_MODELS_DEV_BASE_URL } from '../services/PreferencesService'
 
-// 预设供应商配置接口
-export interface PresetProviderConfig {
+export interface BalanceOption {
+  apiPath: string
+  resultPath: string
+  currency?: string
+}
+
+// 预设供应商声明。预设的内置字段集中在这里，启动补齐只读取这张表。
+export interface PresetProviderDef {
   id: string
   name: string
   type: ProviderType
@@ -24,10 +30,17 @@ export interface PresetProviderConfig {
   // models.dev 上对应的 provider key，用于拉取远程 SVG logo（${baseUrl}/logos/{key}.svg）。
   // 留空则不使用远程 logo，仅显示文字图标。
   logoProviderKey?: string
+  balance?: BalanceOption
+  // 只影响首次补齐。既有用户配置不会被覆盖。
+  defaultEnabled?: boolean
+  // 允许保留在预设选择列表里，但不参与启动自动补齐。
+  autoInstall?: boolean
 }
 
+export type PresetProviderConfig = PresetProviderDef
+
 // 预设供应商列表（主流厂商，不可删除）
-const PRESET_PROVIDERS: PresetProviderConfig[] = [
+const PRESET_PROVIDERS: PresetProviderDef[] = [
   {
     id: 'openai',
     name: 'OpenAI',
@@ -65,7 +78,12 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     brandColorHex: '#4D6BFE',
     textIcon: 'DS',
     textIconBgColor: '#4D6BFE',
-    logoProviderKey: 'deepseek'
+    logoProviderKey: 'deepseek',
+    balance: {
+      apiPath: '/user/balance',
+      resultPath: 'balance_infos[0].total_balance',
+      currency: 'CNY'
+    }
   },
   {
     id: 'gemini',
@@ -90,7 +108,12 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     brandColorHex: '#6366F1',
     textIcon: 'OR',
     textIconBgColor: '#6366F1',
-    logoProviderKey: 'openrouter'
+    logoProviderKey: 'openrouter',
+    balance: {
+      apiPath: '/credits',
+      resultPath: 'data.total_credits - data.total_usage',
+      currency: 'USD'
+    }
   },
   {
     id: 'siliconflow',
@@ -102,7 +125,13 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     brandColorHex: '#7C3AED',
     textIcon: 'SF',
     textIconBgColor: '#7C3AED',
-    logoProviderKey: 'siliconflow'
+    logoProviderKey: 'siliconflow',
+    defaultEnabled: true,
+    balance: {
+      apiPath: '/user/info',
+      resultPath: 'data.totalBalance',
+      currency: 'CNY'
+    }
   },
   {
     id: 'qwen',
@@ -126,7 +155,12 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     brandColorHex: '#0F172A',
     textIcon: 'K',
     textIconBgColor: '#0F172A',
-    logoProviderKey: 'moonshotai'
+    logoProviderKey: 'moonshotai',
+    balance: {
+      apiPath: '/users/me/balance',
+      resultPath: 'data.available_balance',
+      currency: 'CNY'
+    }
   },
   {
     id: 'zhipu',
@@ -196,7 +230,8 @@ const PRESET_PROVIDERS: PresetProviderConfig[] = [
     iconPath: '',
     brandColorHex: '#6C5CE7',
     textIcon: 'AP',
-    textIconBgColor: '#6C5CE7'
+    textIconBgColor: '#6C5CE7',
+    autoInstall: false
   },
   {
     id: 'mimo',
@@ -232,14 +267,25 @@ const PRESET_PROVIDER_IDS: Set<string> = new Set(PRESET_PROVIDERS.map(p => p.id)
 /**
  * 获取所有预设供应商配置
  */
-export function getPresetProviders(): PresetProviderConfig[] {
+export function getPresetProviders(): PresetProviderDef[] {
   return PRESET_PROVIDERS
+}
+
+export function getAutoInstallPresetProviders(): PresetProviderDef[] {
+  const result: PresetProviderDef[] = []
+  for (let i = 0; i < PRESET_PROVIDERS.length; i++) {
+    const preset = PRESET_PROVIDERS[i]
+    if (preset.autoInstall !== false) {
+      result.push(preset)
+    }
+  }
+  return result
 }
 
 /**
  * 根据 ID 获取预设供应商配置
  */
-export function getPresetProviderById(id: string): PresetProviderConfig | null {
+export function getPresetProviderById(id: string): PresetProviderDef | null {
   for (let i = 0; i < PRESET_PROVIDERS.length; i++) {
     if (PRESET_PROVIDERS[i].id === id) {
       return PRESET_PROVIDERS[i]
@@ -350,9 +396,9 @@ export function applyPresetIconDefaults(provider: ModelProvider, providerId: str
  * @param configuredIds 已配置的服务商 ID 列表
  * @returns 未配置的预置服务商配置列表
  */
-export function getUnconfiguredPresetProviders(configuredIds: string[]): PresetProviderConfig[] {
+export function getUnconfiguredPresetProviders(configuredIds: string[]): PresetProviderDef[] {
   const configuredSet = new Set<string>(configuredIds)
-  const result: PresetProviderConfig[] = []
+  const result: PresetProviderDef[] = []
   for (let i = 0; i < PRESET_PROVIDERS.length; i++) {
     const preset = PRESET_PROVIDERS[i]
     if (!configuredSet.has(preset.id)) {

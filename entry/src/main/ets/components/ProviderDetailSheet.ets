@@ -175,6 +175,9 @@ export struct ProviderDetailPanel {
   @Local showTextIconEditor: boolean = false
   @Local providerCustomHeaderEntries: ProviderHeaderEntry[] = []
   @Local showProviderCustomHeadersEditor: boolean = false
+  @Local isQueryingBalance: boolean = false
+  @Local providerBalanceText: string = ''
+  @Local providerBalanceError: string = ''
   // 手动添加模型相关状态
   @Local showAddModelInput: boolean = false
   @Local addModelIdText: string = ''
@@ -224,6 +227,9 @@ export struct ProviderDetailPanel {
     this.fetchedModels = []
     this.providerCustomHeaderEntries = []
     this.showProviderCustomHeadersEditor = false
+    this.isQueryingBalance = false
+    this.providerBalanceText = ''
+    this.providerBalanceError = ''
     this.showAddModelInput = false
     this.addModelIdText = ''
     this.loadProviderData()
@@ -474,6 +480,47 @@ export struct ProviderDetailPanel {
       }
     } finally {
       this.isTesting = false
+    }
+  }
+
+  private canQueryBalance(): boolean {
+    if (this.provider === null) {
+      return false
+    }
+    return this.provider.id === 'deepseek'
+      || this.provider.id === 'siliconflow'
+      || this.provider.id === 'openrouter'
+      || this.provider.id === 'kimi'
+  }
+
+  async queryBalance(): Promise<void> {
+    if (this.provider === null || this.isQueryingBalance || !this.canQueryBalance()) {
+      return
+    }
+
+    this.isQueryingBalance = true
+    this.providerBalanceError = ''
+    this.providerBalanceText = ''
+    this.showProviderToast($r('app.string.provider_querying_balance'), 1200)
+
+    try {
+      const result = await this.providerViewModel.queryProviderBalance(this.provider.id)
+      if (result === null) {
+        this.providerBalanceText = ''
+        this.providerBalanceError = pickLocalizedText('当前服务商暂不支持余额查询', 'Balance is not supported for this provider')
+        this.showProviderToast($r('app.string.provider_balance_not_supported'), 2000)
+        return
+      }
+      this.providerBalanceText = `${result.amount} ${result.currency}`.trim()
+      this.showProviderToast($r('app.string.provider_balance_loaded'), 2000)
+    } catch (err) {
+      const message = err instanceof Error && err.message !== ''
+        ? err.message
+        : pickLocalizedText('查询余额失败', 'Failed to query balance')
+      this.providerBalanceError = message
+      this.showProviderToast(message, 3000)
+    } finally {
+      this.isQueryingBalance = false
     }
   }
 
@@ -2365,6 +2412,61 @@ export struct ProviderDetailPanel {
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 16 })
+
+      if (this.canQueryBalance()) {
+        Column({ space: 8 }) {
+          Row() {
+            Text($r('app.string.provider_balance_title'))
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_secondary'))
+              .layoutWeight(1)
+
+            Button() {
+              if (this.isQueryingBalance) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(this.themePrimary)
+              } else {
+                Text($r('app.string.provider_query_balance'))
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.themePrimary)
+              }
+            }
+            .height(30)
+            .padding({ left: 12, right: 12 })
+            .borderRadius(15)
+            .backgroundColor(this.themePrimaryLight)
+            .enabled(!this.isQueryingBalance)
+            .onClick(() => {
+              this.queryBalance()
+            })
+          }
+          .width('100%')
+
+          if (this.providerBalanceText !== '') {
+            Text(this.providerBalanceText)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+          }
+
+          if (this.providerBalanceError !== '') {
+            Text(this.providerBalanceError)
+              .fontSize(12)
+              .fontColor('#D9485F')
+              .width('100%')
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 16 })
+        .backgroundColor(getAppUiState().themeSurface)
+        .borderRadius(16)
+        .margin({ left: 16, right: 16, top: 8 })
+      }
   }
   .width('100%')
   .backgroundColor(getAppUiState().themeSurface)

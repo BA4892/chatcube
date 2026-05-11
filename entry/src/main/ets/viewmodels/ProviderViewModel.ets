@@ -15,7 +15,7 @@ import {
   ModelDiscoveryStrategy,
   resolveProviderCompatibilityProfile
 } from '../services/registry/CompatibilityResolver'
-import { getAppSettingsStore, AppSettingsStore } from '../state/AppSettingsStore'
+import { getAppSettingsStore, AppSettingsStore, BalanceResult } from '../state/AppSettingsStore'
 
 /**
  * Provider 视图模型：对外公开 API 保持不变，作为 AppSettingsStore 的 facade。
@@ -181,6 +181,10 @@ export class ProviderViewModel {
     }
 
     return modelsResult
+  }
+
+  async queryProviderBalance(providerId: string): Promise<BalanceResult | null> {
+    return await this.store.queryProviderBalance(providerId)
   }
 
   // ============================================================================

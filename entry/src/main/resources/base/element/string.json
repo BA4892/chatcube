@@ -1029,6 +1029,30 @@
       "value": "Enter header value"
     },
     {
+      "name": "provider_balance_title",
+      "value": "Account Balance"
+    },
+    {
+      "name": "provider_query_balance",
+      "value": "Query Balance"
+    },
+    {
+      "name": "provider_querying_balance",
+      "value": "Querying balance..."
+    },
+    {
+      "name": "provider_balance_loaded",
+      "value": "Balance updated"
+    },
+    {
+      "name": "provider_balance_failed",
+      "value": "Failed to query balance"
+    },
+    {
+      "name": "provider_balance_not_supported",
+      "value": "Balance query is not supported for this provider"
+    },
+    {
       "name": "provider_fetch_models",
       "value": "Fetch Models"
     },

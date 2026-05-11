@@ -1029,6 +1029,30 @@
       "value": "输入 Header Value"
     },
     {
+      "name": "provider_balance_title",
+      "value": "账户余额"
+    },
+    {
+      "name": "provider_query_balance",
+      "value": "查询余额"
+    },
+    {
+      "name": "provider_querying_balance",
+      "value": "正在查询余额..."
+    },
+    {
+      "name": "provider_balance_loaded",
+      "value": "余额已更新"
+    },
+    {
+      "name": "provider_balance_failed",
+      "value": "查询余额失败"
+    },
+    {
+      "name": "provider_balance_not_supported",
+      "value": "当前服务商暂不支持余额查询"
+    },
+    {
       "name": "provider_fetch_models",
       "value": "获取模型"
     },

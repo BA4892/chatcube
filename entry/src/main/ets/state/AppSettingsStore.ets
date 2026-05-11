@@ -1,5 +1,6 @@
 import { getDatabaseService, DatabaseService, ProviderConfig } from '../services/DatabaseService'
 import { getPreferencesService, PreferencesService, PreferenceKeys } from '../services/PreferencesService'
+import { getHttpService, HttpService } from '../services/HttpService'
 import {
   ModelProvider,
   ModelInfo,
@@ -23,9 +24,14 @@ import {
   getPresetProviderById,
   isPresetProviderApiKeyRequired,
   applyPresetIconDefaults,
-  getPresetProviderLogoUrl
+  getPresetProviderLogoUrl,
+  getAutoInstallPresetProviders,
+  PresetProviderDef,
+  getEffectiveApiKey
 } from '../config/PresetProviders'
 import { AppSettingsState, getAppSettingsState } from './AppSettingsState'
+import { MigrationContext } from './migrations/MigrationContext'
+import { runProviderMigrations } from './migrations/ProviderMigrations'
 
 /**
  * 模型 JSON 中的扩展字段（跟 ProviderViewModel 里原先的 ModelData 同构）
@@ -43,28 +49,24 @@ interface ModelJsonRow {
   reasoningStrategyOverride?: string
 }
 
-/**
- * 预置服务商启动时补齐的 ID 顺序（硅基流动放最前）
- */
-const ALL_PRESET_PROVIDER_IDS: string[] = [
-  'siliconflow', 'openai', 'anthropic', 'deepseek', 'gemini',
-  'openrouter', 'qwen', 'kimi', 'zhipu', 'doubao',
-  'minimax', 'aihubmix', 'grok', 'mimo', 'ollama'
-]
-
-/**
- * 历史错误 baseUrl 迁移规则：providerId → 期望的 baseUrl
- * 之前 MiniMax 误用 api.minimax.chat，已切换到 api.minimaxi.com
- */
-interface BaseUrlFix {
-  providerId: string
-  wrongBaseUrl: string
-  correctBaseUrl: string
+interface BalancePathTerm {
+  path: string
+  sign: number
 }
 
-const HISTORICAL_BASE_URL_FIXES: BaseUrlFix[] = [
-  { providerId: 'minimax', wrongBaseUrl: 'https://api.minimax.chat/v1', correctBaseUrl: 'https://api.minimaxi.com/v1' }
-]
+export class BalanceResult {
+  providerId: string
+  amount: string
+  numericAmount: number
+  currency: string
+
+  constructor(providerId: string, amount: string, numericAmount: number, currency: string) {
+    this.providerId = providerId
+    this.amount = amount
+    this.numericAmount = numericAmount
+    this.currency = currency
+  }
+}
 
 /**
  * 应用设置 Store（当前阶段只管 providers）
@@ -82,6 +84,7 @@ export class AppSettingsStore {
   private static instance: AppSettingsStore | null = null
   private db: DatabaseService
   private preferences: PreferencesService
+  private httpService: HttpService
   private initPromise: Promise<void> | null = null
   private assistantsInitPromise: Promise<void> | null = null
   private defaultModelsInitPromise: Promise<void> | null = null
@@ -90,6 +93,7 @@ export class AppSettingsStore {
   private constructor() {
     this.db = getDatabaseService()
     this.preferences = getPreferencesService()
+    this.httpService = getHttpService()
   }
 
   static getInstance(): AppSettingsStore {
@@ -141,6 +145,39 @@ export class AppSettingsStore {
     return this.getProviderById(providerId)
   }
 
+  async queryProviderBalance(providerId: string): Promise<BalanceResult | null> {
+    const provider = await this.getProviderByIdAsync(providerId)
+    const preset = getPresetProviderById(providerId)
+    if (provider === null || preset === null || preset.balance === undefined) {
+      return null
+    }
+
+    const apiKey = getEffectiveApiKey(provider.id, provider.apiKey).trim()
+    if (apiKey === '') {
+      throw new Error('请先配置 API Key')
+    }
+
+    const url = this.buildBalanceUrl(provider.baseUrl, preset.balance.apiPath)
+    const response = await this.httpService.get(url, {
+      'Authorization': `Bearer ${apiKey}`,
+      'Accept': 'application/json'
+    }, { timeout: 30000 })
+
+    if (!response.success) {
+      throw new Error(response.errorMessage !== '' ? response.errorMessage : `HTTP Error: ${response.statusCode}`)
+    }
+    const parsed = JSON.parse(response.data) as Object
+    const rawValue = this.evaluateBalanceResultPath(parsed, preset.balance.resultPath)
+    const amountText = this.formatBalanceAmount(rawValue)
+    const numericValue = Number(rawValue)
+    return new BalanceResult(
+      provider.id,
+      amountText,
+      this.isFiniteNumber(numericValue) ? numericValue : 0,
+      preset.balance.currency !== undefined && preset.balance.currency !== '' ? preset.balance.currency : 'CNY'
+    )
+  }
+
   // ============================================================================
   // 加载（DB → normalize → state）
   // ============================================================================
@@ -179,59 +216,174 @@ export class AppSettingsStore {
   }
 
   private async doInitialize(): Promise<void> {
+    await this.runProviderMigrations()
+
     const existingConfigs = await this.db.getAllProviders()
-
-    await this.applyHistoricalBaseUrlFixes(existingConfigs)
-
     const existingIds = new Set<string>()
     for (let i = 0; i < existingConfigs.length; i++) {
       existingIds.add(existingConfigs[i].id)
     }
 
-    for (let i = 0; i < ALL_PRESET_PROVIDER_IDS.length; i++) {
-      const presetId = ALL_PRESET_PROVIDER_IDS[i]
-      if (!existingIds.has(presetId)) {
-        const preset = getPresetProviderById(presetId)
-        if (preset !== null) {
-          const provider = new ModelProvider(
-            preset.id,
-            preset.name,
-            preset.type,
-            'message',
-            this.brandColorFor(preset.type),
-            preset.baseUrl,
-            preset.apiStyle
-          )
-          provider.apiKey = ''
-          provider.requiresApiKey = isPresetProviderApiKeyRequired(preset.id)
-          provider.isConnected = preset.id === 'siliconflow'
-          provider.isPreset = true
-          provider.iconPath = ''
-          provider.apiPath = ''
-          provider.openaiTransport = preset.openaiTransport !== undefined
-            ? preset.openaiTransport
-            : OpenAITransport.CHAT_COMPLETIONS
-          applyPresetIconDefaults(provider, preset.id)
-          // 这里直接写 DB；loadAll 会把最终结果 sync 到 state
-          await this.db.saveProvider(provider)
-        }
-      }
+    const presets = getAutoInstallPresetProviders()
+    for (let i = 0; i < presets.length; i++) {
+      await this.applyPresetOnMissing(presets[i], existingIds)
     }
 
     await this.loadAll()
     getAppSettingsState().providersInitialized = true
   }
 
-  private async applyHistoricalBaseUrlFixes(configs: ProviderConfig[]): Promise<void> {
-    for (let i = 0; i < configs.length; i++) {
-      const cfg = configs[i]
-      for (let j = 0; j < HISTORICAL_BASE_URL_FIXES.length; j++) {
-        const fix = HISTORICAL_BASE_URL_FIXES[j]
-        if (cfg.id === fix.providerId && cfg.baseUrl === fix.wrongBaseUrl) {
-          await this.db.updateProviderBaseUrl(fix.providerId, fix.correctBaseUrl)
+  private async runProviderMigrations(): Promise<void> {
+    const ctx = new MigrationContext(this.db, this.preferences, getAppSettingsState())
+    await runProviderMigrations(ctx)
+  }
+
+  private async applyPresetOnMissing(preset: PresetProviderDef, existingIds: Set<string>): Promise<void> {
+    if (existingIds.has(preset.id)) {
+      return
+    }
+    const provider = this.createProviderFromPreset(preset)
+    // 这里直接写 DB；loadAll 会把最终结果 sync 到 state
+    await this.db.saveProvider(provider)
+    existingIds.add(preset.id)
+  }
+
+  private createProviderFromPreset(preset: PresetProviderDef): ModelProvider {
+    const provider = new ModelProvider(
+      preset.id,
+      preset.name,
+      preset.type,
+      'message',
+      this.brandColorFor(preset.type),
+      preset.baseUrl,
+      preset.apiStyle
+    )
+    provider.apiKey = ''
+    provider.requiresApiKey = isPresetProviderApiKeyRequired(preset.id)
+    provider.isConnected = preset.defaultEnabled === true
+    provider.isPreset = true
+    provider.iconPath = ''
+    provider.apiPath = ''
+    provider.openaiTransport = preset.openaiTransport !== undefined
+      ? preset.openaiTransport
+      : OpenAITransport.CHAT_COMPLETIONS
+    applyPresetIconDefaults(provider, preset.id)
+    return provider
+  }
+
+  private buildBalanceUrl(baseUrl: string, apiPath: string): string {
+    if (apiPath.startsWith('http://') || apiPath.startsWith('https://')) {
+      return apiPath
+    }
+    const normalizedBase = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl
+    const normalizedPath = apiPath.startsWith('/') ? apiPath : `/${apiPath}`
+    return `${normalizedBase}${normalizedPath}`
+  }
+
+  private evaluateBalanceResultPath(root: Object, expression: string): string {
+    const terms = this.parseBalanceExpression(expression)
+    if (terms.length === 0) {
+      throw new Error('余额结果路径为空')
+    }
+    if (terms.length === 1 && terms[0].sign === 1) {
+      return this.valueToBalanceString(this.resolveJsonPath(root, terms[0].path))
+    }
+
+    let total = 0
+    for (let i = 0; i < terms.length; i++) {
+      const raw = this.valueToBalanceString(this.resolveJsonPath(root, terms[i].path))
+      const value = Number(raw)
+      if (!this.isFiniteNumber(value)) {
+        throw new Error('余额结果不是数字')
+      }
+      total += terms[i].sign * value
+    }
+    return `${total}`
+  }
+
+  private parseBalanceExpression(expression: string): BalancePathTerm[] {
+    const normalized = expression.replace(/\s+/g, '')
+    const terms: BalancePathTerm[] = []
+    let start = 0
+    let sign = 1
+    for (let i = 0; i <= normalized.length; i++) {
+      const ch = i < normalized.length ? normalized.charAt(i) : '+'
+      if (ch === '+' || ch === '-') {
+        const path = normalized.substring(start, i)
+        if (path !== '') {
+          terms.push({ path: path, sign: sign })
         }
+        sign = ch === '-' ? -1 : 1
+        start = i + 1
       }
     }
+    return terms
+  }
+
+  private resolveJsonPath(root: Object, path: string): Object {
+    let current: Object = root
+    const segments = path.split('.')
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i]
+      current = this.resolveJsonPathSegment(current, segment)
+    }
+    return current
+  }
+
+  private resolveJsonPathSegment(current: Object, segment: string): Object {
+    let name = segment
+    let index = -1
+    const bracketStart = segment.indexOf('[')
+    if (bracketStart >= 0 && segment.endsWith(']')) {
+      name = segment.substring(0, bracketStart)
+      index = Number(segment.substring(bracketStart + 1, segment.length - 1))
+      if (!this.isFiniteNumber(index) || index < 0) {
+        throw new Error('余额结果路径不匹配')
+      }
+    }
+
+    let value: Object = current
+    if (name !== '') {
+      if (value === null || typeof value !== 'object' || Array.isArray(value as Array<Object>)) {
+        throw new Error('余额结果路径不匹配')
+      }
+      const record = value as Record<string, Object>
+      if (record[name] === undefined) {
+        throw new Error('余额结果路径不匹配')
+      }
+      value = record[name]
+    }
+
+    if (index >= 0) {
+      if (!Array.isArray(value as Array<Object>)) {
+        throw new Error('余额结果路径不匹配')
+      }
+      const list = value as Array<Object>
+      if (index >= list.length) {
+        throw new Error('余额结果路径不匹配')
+      }
+      value = list[index]
+    }
+    return value
+  }
+
+  private valueToBalanceString(value: Object): string {
+    if (value === null || value === undefined) {
+      throw new Error('余额结果为空')
+    }
+    return `${value}`
+  }
+
+  private formatBalanceAmount(value: string): string {
+    const numeric = Number(value)
+    if (this.isFiniteNumber(numeric)) {
+      return numeric.toFixed(2)
+    }
+    return value
+  }
+
+  private isFiniteNumber(value: number): boolean {
+    return !Number.isNaN(value) && value !== Infinity && value !== -Infinity
   }
 
   // ============================================================================
