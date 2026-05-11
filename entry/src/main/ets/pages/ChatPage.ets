@@ -56,7 +56,7 @@ import {
   normalizeReasoningLevelForControl,
   resolveReasoningControlMode,
   supportsReasoningXhighControl
-} from '../services/ProviderCompatibilityRegistry'
+} from '../services/registry/CompatibilityResolver'
 import {
   getListBottomPaddingForChat,
   getPreviewTimeTextForChat,

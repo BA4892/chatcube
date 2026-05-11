@@ -21,7 +21,7 @@ import {
   normalizeReasoningLevelForControl,
   resolveProviderCompatibilityProfile,
   resolveReasoningRequestStrategyWithOverride
-} from './ProviderCompatibilityRegistry'
+} from './registry/CompatibilityResolver'
 import { AttachmentContentService } from './AttachmentContentService'
 import { normalizeCustomHeaderName, parseCustomHeadersMap } from '../utils/CustomHeaderUtils'
 

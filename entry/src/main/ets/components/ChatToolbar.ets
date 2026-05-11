@@ -4,7 +4,7 @@
  */
 
 import { ReasoningLevel } from '../models/ChatModels'
-import { ReasoningControlMode } from '../services/ProviderCompatibilityRegistry'
+import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
 import { getAppUiState } from '../state/AppUiState'
 
 @ComponentV2

@@ -1,5 +1,5 @@
 import { ReasoningLevel } from '../../models/ChatModels'
-import { ReasoningControlMode } from '../../services/ProviderCompatibilityRegistry'
+import { ReasoningControlMode } from '../../services/registry/CompatibilityResolver'
 
 export function normalizeStoredChatReasoningLevel(value: string): ReasoningLevel {
   switch (value) {

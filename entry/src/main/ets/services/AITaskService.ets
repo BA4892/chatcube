@@ -2,7 +2,7 @@
 import { getAIApiService, AIApiService, AIApiConfig, RequestMessage } from './AIApiService'
 import { getDefaultModelService, DefaultModelService } from './DefaultModelService'
 import { getProviderViewModel, ProviderViewModel } from '../viewmodels/ProviderViewModel'
-import { ReasoningRequestStrategy } from './ProviderCompatibilityRegistry'
+import { ReasoningRequestStrategy } from './registry/CompatibilityResolver'
 import { ModelRole } from '../models/ChatModels'
 import { getEffectiveApiKey } from '../config/PresetProviders'
 

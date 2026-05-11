@@ -2,7 +2,7 @@ import { MessageAttachment, ReasoningLevel } from '../../models/ChatModels'
 import { ChatToolbar } from '../ChatToolbar'
 import { ChatInputBar } from '../ChatInputBar'
 import { ScreenshotBanner } from '../ScreenshotBanner'
-import { ReasoningControlMode } from '../../services/ProviderCompatibilityRegistry'
+import { ReasoningControlMode } from '../../services/registry/CompatibilityResolver'
 
 @ComponentV2
 export struct ChatInputAreaSection {

@@ -5,7 +5,7 @@
 
 import { ReasoningLevel, MessageAttachment, AttachmentType } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
-import { ReasoningControlMode } from '../services/ProviderCompatibilityRegistry'
+import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
 
 @ComponentV2
 export struct EditMessageSheet {

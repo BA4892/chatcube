@@ -89,7 +89,13 @@ import {
   resolveReasoningControlMode,
   resolveReasoningRequestStrategyWithOverride,
   supportsReasoningXhighControl
-} from '../main/ets/services/ProviderCompatibilityRegistry'
+} from '../main/ets/services/registry/CompatibilityResolver'
+import {
+  tokenize,
+  scoreModelDef,
+  lookupBestModelDef
+} from '../main/ets/services/registry/matcher'
+import { ModelProfileDef } from '../main/ets/services/registry/types'
 import {
   normalizeStoredChatReasoningLevel,
   resolveModelSwitchReasoningLevel
@@ -1099,6 +1105,47 @@ export default function refactorGuardTest() {
         .assertEqual(ReasoningLevel.AUTO)
       expect(normalizeReasoningLevelForControl(ReasoningLevel.AUTO, ReasoningControlMode.NONE))
         .assertEqual(ReasoningLevel.OFF)
+    })
+
+    it('reasoningDsl_tokenize_should_split_letters_digits_and_punctuation', 0, () => {
+      expect(tokenize('gpt-5.4-mini').join('|')).assertEqual('gpt|-|5|.|4|-|mini')
+      expect(tokenize('GPT-OSS').join('|')).assertEqual('gpt|-|oss')
+      expect(tokenize('zai-org/glm-4.6').join('|')).assertEqual('zai|-|org|/|glm|-|4|.|6')
+      expect(tokenize('').length).assertEqual(0)
+    })
+
+    it('reasoningDsl_should_score_token_subsequence_match', 0, () => {
+      const def: ModelProfileDef = { id: 'gpt5_generic', match: [{ tokens: ['gpt', '5'] }] }
+      expect(scoreModelDef('gpt-5.4-mini', def)).assertEqual(2)
+      expect(scoreModelDef('gpt-5', def)).assertEqual(2)
+      expect(scoreModelDef('claude-sonnet-4-6', def) === null).assertTrue()
+    })
+
+    it('reasoningDsl_should_match_starts_with_case_insensitive', 0, () => {
+      const def: ModelProfileDef = { id: 'sf_glm5_pro', match: [{ startsWith: 'pro/zai-org/glm-5' }] }
+      expect(scoreModelDef('pro/zai-org/glm-5.1', def)).assertEqual('pro/zai-org/glm-5'.length)
+      expect(scoreModelDef('zai-org/glm-5', def) === null).assertTrue()
+      expect(scoreModelDef('PRO/zai-org/GLM-5', def) !== null).assertTrue()
+    })
+
+    it('reasoningDsl_should_pick_highest_score_when_multiple_defs_match', 0, () => {
+      const general: ModelProfileDef = { id: 'gpt5', match: [{ tokens: ['gpt', '5'] }] }
+      const specific: ModelProfileDef = { id: 'gpt5_4', match: [{ tokens: ['gpt', '5', '.', '4'] }] }
+      const winner = lookupBestModelDef('gpt-5.4-mini', [general, specific])
+      const winnerId = winner !== null ? winner.id : ''
+      expect(winnerId).assertEqual('gpt5_4')
+    })
+
+    it('reasoningDsl_should_short_circuit_on_not_tokens', 0, () => {
+      const def: ModelProfileDef = {
+        id: 'gpt5_excluding_dot_variants',
+        match: [
+          { tokens: ['gpt', '5'] },
+          { notTokens: ['gpt', '5', '.'] }
+        ]
+      }
+      expect(scoreModelDef('gpt-5', def) !== null).assertTrue()
+      expect(scoreModelDef('gpt-5.4', def) === null).assertTrue()
     })
 
     it('chatPageLoadFlow_should_preserve_stored_reasoning_off', 0, () => {

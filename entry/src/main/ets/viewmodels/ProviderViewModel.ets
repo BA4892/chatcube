@@ -26,7 +26,7 @@ import {
   CompatibilityProviderInfo,
   ModelDiscoveryStrategy,
   resolveProviderCompatibilityProfile
-} from '../services/ProviderCompatibilityRegistry'
+} from '../services/registry/CompatibilityResolver'
 
 // 服务商状态管理 - 单例模式
 export class ProviderViewModel {
