@@ -1884,6 +1884,11 @@ export struct MessageBubble {
     const end = part.reasoningFinishedAt > 0 ? part.reasoningFinishedAt :
       (_tick >= 0 ? Date.now() : Date.now())
     const seconds = Math.max(0, (end - start) / 1000)
+    // 异常保护: 历史消息里遗留的未 finish reasoning 或异常数据可能得出上万秒, 这里只显示上限
+    // 10 分钟, 避免 UI 出现 "思考中 34740.9s" 之类的离谱计时
+    if (seconds > 600) {
+      return '—'
+    }
     return `${seconds.toFixed(1)}s`
   }
 

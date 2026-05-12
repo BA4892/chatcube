@@ -414,6 +414,9 @@ export class ChatViewModel {
       last.text = last.text + delta
       return
     }
+    // 切换到最终文本前, 先把未 finish 的 reasoning 段封口, 否则 UI 会一直显示 "思考中 xxx s"
+    // 并在 Date.now() - reasoningCreatedAt 基础上持续累加,产生几万秒的离谱计时
+    this.finishTrailingReasoningPart(aiMessage)
     const part = MessagePart.text(delta)
     aiMessage.parts = aiMessage.parts.concat([part])
   }
@@ -457,19 +460,20 @@ export class ChatViewModel {
 
   // 兜底: 流式完成时, 若 parts 仍为空但旧字段有内容, 按保守顺序(reasoning→tools→text)合成 parts。
   // 用于非 tools 路径或流式期间没有调用 push* helper 的边界情况, 保证下游 UI 可走 parts 分支。
+  // 无论 parts 是否原本就有内容, 结尾统一把未 finish 的 reasoning 封口, 避免 UI 继续按 Date.now() 刷秒数
   private ensurePartsBackfill(aiMessage: ChatMessage): void {
-    if (aiMessage.parts.length > 0) {
-      return
+    if (aiMessage.parts.length === 0) {
+      if (aiMessage.content === '' && aiMessage.reasoningContent === '' &&
+        aiMessage.toolCalls.length === 0 && aiMessage.toolResults.length === 0) {
+        return
+      }
+      aiMessage.parts = resolveMessageParts(aiMessage)
     }
-    if (aiMessage.content === '' && aiMessage.reasoningContent === '' &&
-      aiMessage.toolCalls.length === 0 && aiMessage.toolResults.length === 0) {
-      return
-    }
-    aiMessage.parts = resolveMessageParts(aiMessage)
+    const now = Date.now()
     for (let i = 0; i < aiMessage.parts.length; i++) {
       const p = aiMessage.parts[i]
       if (p.kind === MessagePartKind.REASONING && p.reasoningFinishedAt === 0) {
-        p.reasoningFinishedAt = Date.now()
+        p.reasoningFinishedAt = now
       }
     }
   }
