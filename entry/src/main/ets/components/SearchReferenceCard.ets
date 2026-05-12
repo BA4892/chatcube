@@ -12,6 +12,7 @@ export struct SearchReferenceCard {
   @Param initialExpanded: boolean = false
   @Local isExpanded: boolean = false
   @Local private hasAppliedInitial: boolean = false
+  @Local private userToggled: boolean = false
   @Local showWebSheet: boolean = false
   @Local sheetUrl: string = ''
   @Local sheetTitle: string = ''
@@ -25,6 +26,36 @@ export struct SearchReferenceCard {
       this.isExpanded = true
       this.hasAppliedInitial = true
     }
+  }
+
+  // 流式中 initialExpanded=true 打开, 生成结束 initialExpanded=false 时若用户没手动切过就自动收起,
+  // 避免屏幕上堆着一串独立结果卡片降低可读性
+  @Monitor('initialExpanded')
+  onInitialExpandedChange(): void {
+    if (this.userToggled) {
+      return
+    }
+    if (this.initialExpanded) {
+      this.isExpanded = true
+    } else {
+      this.isExpanded = false
+    }
+  }
+
+  // 折叠态下摘要行, 从第一条结果的 snippet 裁一段展示
+  private getCollapsedSummary(): string {
+    if (this.references.length === 0) {
+      return ''
+    }
+    const snippet = this.references[0].snippet
+    if (snippet === '' || snippet === undefined) {
+      return ''
+    }
+    const normalized = snippet.replace(/\s+/g, ' ').trim()
+    if (normalized.length <= 40) {
+      return normalized
+    }
+    return normalized.substring(0, 40) + '…'
   }
 
   // 获取引用数量文本
@@ -133,10 +164,23 @@ export struct SearchReferenceCard {
         }
       })
       .onClick(() => {
+        this.userToggled = true
         this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
           this.isExpanded = !this.isExpanded
         })
       })
+
+      // 折叠态时如果第一条结果有摘要, 就在胶囊下挂一行灰色文字预览,
+      // 让用户即使不展开也能看到大致内容, 避免 "胶囊只有数字,点开一看又是几十条" 的信息真空
+      if (!this.isExpanded && this.getCollapsedSummary() !== '') {
+        Text(this.getCollapsedSummary())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .lineHeight(18)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 36, left: 12, right: 12 })
+      }
 
       // 引用列表（可折叠）
       if (this.isExpanded) {
