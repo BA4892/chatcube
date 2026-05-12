@@ -2044,6 +2044,19 @@ export struct MessageBubble {
         .padding({ left: 0, right: 0 })
       }
       .width('100%')
+
+      // 搜索结果作为 timeline 的一部分挂在末尾, 不再单独起一张气泡外卡片;
+      // 折叠/展开状态跟随 timelineCollapsed, 流式中默认展开便于实时看到结果
+      if (this.message.hasSearchReferences()) {
+        SearchReferenceCard({
+          query: this.extractSearchQuery(),
+          searchEngine: this.message.searchEngine || 'Web',
+          references: this.message.searchReferences,
+          sourceLabel: this.getSearchSourceLabel(),
+          initialExpanded: this.message.isGenerating || !this.timelineCollapsed
+        })
+          .margin({ top: 8 })
+      }
     }
     .width('100%')
     .padding(10)
