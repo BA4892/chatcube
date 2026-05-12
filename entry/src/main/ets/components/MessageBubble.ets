@@ -1504,6 +1504,21 @@ export struct MessageBubble {
               // 新版交错渲染:检测到 DeepSeek V4 等 thinking↔tool 多轮交错时走 Chain of Thought 时间线,
               // 跳过原本的 ToolCallCard 列表和 ReasoningSection, 避免重复渲染
               this.PartsTimeline()
+              // ask_user tool 需要用户交互选项/输入, 即使走 timeline 模式也保留独立 AskUserCard 可见,
+              // timeline 里只作为一条 "发问动作" 的记录步骤, 不承担交互职责
+              if (this.message.hasToolCalls()) {
+                ForEach(this.message.toolCalls, (toolCall: ToolCall, index: number) => {
+                  if (isAskUserFunctionName(toolCall.functionName) && !this.shouldHideToolCallCard(toolCall)) {
+                    AskUserCard({
+                      toolCall: toolCall,
+                      isAnswered: toolCall.approvalState === 'answered' ||
+                        (index < this.message.toolResults.length),
+                      answeredPayload: toolCall.approvalReason
+                    })
+                      .margin({ bottom: 6 })
+                  }
+                }, (toolCall: ToolCall, index: number) => 'ask_' + toolCall.id + '_' + index.toString())
+              }
             } else {
               // ========== 工具调用区域 ==========
               if (this.message.hasToolCalls()) {
