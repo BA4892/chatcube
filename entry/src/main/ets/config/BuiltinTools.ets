@@ -10,6 +10,7 @@ import {
 import { ToolExecutor, RegisteredTool, getToolRegistry } from '../services/ToolRegistry'
 import { getWebSearchService, SearchResult, WebSearchResult } from '../services/WebSearchService'
 import {
+  ASK_USER_TOOL_ID,
   LEGACY_WEB_SEARCH_TOOL_ID,
   SCRAPE_WEB_TOOL_ID,
   SEARCH_WEB_TOOL_ID
@@ -268,6 +269,93 @@ function createSearchToolConfig(id: string, name: string, description: string): 
   )
 }
 
+// ===== ask_user 工具 =====
+// ask_user 是"人机交互工具"(human-in-the-loop): 模型提出问题, UI 展示 AskUserCard,
+// 用户填完答案提交后, 答案 JSON 作为 tool_result 回传给模型。
+// 这里只注册定义, 执行器是占位; 真正的等待/回收答案逻辑在 ToolExecutionService.handleAskUser
+// 里拦截 ask_user 函数名并走 answerCallback 完成。
+
+// 占位执行器: 不应被实际调用, 一旦被调用说明 ToolExecutionService 的分流失效
+class AskUserExecutor implements ToolExecutor {
+  async execute(_args: string): Promise<string> {
+    return JSON.stringify(new ErrorOutput('ask_user should be resolved by the user, not executed by the tool runtime'))
+  }
+}
+
+function createAskUserToolDefinition(): ToolDefinition {
+  const parameters = new ToolParameters()
+  // questions[] 是对象数组 + enum, ToolParameters.addProperty 不足以表达,
+  // 通过 JSON 字符串反序列化成 Object 再 setRawSchema, 避开 ArkTS "无类型对象字面量" 限制。
+  const rawSchemaJson: string = `{
+    "type": "object",
+    "properties": {
+      "questions": {
+        "type": "array",
+        "description": "1-3 question prompts to clarify the user's intent. Each item must include id, question, selection_type; include options[] when selection_type is single or multi.",
+        "minItems": 1,
+        "maxItems": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique identifier used to key the answer in the returned JSON, e.g. 'q1' or 'format'."
+            },
+            "question": {
+              "type": "string",
+              "description": "Concise question text shown to the user, 10-60 Chinese characters or ~100 English characters."
+            },
+            "selection_type": {
+              "type": "string",
+              "enum": ["single", "multi", "text"],
+              "description": "single=user must pick one from options; multi=user may pick multiple from options; text=free-form input."
+            },
+            "options": {
+              "type": "array",
+              "description": "Required when selection_type is single or multi; optional hints when selection_type is text.",
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["id", "question", "selection_type"]
+        }
+      }
+    },
+    "required": ["questions"]
+  }`
+  parameters.setRawSchema(JSON.parse(rawSchemaJson) as Object)
+
+  const func = new ToolFunction(
+    ASK_USER_TOOL_ID,
+    'Ask the user clarifying questions before proceeding. Use this ONLY when the request is genuinely ambiguous and choosing a default would lead to significant rework. Do NOT use it for trivial details you can infer. Batch 1-3 related questions in a single call to avoid multiple back-and-forth rounds. Each question needs a unique id, concise question text, selection_type (single|multi|text), and options[] when selection_type is single or multi. The tool result will be a JSON object of the user answers keyed by question id; use those answers to continue your reply.',
+    parameters
+  )
+
+  return new ToolDefinition(func)
+}
+
+function createAskUserToolConfig(): ToolConfig {
+  // permissionLevel 用 READ: ask_user 不是"写外部状态", 是"等用户答复",
+  // 让 ToolExecutionService 早期 isAskUserFunctionName 分流直接走 handleAskUser,
+  // 不走通用 write 审批 sheet, 避免两个弹窗争抢用户注意力。
+  //
+  // enabled 默认 true: 零配置即可用, 用户在"设置 > 工具服务 > 内置工具"里可显式关闭,
+  // 关闭后 ChatPage.rebuildAvailableChatTools 会把它过滤出 availableChatTools,
+  // AI 便感知不到该工具, 不会再发起调用。
+  return new ToolConfig(
+    ASK_USER_TOOL_ID,
+    '向用户提问',
+    '模型需要澄清时向你发起的提问, 你的答复会作为工具结果回给模型继续生成。',
+    null,
+    true,
+    false,
+    ToolSourceType.BUILTIN,
+    'builtin',
+    ASK_USER_TOOL_ID,
+    '内置工具',
+    ToolPermissionLevel.READ
+  )
+}
+
 // 注册所有内置工具
 export function registerBuiltinTools(): void {
   const registry = getToolRegistry()
@@ -306,6 +394,17 @@ export function registerBuiltinTools(): void {
     registeredNow += 1
   }
 
+  if (!registry.isToolRegistered(ASK_USER_TOOL_ID)) {
+    const askUserTool = new RegisteredTool(
+      ASK_USER_TOOL_ID,
+      createAskUserToolConfig(),
+      createAskUserToolDefinition(),
+      new AskUserExecutor()
+    )
+    registry.registerTool(askUserTool)
+    registeredNow += 1
+  }
+
   console.info(
     'BuiltinTools',
     `Builtin tools ready: total=${registry.getToolCount()}, newlyRegistered=${registeredNow}`
@@ -314,5 +413,5 @@ export function registerBuiltinTools(): void {
 
 // 获取所有内置工具 ID
 export function getBuiltinToolIds(): string[] {
-  return [LEGACY_WEB_SEARCH_TOOL_ID, SEARCH_WEB_TOOL_ID, SCRAPE_WEB_TOOL_ID]
+  return [LEGACY_WEB_SEARCH_TOOL_ID, SEARCH_WEB_TOOL_ID, SCRAPE_WEB_TOOL_ID, ASK_USER_TOOL_ID]
 }

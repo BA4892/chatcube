@@ -47,6 +47,8 @@ export struct ChatMessageListSection {
   @Event onTTSStop: () => void = (): void => {}
   @Event onSelect: (messageId: string) => void = (_messageId: string): void => {}
   @Event onEnterMultiSelect: (messageId: string) => void = (_messageId: string): void => {}
+  @Event onAskUserAnswer: (toolCallId: string, answerJson: string) => void =
+    (_toolCallId: string, _answerJson: string): void => {}
   @Event onListAppear: () => void = (): void => {}
   @Event onReachStart: () => void = (): void => {}
   @Event onReachEnd: () => void = (): void => {}
@@ -215,6 +217,7 @@ export struct ChatMessageListSection {
       existingRowMap.set(this.messageRows[i].stableId, this.messageRows[i])
     }
     const nextRows: ChatMessageRowData[] = []
+    const changedIndexes: number[] = []
     for (let i = 0; i < this.messages.length; i++) {
       const message = this.messages[i]
       const isSelected = selectedMessageIdSet.has(message.id)
@@ -250,6 +253,11 @@ export struct ChatMessageListSection {
       )
       const existingRow = existingRowMap.get(message.id)
       if (existingRow !== undefined) {
+        const rowChanged = existingRow.renderSignature !== renderSignature ||
+          existingRow.contentRenderSignature !== contentRenderSignature
+        if (rowChanged) {
+          changedIndexes.push(i)
+        }
         this.updateMessageRowData(
           existingRow,
           message,
@@ -282,7 +290,7 @@ export struct ChatMessageListSection {
       ))
     }
     this.messageRows = nextRows
-    this.messageRowDataSource.setItems(nextRows, forceReload)
+    this.messageRowDataSource.setItems(nextRows, forceReload, changedIndexes)
   }
 
   build() {
@@ -362,6 +370,9 @@ export struct ChatMessageListSection {
                 },
                 onEnterMultiSelect: (messageId: string): void => {
                   this.onEnterMultiSelect(messageId)
+                },
+                onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
+                  this.onAskUserAnswer(toolCallId, answerJson)
                 }
               })
                 .width('100%')

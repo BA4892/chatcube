@@ -2,16 +2,15 @@
  * AskUserCard - ask_user 工具专属 UI
  *
  * 解析 toolCall.arguments 里的 questions, 按 selection_type 渲染:
- *  - 'single': FilterChip 单选(不含自由文本)
+ *  - 'single': FilterChip 单选 + 可选自定义答案
  *  - 'multi':  多个 chip 可多选
- *  - 'text' / 其他: 选项 chip(可选) + 自由文本 input
- * 多个问题依次排列, 底部一个提交按钮, 点击后以 JSON 回传 { answers: { qid: answer } }。
- *
- * 本版只做 UI 骨架: onAnswer 回调由 ChatPage/ChatViewModel 接入到 ToolExecutionService 审批流程。
+ *  - 'text' / 其他: 选项 chip(可选) + 自由文本输入
+ * 用户可以只回答一部分, 未回答问题会作为 skipped_ids 回传; 也可以整轮跳过。
  */
 
 import { ToolCall } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
+import { withColorAlpha } from '../utils/ColorAlphaUtils'
 
 interface AskUserQuestion {
   id: string
@@ -24,6 +23,22 @@ interface AskUserArgs {
   questions?: Object[]
 }
 
+interface AskUserAnswerItem {
+  question: string
+  selection_type: string
+  selected_options: string[]
+  custom_answer: string
+  answer: string
+  skipped: boolean
+}
+
+interface AskUserAnswerPayload {
+  answers: Record<string, AskUserAnswerItem>
+  answered_ids: string[]
+  skipped_ids: string[]
+  summary: string
+}
+
 @ComponentV2
 export struct AskUserCard {
   @Param toolCall: ToolCall = new ToolCall()
@@ -32,12 +47,21 @@ export struct AskUserCard {
   // 提交回调, ChatPage 里转发到 ToolExecutionService 的 approval/answer 流程
   @Event onAnswer: (toolCallId: string, answerJson: string) => void = () => {}
 
-  // key: question id -> 已选/已输入答案(单选和 text 用 string, multi 用 "a, b" 逗号拼接)
+  // key: question id -> 已选/已输入答案; single/text 用 textAnswers, multi 用 multiAnswers
   @Local textAnswers: Map<string, string> = new Map()
   @Local multiAnswers: Map<string, Set<string>> = new Map()
+  @Local customAnswers: Map<string, string> = new Map()
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
+  }
+
+  private get themeAiBubble(): string {
+    return getAppUiState().themeAiBubble
+  }
+
+  private get isDarkMode(): boolean {
+    return getAppUiState().isDarkMode
   }
 
   private parseQuestions(): AskUserQuestion[] {
@@ -75,46 +99,118 @@ export struct AskUserCard {
   }
 
   private toggleMulti(qid: string, option: string): void {
-    const set = this.multiAnswers.get(qid) ?? new Set<string>()
-    if (set.has(option)) {
-      set.delete(option)
-    } else {
-      set.add(option)
+    const current = this.multiAnswers.get(qid)
+    const nextSet = new Set<string>()
+    if (current !== undefined) {
+      current.forEach((value: string) => {
+        nextSet.add(value)
+      })
     }
-    this.multiAnswers.set(qid, set)
+    if (nextSet.has(option)) {
+      nextSet.delete(option)
+    } else {
+      nextSet.add(option)
+    }
+    const nextMap = new Map<string, Set<string>>()
+    this.multiAnswers.forEach((value: Set<string>, key: string) => {
+      nextMap.set(key, value)
+    })
+    nextMap.set(qid, nextSet)
+    this.multiAnswers = nextMap
+  }
+
+  private buildSelectedOptions(q: AskUserQuestion): string[] {
+    if (q.selectionType === 'multi') {
+      return Array.from(this.multiAnswers.get(q.id) ?? new Set<string>())
+    }
+    if (q.selectionType === 'single') {
+      const selected = this.textAnswers.get(q.id) ?? ''
+      return selected.trim() !== '' ? [selected.trim()] : []
+    }
+    return []
+  }
+
+  private buildQuestionAnswer(q: AskUserQuestion, selectedOptions: string[], customAnswer: string): string {
+    if (q.selectionType === 'text') {
+      return customAnswer
+    }
+    if (selectedOptions.length > 0 && customAnswer !== '') {
+      return `${selectedOptions.join(', ')}；${customAnswer}`
+    }
+    if (selectedOptions.length > 0) {
+      return selectedOptions.join(', ')
+    }
+    return customAnswer
+  }
+
+  private buildPayload(questions: AskUserQuestion[], skipAll: boolean = false): string {
+    const answers: Record<string, AskUserAnswerItem> = {}
+    const answeredIds: string[] = []
+    const skippedIds: string[] = []
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i]
+      const selectedOptions = skipAll ? [] : this.buildSelectedOptions(q)
+      const customAnswer = skipAll ? '' : ((q.selectionType === 'text'
+        ? (this.textAnswers.get(q.id) ?? '')
+        : (this.customAnswers.get(q.id) ?? '')).trim())
+      const answer = this.buildQuestionAnswer(q, selectedOptions, customAnswer).trim()
+      const skipped = answer === ''
+      if (skipped) {
+        skippedIds.push(q.id)
+      } else {
+        answeredIds.push(q.id)
+      }
+      answers[q.id] = {
+        question: q.question,
+        selection_type: q.selectionType,
+        selected_options: selectedOptions,
+        custom_answer: customAnswer,
+        answer: answer,
+        skipped: skipped
+      }
+    }
+    const payload: AskUserAnswerPayload = {
+      answers: answers,
+      answered_ids: answeredIds,
+      skipped_ids: skippedIds,
+      summary: answeredIds.length > 0
+        ? `用户回答了 ${answeredIds.length} 个问题，跳过 ${skippedIds.length} 个问题`
+        : '用户跳过了本次询问'
+    }
+    return JSON.stringify(payload)
   }
 
   private handleSubmit(questions: AskUserQuestion[]): void {
-    const answers: Record<string, string> = {}
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i]
-      if (q.selectionType === 'multi') {
-        const selected = Array.from(this.multiAnswers.get(q.id) ?? new Set<string>())
-        answers[q.id] = selected.join(', ')
-      } else {
-        answers[q.id] = this.textAnswers.get(q.id) ?? ''
-      }
-    }
-    const payload = JSON.stringify({ answers: answers })
+    const payload = this.buildPayload(questions)
     this.onAnswer(this.toolCall.id, payload)
   }
 
-  private canSubmit(questions: AskUserQuestion[]): boolean {
+  private handleSkipAll(questions: AskUserQuestion[]): void {
+    const payload = this.buildPayload(questions, true)
+    this.onAnswer(this.toolCall.id, payload)
+  }
+
+  private hasAnyAnswer(questions: AskUserQuestion[]): boolean {
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i]
-      if (q.selectionType === 'multi') {
-        const set = this.multiAnswers.get(q.id)
-        if (set === undefined || set.size === 0) {
-          return false
-        }
-      } else {
-        const v = this.textAnswers.get(q.id)
-        if (v === undefined || v.trim() === '') {
-          return false
-        }
+      if (this.buildSelectedOptions(q).length > 0) {
+        return true
+      }
+      const textAnswer = this.textAnswers.get(q.id) ?? ''
+      const customAnswer = this.customAnswers.get(q.id) ?? ''
+      if (textAnswer.trim() !== '' || customAnswer.trim() !== '') {
+        return true
       }
     }
-    return true
+    return false
+  }
+
+  private getQuestionBackgroundColor(): string {
+    return this.isDarkMode ? withColorAlpha(this.themePrimary, '18') : withColorAlpha(this.themePrimary, '12')
+  }
+
+  private getChipBackgroundColor(selected: boolean): ResourceColor {
+    return selected ? this.themePrimary : $r('app.color.surface')
   }
 
   build() {
@@ -123,7 +219,7 @@ export struct AskUserCard {
         SymbolGlyph($r('sys.symbol.message'))
           .fontSize(14)
           .fontColor([this.themePrimary])
-        Text('我有几个问题想确认一下')
+        Text(this.parseQuestions().length > 1 ? '我有几个问题想确认一下' : '我有个问题想确认一下')
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -155,7 +251,7 @@ export struct AskUserCard {
             }
           }
 
-          if (q.selectionType !== 'single' && q.selectionType !== 'multi') {
+          if (q.selectionType === 'text') {
             TextInput({
               text: this.textAnswers.get(q.id) ?? '',
               placeholder: '输入你的回答'
@@ -169,34 +265,61 @@ export struct AskUserCard {
               .onChange((value: string) => {
                 this.textAnswers.set(q.id, value)
               })
+          } else {
+            TextInput({
+              text: this.customAnswers.get(q.id) ?? '',
+              placeholder: '自定义答案，可留空'
+            })
+              .width('100%')
+              .height(34)
+              .fontSize(12)
+              .fontColor($r('app.color.text_primary'))
+              .placeholderColor($r('app.color.text_tertiary'))
+              .backgroundColor($r('app.color.surface'))
+              .borderRadius(8)
+              .enabled(!this.isAnswered)
+              .onChange((value: string) => {
+                this.customAnswers.set(q.id, value)
+              })
           }
         }
         .width('100%')
         .padding(10)
-        .backgroundColor($r('app.color.divider'))
+        .backgroundColor(this.getQuestionBackgroundColor())
         .borderRadius(10)
       }, (q: AskUserQuestion) => q.id)
 
       if (!this.isAnswered) {
-        Row() {
-          Blank()
+        Row({ space: 8 }) {
+          Button('跳过')
+            .height(32)
+            .padding({ left: 14, right: 14 })
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .backgroundColor($r('app.color.surface'))
+            .border({ width: 0.5, color: $r('app.color.divider') })
+            .onClick(() => {
+              this.handleSkipAll(this.parseQuestions())
+            })
+
           Button('提交')
             .height(32)
             .padding({ left: 16, right: 16 })
             .fontSize(13)
             .fontColor(Color.White)
             .backgroundColor(this.themePrimary)
-            .enabled(this.canSubmit(this.parseQuestions()))
+            .enabled(this.hasAnyAnswer(this.parseQuestions()))
             .onClick(() => {
               this.handleSubmit(this.parseQuestions())
             })
         }
         .width('100%')
+        .justifyContent(FlexAlign.End)
       }
     }
     .width('100%')
     .padding(12)
-    .backgroundColor($r('app.color.background'))
+    .backgroundColor(this.themeAiBubble)
     .borderRadius(12)
     .border({ width: 1, color: $r('app.color.divider') })
   }
@@ -210,7 +333,7 @@ export struct AskUserCard {
     }
     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
     .margin({ right: 6, bottom: 6 })
-    .backgroundColor(this.isOptionSelected(q, option) ? this.themePrimary : $r('app.color.background'))
+    .backgroundColor(this.getChipBackgroundColor(this.isOptionSelected(q, option)))
     .borderRadius(12)
     .border({ width: 0.5, color: $r('app.color.divider') })
     .onClick(() => {

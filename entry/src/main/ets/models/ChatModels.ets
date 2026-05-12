@@ -1,4 +1,8 @@
 import { MessagePart } from './MessageParts'
+import { SearchReference } from './SearchReference'
+
+// 向后兼容: SearchReference 已抽离到独立模块,统一从 ChatModels 再导出供历史调用方使用
+export { SearchReference } from './SearchReference'
 
 // 消息角色类型
 // 消息角色类型
@@ -394,24 +398,6 @@ export class SearchServiceConfig {
     this.maxResults = 10
     this.timeout = 5000
     this.autoTestConnection = true
-  }
-}
-
-// 搜索引用项
-@ObservedV2
-export class SearchReference {
-  @Trace id: string
-  @Trace title: string
-  @Trace url: string
-  @Trace snippet: string
-  @Trace timestamp: number
-
-  constructor(id: string, title: string, url: string, snippet: string) {
-    this.id = id
-    this.title = title
-    this.url = url
-    this.snippet = snippet
-    this.timestamp = Date.now()
   }
 }
 

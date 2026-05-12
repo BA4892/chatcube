@@ -1668,6 +1668,17 @@ export class AIApiService {
           }
         }
         if (msg.hasToolCalls()) {
+          if (msg.content !== '') {
+            responseInputs.push({
+              type: 'message',
+              role: 'assistant',
+              status: 'completed',
+              content: [{
+                type: 'output_text',
+                text: msg.content
+              }]
+            })
+          }
           for (let j = 0; j < msg.toolCalls.length; j++) {
             const toolCall = msg.toolCalls[j]
             responseInputs.push({
@@ -2824,24 +2835,24 @@ export class AIApiService {
         if (result.errorMessage !== undefined && result.errorMessage !== '') {
           onError(result.errorMessage)
         }
-        if (result.content !== '') {
-          onData(result.content)
-        }
         if (result.reasoningContent !== '' && onReasoningData) {
           onReasoningData(result.reasoningContent)
-        }
-        if (result.imageData && result.imageMimeType && onImageData) {
-          try {
-            onImageData(result.imageData, result.imageMimeType)
-          } catch (e) {
-            console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
-          }
         }
         if (result.toolCallDeltas && result.toolCallDeltas.length > 0 && onToolCallDelta) {
           try {
             onToolCallDelta(result.toolCallDeltas)
           } catch (e) {
             console.error('AIApiService', `Error in onToolCallDelta callback: ${JSON.stringify(e)}`)
+          }
+        }
+        if (result.content !== '') {
+          onData(result.content)
+        }
+        if (result.imageData && result.imageMimeType && onImageData) {
+          try {
+            onImageData(result.imageData, result.imageMimeType)
+          } catch (e) {
+            console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
           }
         }
         if (result.reasoningItem !== undefined) {
@@ -2855,24 +2866,24 @@ export class AIApiService {
     if (result.errorMessage !== undefined && result.errorMessage !== '') {
       onError(result.errorMessage)
     }
-    if (result.content !== '') {
-      onData(result.content)
-    }
     if (result.reasoningContent !== '' && onReasoningData) {
       onReasoningData(result.reasoningContent)
-    }
-    if (result.imageData && result.imageMimeType && onImageData) {
-      try {
-        onImageData(result.imageData, result.imageMimeType)
-      } catch (e) {
-        console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
-      }
     }
     if (result.toolCallDeltas && result.toolCallDeltas.length > 0 && onToolCallDelta) {
       try {
         onToolCallDelta(result.toolCallDeltas)
       } catch (e) {
         console.error('AIApiService', `Error in onToolCallDelta callback: ${JSON.stringify(e)}`)
+      }
+    }
+    if (result.content !== '') {
+      onData(result.content)
+    }
+    if (result.imageData && result.imageMimeType && onImageData) {
+      try {
+        onImageData(result.imageData, result.imageMimeType)
+      } catch (e) {
+        console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
       }
     }
     if (result.reasoningItem !== undefined) {

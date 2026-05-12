@@ -9,7 +9,15 @@
  *
  * 本文件刻意不 import ChatModels, 避免和 ChatMessage/ToolCall 产生循环依赖。
  * 从 ToolCall/ToolResult 构造 MessagePart 的逻辑放在调用方(ChatMessagePartsHelper)里。
+ * SearchReference 已抽到独立 ./SearchReference 模块, 可安全 import 不引入循环。
  */
+
+import {
+  SearchReference,
+  SearchReferenceJson,
+  searchReferenceToJson,
+  searchReferenceFromJson
+} from './SearchReference'
 
 export enum MessagePartKind {
   TEXT = 'text',
@@ -59,6 +67,9 @@ export class MessagePart {
   @Trace toolSourceLabel: string = ''
   @Trace toolPermissionLevel: string = ''
   @Trace toolApprovalReason: string = '' // 人工拒绝时的原因/答复
+  // 该 tool 调用对应的搜索引用切片 (仅搜索类工具有值, 其它工具为空数组)
+  // 用于 timeline 模式下点击单条搜索 step 时, 只展示这一次返回的 references, 不再依赖聚合的 message.searchReferences
+  @Trace toolSearchReferences: SearchReference[] = []
 
   // 媒体字段 (image/video/audio/document)
   @Trace mediaUrl: string = ''
@@ -101,6 +112,7 @@ export interface MessagePartJson {
   toolSourceLabel?: string
   toolPermissionLevel?: string
   toolApprovalReason?: string
+  toolSearchReferences?: SearchReferenceJson[]
   mediaUrl?: string
   mediaMime?: string
   mediaName?: string
@@ -149,6 +161,13 @@ export function messagePartToJson(part: MessagePart): MessagePartJson {
   }
   if (part.toolApprovalReason !== '') {
     json.toolApprovalReason = part.toolApprovalReason
+  }
+  if (part.toolSearchReferences.length > 0) {
+    const refs: SearchReferenceJson[] = []
+    for (let i = 0; i < part.toolSearchReferences.length; i++) {
+      refs.push(searchReferenceToJson(part.toolSearchReferences[i]))
+    }
+    json.toolSearchReferences = refs
   }
   if (part.mediaUrl !== '') {
     json.mediaUrl = part.mediaUrl
@@ -201,6 +220,13 @@ export function messagePartFromJson(json: MessagePartJson): MessagePart {
   part.toolSourceLabel = json.toolSourceLabel ?? ''
   part.toolPermissionLevel = json.toolPermissionLevel ?? ''
   part.toolApprovalReason = json.toolApprovalReason ?? ''
+  if (json.toolSearchReferences !== undefined) {
+    const refs: SearchReference[] = []
+    for (let i = 0; i < json.toolSearchReferences.length; i++) {
+      refs.push(searchReferenceFromJson(json.toolSearchReferences[i]))
+    }
+    part.toolSearchReferences = refs
+  }
   part.mediaUrl = json.mediaUrl ?? ''
   part.mediaMime = json.mediaMime ?? ''
   part.mediaName = json.mediaName ?? ''

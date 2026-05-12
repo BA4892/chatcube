@@ -6,7 +6,6 @@
 import { ReasoningLevel, MessageAttachment, AttachmentType } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
 import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
-import { ReasoningLevelSheet } from './ReasoningLevelSheet'
 
 @ComponentV2
 export struct EditMessageSheet {
@@ -35,7 +34,6 @@ export struct EditMessageSheet {
   // 内部状态
   @Local private iconTrigger: number = 0
   @Local private sendBtnPressed: boolean = false
-  @Local private showReasoningSheet: boolean = false
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
@@ -116,16 +114,11 @@ export struct EditMessageSheet {
           color: $r('app.color.divider')
         })
         .animation({ duration: 200, curve: Curve.EaseOut })
-        .onClick(() => {
-          this.showReasoningSheet = true
-        })
-        .bindSheet($$this.showReasoningSheet, this.ReasoningSheetBuilder(), {
-          height: SheetSize.FIT_CONTENT,
-          dragBar: true,
-          showClose: false,
-          preferType: SheetType.BOTTOM,
+        .bindMenu(this.ReasoningMenuBuilder(), {
+          placement: Placement.BottomLeft,
+          offset: { x: 0, y: 8 },
           backgroundColor: $r('app.color.surface'),
-          blurStyle: BlurStyle.Regular
+          backgroundBlurStyle: BlurStyle.Regular
         })
       }
 
@@ -151,6 +144,14 @@ export struct EditMessageSheet {
     return this.reasoningLevel !== ReasoningLevel.OFF
   }
 
+  private supportsEffortLevels(): boolean {
+    return this.reasoningControlMode === ReasoningControlMode.EFFORT
+  }
+
+  private supportsHighMaxLevels(): boolean {
+    return this.reasoningControlMode === ReasoningControlMode.HIGH_MAX
+  }
+
   private getReasoningLevelText(level: ReasoningLevel): Resource {
     switch (level) {
       case ReasoningLevel.AUTO:
@@ -169,41 +170,45 @@ export struct EditMessageSheet {
   }
 
   @Builder
-  private ReasoningSheetBuilder() {
-    Column() {
-      ReasoningLevelSheet({
-        value: this.reasoningLevel,
-        $value: (next: string) => {
-          this.$reasoningLevel(this.mapStringToLevel(next))
-        },
-        reasoningControlMode: this.reasoningControlMode,
-        reasoningXhighAvailable: this.reasoningXhighAvailable,
-        allowFollowGlobal: false,
-        onClose: () => {
-          this.showReasoningSheet = false
+  private ReasoningMenuBuilder() {
+    Menu() {
+      this.ReasoningMenuItem(ReasoningLevel.OFF)
+      this.ReasoningMenuItem(ReasoningLevel.AUTO)
+      if (this.supportsEffortLevels()) {
+        this.ReasoningMenuItem(ReasoningLevel.LOW)
+        this.ReasoningMenuItem(ReasoningLevel.MEDIUM)
+        this.ReasoningMenuItem(ReasoningLevel.HIGH)
+        if (this.reasoningXhighAvailable) {
+          this.ReasoningMenuItem(ReasoningLevel.XHIGH)
         }
-      })
+      } else if (this.supportsHighMaxLevels()) {
+        this.ReasoningMenuItem(ReasoningLevel.HIGH)
+        if (this.reasoningXhighAvailable) {
+          this.ReasoningMenuItem(ReasoningLevel.XHIGH)
+        }
+      }
     }
-    .width('100%')
-    .height('100%')
   }
 
-  private mapStringToLevel(value: string): ReasoningLevel {
-    switch (value) {
-      case ReasoningLevel.OFF:
-        return ReasoningLevel.OFF
-      case ReasoningLevel.AUTO:
-        return ReasoningLevel.AUTO
-      case ReasoningLevel.LOW:
-        return ReasoningLevel.LOW
-      case ReasoningLevel.MEDIUM:
-        return ReasoningLevel.MEDIUM
-      case ReasoningLevel.HIGH:
-        return ReasoningLevel.HIGH
-      case ReasoningLevel.XHIGH:
-        return ReasoningLevel.XHIGH
-      default:
-        return ReasoningLevel.OFF
+  @Builder
+  private ReasoningMenuItem(level: ReasoningLevel) {
+    if (this.reasoningLevel === level) {
+      MenuItem({
+        startIcon: $r('sys.symbol.checkmark'),
+        content: this.getReasoningLevelText(level)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.$reasoningLevel(level)
+        })
+    } else {
+      MenuItem({
+        content: this.getReasoningLevelText(level)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.$reasoningLevel(level)
+        })
     }
   }
 
@@ -324,4 +329,3 @@ export struct EditMessageSheet {
     .padding({ left: 8, right: 16 })
   }
 }
-

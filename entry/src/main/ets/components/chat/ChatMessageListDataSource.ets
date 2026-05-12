@@ -1,4 +1,5 @@
 import { ChatMessage, MessageAttachment, SearchReference, ToolCall, ToolResult } from '../../models/ChatModels'
+import { serializeMessageParts } from '../../models/MessageParts'
 
 function encodeValue(value: string): string {
   return `${value.length}:${value};`
@@ -165,6 +166,7 @@ export function buildChatMessageContentRenderSignature(
     buildSearchReferenceListSignature(message.searchReferences),
     buildToolCallListSignature(message.toolCalls),
     buildToolResultListSignature(message.toolResults),
+    encodeValue(serializeMessageParts(message.parts)),
     encodeValue(message.toolCallId),
     encodeValue(isEditing ? previewContent : ''),
     isEditing ? buildAttachmentSignature(previewAttachments) : buildAttachmentSignature([])
@@ -247,7 +249,7 @@ export class ChatMessageListDataSource implements IDataSource {
     this.listeners = this.listeners.filter((item: DataChangeListener): boolean => item !== listener)
   }
 
-  setItems(items: ChatMessageRowData[], forceReload: boolean = false): void {
+  setItems(items: ChatMessageRowData[], forceReload: boolean = false, changedIndexes: number[] = []): void {
     const previousItems = this.items
     this.items = items
 
@@ -266,6 +268,9 @@ export class ChatMessageListDataSource implements IDataSource {
         this.notifyDataReloaded()
         return
       }
+    }
+    if (changedIndexes.length > 0) {
+      this.notifyDataChanged(changedIndexes)
     }
   }
 

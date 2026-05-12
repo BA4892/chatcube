@@ -1,4 +1,13 @@
-import { ChatMessage, MessageRole, MessageAttachment, AttachmentType, ToolCall } from '../models/ChatModels'
+import {
+  ChatMessage,
+  MessageRole,
+  MessageAttachment,
+  AttachmentType,
+  ToolCall,
+  ToolResult,
+  SearchReference,
+  ToolPermissionLevel
+} from '../models/ChatModels'
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
@@ -22,9 +31,13 @@ import {
   getMarkdownTitleSizes
 } from '../utils/MarkdownTypographyUtils'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
-import { isSearchToolFunctionName, isSearchToolId, isAskUserFunctionName } from '../utils/SearchToolIdentityUtils'
-import { MessagePart, MessagePartKind } from '../models/MessageParts'
-import { resolveMessageParts } from '../utils/ChatMessagePartsHelper'
+import { isSearchToolFunctionName, isSearchToolId, isAskUserFunctionName, isScrapeWebFunctionName, isSearchWebFunctionName } from '../utils/SearchToolIdentityUtils'
+import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
+import {
+  groupMessageParts,
+  MessagePartBlock,
+  MessagePartBlockKind
+} from '../utils/ChatMessagePartsHelper'
 import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 
@@ -55,6 +68,38 @@ interface ImageAttachmentEntry {
   originalIndex: number
 }
 
+interface ToolSearchResultItemPayload {
+  title?: string
+  url?: string
+  snippet?: string
+}
+
+interface ToolSearchResultPayload {
+  query?: string
+  searchEngine?: string
+  results?: ToolSearchResultItemPayload[]
+}
+
+interface ToolSearchArgumentPayload {
+  query?: string
+  q?: string
+  keyword?: string
+  keywords?: string
+}
+
+interface AskUserTimelineQuestion {
+  id: string
+  question: string
+  selectionType: string
+}
+
+interface AskUserTimelineAnswer {
+  id: string
+  question: string
+  answer: string
+  skipped: boolean
+}
+
 @ComponentV2
 export struct MessageBubble {
   @Param message: ChatMessage = new ChatMessage('', MessageRole.USER, '')
@@ -75,8 +120,19 @@ export struct MessageBubble {
   @Local reasoningElapsedMs: number = 0         // 流式中已思考毫秒数,驱动 UI 刷新
   @Local reasoningAutoPreview: boolean = false  // 流式中自动进入的预览态,用户切换后置 false
   @Local reasoningShimmerAlpha: number = 1.0    // shimmer 呼吸动画透明度
-  @Local timelineCollapsed: boolean = false     // parts 时间线是否折叠到 "仅显示最近 N 步"
-  @Local timelineUserToggled: boolean = false   // 用户是否手动点过折叠/展开, true 时不再被自动折叠覆盖
+  // timeline 模式下: 每条 reasoning step 自己的展开/折叠状态用 key 列表跟踪;
+  // - 包含 `${createdAt}` 表示用户手动展开
+  // - 包含 `!${createdAt}` 表示用户手动折叠 (用于覆盖 active reasoning 的默认展开行为)
+  // 未在列表中: 默认折叠, 但流式中正在思考的 active reasoning 仍默认展开
+  @Local expandedReasoningKeys: string[] = []
+  // timeline 工具 step 的展开状态; ask_user 已回答后默认收起到标题行。
+  @Local expandedToolStepKeys: string[] = []
+  // 点击 tool step 时打开的"本次工具调用结果"sheet
+  @Local showToolDetailSheet: boolean = false
+  @Local toolDetailRefs: SearchReference[] = []
+  @Local toolDetailTitle: string = ''
+  @Local toolDetailQuery: string = ''
+  @Local toolDetailEngine: string = ''
   @Local translatedText: string = ''  // 翻译结果
   @Local isTranslating: boolean = false  // 是否正在翻译
   @Local showTranslation: boolean = false  // 是否显示翻译结果
@@ -111,6 +167,8 @@ export struct MessageBubble {
   private markdownController: MarkdownController = new MarkdownController()
   private reasoningMarkdownController: MarkdownController = new MarkdownController()
   private translationMarkdownController: MarkdownController = new MarkdownController()
+  private partMarkdownControllers: Map<string, MarkdownController> = new Map()
+  private partMarkdownControllerTexts: Map<string, string> = new Map()
   private multiSelectTouchStartX: number = 0
   private multiSelectTouchStartY: number = 0
   private multiSelectTouchActive: boolean = false
@@ -143,7 +201,6 @@ export struct MessageBubble {
   private cachedReadonlyReasoningContent: string = ''
   private cachedReadonlyTranslatedText: string = ''
   private cachedHasPreviewSegments: boolean = false
-  private cachedNeedsWideAssistantLayout: boolean = false
   private cachedContentSegments: ContentSegment[] = []
   private cachedPreviewImageEntries: ImageAttachmentEntry[] = []
   private cachedMessageImageEntries: ImageAttachmentEntry[] = []
@@ -168,6 +225,8 @@ export struct MessageBubble {
   // 多选模式回调
   @Event onSelect: (messageId: string) => void = () => {}
   @Event onEnterMultiSelect: (messageId: string) => void = () => {}
+  // ask_user 答复回调: 用户在 AskUserCard 点击提交后, 经此链路回到 ChatPage.handleAskUserAnswer
+  @Event onAskUserAnswer: (toolCallId: string, answerJson: string) => void = () => {}
 
   // 支持的翻译语言列表
   private translateLanguages: TranslateLanguage[] = [
@@ -338,8 +397,13 @@ export struct MessageBubble {
     this.reasoningStartAt = 0
     this.reasoningFinalMs = 0
     this.reasoningShimmerAlpha = 1.0
-    this.timelineCollapsed = false
-    this.timelineUserToggled = false
+    this.expandedReasoningKeys = []
+    this.expandedToolStepKeys = []
+    this.showToolDetailSheet = false
+    this.toolDetailRefs = []
+    this.toolDetailTitle = ''
+    this.toolDetailQuery = ''
+    this.toolDetailEngine = ''
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
     this.translatedText = ''
@@ -347,6 +411,8 @@ export struct MessageBubble {
     this.showTranslation = false
     this.isTranslationExpanded = true
     this.currentTranslateLang = ''
+    this.partMarkdownControllers.clear()
+    this.partMarkdownControllerTexts.clear()
   }
 
   // 流式拿到第一段 reasoning 时启动定时器,每 120ms 刷新已思考时长,驱动 UI 计数和 shimmer
@@ -397,9 +463,15 @@ export struct MessageBubble {
   private syncReasoningRuntime(): void {
     const isGenerating = this.message.isGenerating
     const hasReasoning = this.message.reasoningContent.length > 0
+    const usesPartsTimeline = this.shouldRenderPartsTimeline()
     if (isGenerating && hasReasoning) {
       if (this.reasoningTimerId === -1) {
         this.startReasoningTimer()
+      }
+      if (usesPartsTimeline) {
+        this.stopReasoningShimmer()
+        this.reasoningAutoPreview = false
+        return
       }
       if (this.reasoningShimmerTimerId === -1) {
         this.startReasoningShimmer()
@@ -418,11 +490,6 @@ export struct MessageBubble {
       if (!isGenerating) {
         // 生成结束自动收起 preview,让用户看到完整对话内容
         this.reasoningAutoPreview = false
-        // 生成结束且用户没手动切过时,把较长的 parts 时间线默认折叠,只保留最后 2 步;
-        // 用户可点击顶部 "再显示 N 步" 展开全部
-        if (!this.timelineUserToggled && !this.timelineCollapsed && this.getThinkingSteps().length > 2) {
-          this.timelineCollapsed = true
-        }
       }
     }
   }
@@ -487,7 +554,6 @@ export struct MessageBubble {
     this.cachedReadonlyReasoningContent = this.convertTaskListToReadonly(this.message.reasoningContent)
     this.cachedReadonlyTranslatedText = this.convertTaskListToReadonly(this.translatedText)
     this.cachedHasPreviewSegments = !this.message.isGenerating && this.hasPreviewableCodeBlocks(this.message.content)
-    this.cachedNeedsWideAssistantLayout = this.computeNeedsWideAssistantLayout(this.message.content)
     this.cachedContentSegments = this.cachedHasPreviewSegments ? this.splitContentToSegments(this.message.content) : []
     this.cachedPreviewImageEntries = this.buildImageAttachmentEntries(this.previewAttachments)
     this.cachedMessageImageEntries = this.buildImageAttachmentEntries(this.message.attachments)
@@ -645,6 +711,91 @@ export struct MessageBubble {
         this.copyToClipboard(code)
       })
     translationMarkdownController.setBlockSpacing(compactBlockSpacing)
+    this.configurePartMarkdownControllers()
+  }
+
+  private configurePartMarkdownController(controller: MarkdownController): void {
+    const uiState = getAppUiState()
+    const titleColor = uiState.themeMarkdownTitle
+    const textColor = uiState.themeMarkdownText
+    const quoteBgColor = uiState.themeMarkdownQuoteBg
+    const linkColor = uiState.themeMarkdownLink
+    const linkBgColor = uiState.themeMarkdownLinkBg
+    const inlineCodeBgColor = uiState.themeMarkdownCodeBg
+    const inlineCodeTextColor = uiState.themeMarkdownCodeText
+    const tableBgColor = uiState.themeMarkdownTableBg
+    const tableHeaderBgColor = uiState.themeMarkdownTableHeaderBg
+    const tableAltBgColor = uiState.themeMarkdownTableAltBg
+    const tableBorderColor = uiState.themeMarkdownTableBorder
+    const codeTheme = this.isDarkMode ? 'dark' : 'light'
+    const latexTextColor = this.isDarkMode ? 0xFFE0E0E0 : 0xFF333333
+    const fs = this.chatFontSize
+    const mainTextSize = fs - 1
+    const mainTitleSizes = getMarkdownTitleSizes(mainTextSize)
+
+    controller
+      .setTitleColor(titleColor)
+      .setTextColor(textColor)
+      .setTextSize(mainTextSize)
+      .setTextLineHeight(getMarkdownTextLineHeight(mainTextSize))
+      .setTitleSize(mainTitleSizes)
+      .setTitleLineHeight(getMarkdownTitleLineHeights(mainTitleSizes))
+      .setQuoteBackgroundColor(quoteBgColor)
+      .setQuoteBorderColor(linkColor)
+      .setQuotePadding(getMarkdownQuotePadding(mainTextSize))
+      .setHyperlinkTextColor(linkColor)
+      .setHyperlinkBackgroundColor(linkBgColor)
+      .setInlineCodeColor(inlineCodeTextColor)
+      .setInlineCodeBackgroundColor(inlineCodeBgColor)
+      .setCodeBlockTheme(codeTheme)
+      .setLatexMathTextColor(latexTextColor)
+      .setLatexMathTextSize(fs + 2)
+      .setTableBackgroundColor(tableBgColor)
+      .setTableTitleBackgroundColor(tableHeaderBgColor)
+      .setTableInterleaveBackgroundColor(tableAltBgColor)
+      .setTableOuterBorderColor(tableBorderColor)
+      .setTableInnerBorderColor(tableBorderColor)
+      .setUlPointColor(textColor)
+      .setLineColor(tableBorderColor)
+      .setFootnoteTextColor(linkColor)
+      .setHyperlinkClickListener((title: string, src: string): boolean => {
+        return this.openWebSheetForLink(title, src)
+      })
+      .setImageClickListener((src: string): boolean => {
+        return this.openImagePreviewForMarkdownSource(src, this.message.content)
+      })
+      .setCodeCopyListener((code: string) => {
+        this.copyToClipboard(code)
+      })
+      .setTextSelectionEnable(true)
+      .setTextSelectionCopyListener((text: string) => {
+        this.copyToClipboard(text)
+      })
+    controller.setBlockSpacing(getMarkdownBlockSpacing(mainTextSize))
+  }
+
+  private configurePartMarkdownControllers(): void {
+    this.partMarkdownControllers.forEach((controller: MarkdownController) => {
+      this.configurePartMarkdownController(controller)
+    })
+  }
+
+  private getPartMarkdownController(
+    blockIndex: number,
+    partIndex: number,
+    segmentIndex: number,
+    content: string
+  ): MarkdownController {
+    const key = this.message.id + '_' + blockIndex.toString() + '_' + partIndex.toString() + '_' + segmentIndex.toString()
+    let controller = this.partMarkdownControllers.get(key)
+    const previousText = this.partMarkdownControllerTexts.get(key)
+    if (controller === undefined || previousText !== content) {
+      controller = new MarkdownController()
+      this.configurePartMarkdownController(controller)
+      this.partMarkdownControllers.set(key, controller)
+      this.partMarkdownControllerTexts.set(key, content)
+    }
+    return controller
   }
 
   @Monitor('themeRenderKey')
@@ -753,25 +904,6 @@ export struct MessageBubble {
     return this.hasHtmlBlocks(content) || this.hasMermaidBlocks(content)
   }
 
-  private hasFencedCodeBlock(content: string): boolean {
-    return /```[\s\S]*?```/.test(content)
-  }
-
-  private hasMarkdownTable(content: string): boolean {
-    const lines = content.split('\n')
-    for (let i = 0; i < lines.length - 1; i++) {
-      const header = lines[i].trim()
-      const separator = lines[i + 1].trim()
-      if (header.indexOf('|') < 0 || separator.indexOf('|') < 0) {
-        continue
-      }
-      if (/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(separator)) {
-        return true
-      }
-    }
-    return false
-  }
-
   private normalizeMarkdownImageSource(src: string): string {
     let normalized = src.trim()
     if (normalized.startsWith('<') && normalized.endsWith('>')) {
@@ -814,13 +946,6 @@ export struct MessageBubble {
 
     this.onImageClick(images, imageIndex)
     return true
-  }
-
-  private computeNeedsWideAssistantLayout(content: string): boolean {
-    if (content.trim().length === 0) {
-      return false
-    }
-    return this.hasMarkdownTable(content) || this.hasFencedCodeBlock(content) || this.hasPreviewableCodeBlocks(content)
   }
 
   // 将内容按可预览代码块边界分段，用于内联预览渲染
@@ -951,11 +1076,6 @@ export struct MessageBubble {
   private hasPreviewSegments(): boolean {
     this.ensureDerivedRenderCaches()
     return this.cachedHasPreviewSegments
-  }
-
-  private needsWideAssistantLayout(): boolean {
-    this.ensureDerivedRenderCaches()
-    return this.cachedNeedsWideAssistantLayout
   }
 
   private getContentSegments(): ContentSegment[] {
@@ -1501,19 +1621,20 @@ export struct MessageBubble {
         Column() {
           Column() {
             if (this.shouldRenderPartsTimeline()) {
-              // 新版交错渲染:检测到 DeepSeek V4 等 thinking↔tool 多轮交错时走 Chain of Thought 时间线,
-              // 跳过原本的 ToolCallCard 列表和 ReasoningSection, 避免重复渲染
-              this.PartsTimeline()
-              // ask_user tool 需要用户交互选项/输入, 即使走 timeline 模式也保留独立 AskUserCard 可见,
-              // timeline 里只作为一条 "发问动作" 的记录步骤, 不承担交互职责
+              // 新版交错渲染: 按 parts 的真实生成顺序渲染 text / reasoning / tool,
+              // 跳过原本的聚合正文、ToolCallCard 列表和 ReasoningSection, 避免顺序错乱或重复渲染
+              this.OrderedPartsTimeline()
+              // ask_user 待答时保留独立交互卡片;提交后收缩到 timeline step 内。
               if (this.message.hasToolCalls()) {
                 ForEach(this.message.toolCalls, (toolCall: ToolCall, index: number) => {
-                  if (isAskUserFunctionName(toolCall.functionName) && !this.shouldHideToolCallCard(toolCall)) {
+                  if (this.shouldRenderAskUserInteractionCard(toolCall, index)) {
                     AskUserCard({
                       toolCall: toolCall,
-                      isAnswered: toolCall.approvalState === 'answered' ||
-                        (index < this.message.toolResults.length),
-                      answeredPayload: toolCall.approvalReason
+                      isAnswered: false,
+                      answeredPayload: toolCall.approvalReason,
+                      onAnswer: (toolCallId: string, answerJson: string): void => {
+                        this.onAskUserAnswer(toolCallId, answerJson)
+                      }
                     })
                       .margin({ bottom: 6 })
                   }
@@ -1529,7 +1650,10 @@ export struct MessageBubble {
                         toolCall: toolCall,
                         isAnswered: toolCall.approvalState === 'answered' ||
                           (index < this.message.toolResults.length),
-                        answeredPayload: toolCall.approvalReason
+                        answeredPayload: toolCall.approvalReason,
+                        onAnswer: (toolCallId: string, answerJson: string): void => {
+                          this.onAskUserAnswer(toolCallId, answerJson)
+                        }
                       })
                         .margin({ bottom: 6 })
                     } else {
@@ -1554,7 +1678,8 @@ export struct MessageBubble {
                 searchEngine: this.message.searchEngine || 'Web',
                 references: this.message.searchReferences,
                 sourceLabel: this.getSearchSourceLabel(),
-                initialExpanded: this.message.isGenerating
+                // 搜索结果列表是流式热路径里最重的部分:默认只渲染摘要胶囊,用户点开时再渲染完整列表。
+                initialExpanded: false
               })
                 .margin({ bottom: 6 })
             }
@@ -1571,15 +1696,17 @@ export struct MessageBubble {
             }
 
             // ========== 加载状态或主要内容区域 ==========
-            if (this.message.content.length === 0 && this.message.reasoningContent.length === 0 &&
-                (this.message.isGenerating || this.message.isSearching)) {
-              if (this.message.isSearching) {
-                this.SearchingIndicatorInline()
-              } else {
-                this.TypingIndicator()
-              }
-            } else {
-              if (this.hasPreviewSegments()) {
+            if (!this.shouldRenderPartsTimeline()) {
+              if (this.message.content.length === 0) {
+                if (this.message.reasoningContent.length === 0 &&
+                    (this.message.isGenerating || this.message.isSearching)) {
+                  if (this.message.isSearching) {
+                    this.SearchingIndicatorInline()
+                  } else {
+                    this.TypingIndicator()
+                  }
+                }
+              } else if (this.hasPreviewSegments()) {
                 ForEach(this.getContentSegments(),
                   (segment: ContentSegment) => {
                     if (segment.type === ContentSegmentType.HTML) {
@@ -1598,11 +1725,11 @@ export struct MessageBubble {
                           showToast(this.getUIContext(), $r('app.string.copy_success'))
                         }
                       })
-                    } else {
-                      Markdown({
-                        controller: this.markdownController,
-                        text: segment.renderContent
-                      })
+			            } else {
+			              Markdown({
+			                controller: this.markdownController,
+			                text: segment.renderContent
+			              })
                         .width('100%')
                         .backgroundColor(Color.Transparent)
                     }
@@ -1686,9 +1813,7 @@ export struct MessageBubble {
         }
         .width('100%')
         .margin({ top: this.showHeader ? 8 : 0 })
-        .padding(this.needsWideAssistantLayout()
-          ? { left: 6, right: 6, top: 10, bottom: 10 }
-          : { left: 14, right: 14, top: 12, bottom: 10 })
+        .padding({ left: 6, right: 6, top: 10, bottom: 10 })
           .backgroundColor(this.isMultiSelectMode && this.isSelected
             ? this.themePrimaryLight
             : this.themeAiBubble)
@@ -1704,10 +1829,23 @@ export struct MessageBubble {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .constraintSize({ maxWidth: this.needsWideAssistantLayout() ? '100%' : '92%' })
+    .constraintSize({ maxWidth: '100%' })
     .alignItems(VerticalAlign.Top)
     .onTouch((event: TouchEvent) => {
       this.handleMultiSelectTouch(event)
+    })
+    .bindSheet($$this.showToolDetailSheet, this.ToolDetailSheetBuilder(), {
+      height: SheetSize.LARGE,
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+      dragBar: true,
+      showClose: true,
+      title: { title: $r('app.string.web_search') },
+      onDisappear: () => {
+        this.toolDetailRefs = []
+        this.toolDetailTitle = ''
+        this.toolDetailQuery = ''
+        this.toolDetailEngine = ''
+      }
     })
   }
 
@@ -1844,37 +1982,45 @@ export struct MessageBubble {
 
   // 交错 thinking 判定:只要消息里有任意 reasoning 或 tool part, 就走 timeline 统一展示。
   // 这样搜索、MCP、工具调用、推理都汇总到一条黄色链路里, 气泡上不再有并列的独立卡片。
-  private shouldRenderPartsTimeline(): boolean {
-    if (this.message.parts.length === 0) {
-      return false
-    }
+	  private shouldRenderPartsTimeline(): boolean {
+	    if (this.message.parts.length === 0) {
+	      return false
+	    }
     for (let i = 0; i < this.message.parts.length; i++) {
       const kind = this.message.parts[i].kind
       if (kind === MessagePartKind.REASONING || kind === MessagePartKind.TOOL) {
         return true
       }
     }
-    return false
-  }
+	    return false
+	  }
 
-  private getThinkingSteps(): MessagePart[] {
-    const steps: MessagePart[] = []
-    for (let i = 0; i < this.message.parts.length; i++) {
-      const p = this.message.parts[i]
-      // 过滤空 reasoning: 流式期间偶尔会 push 内容为空的 reasoning part(边界重置),
-      // 折叠视图里显示两条 "思考中" 且没有正文会特别奇怪, 直接剔除
-      if (p.kind === MessagePartKind.REASONING) {
-        if (p.text.trim() !== '') {
-          steps.push(p)
-        }
-        continue
-      }
-      if (p.kind === MessagePartKind.TOOL) {
-        steps.push(p)
-      }
-    }
-    return steps
-  }
+	  private getOrderedMessagePartBlocks(): MessagePartBlock[] {
+	    return groupMessageParts(this.message.parts)
+	  }
+
+	  private getRenderableThinkingSteps(parts: MessagePart[]): MessagePart[] {
+	    const steps: MessagePart[] = []
+	    for (let i = 0; i < parts.length; i++) {
+	      const p = parts[i]
+	      // 过滤空 reasoning: 流式期间偶尔会 push 内容为空的 reasoning part(边界重置),
+	      // 折叠视图里显示两条 "思考中" 且没有正文会特别奇怪, 直接剔除
+	      if (p.kind === MessagePartKind.REASONING) {
+	        if (p.text.length > 0) {
+	          steps.push(p)
+	        }
+	        continue
+	      }
+	      if (p.kind === MessagePartKind.TOOL) {
+	        steps.push(p)
+	      }
+	    }
+	    return steps
+	  }
+
+	  private getThinkingSteps(): MessagePart[] {
+	    return this.getRenderableThinkingSteps(this.message.parts)
+	  }
 
   // 判定某个 reasoning part 是否处于 "仍在思考中": 消息还在生成 + 该 part 是 parts 里最后一个 reasoning
   // 且其后没有任何 reasoning/tool/text part (即确实是当前正在输出的那段 reasoning)
@@ -1895,193 +2041,879 @@ export struct MessageBubble {
     return false
   }
 
-  private formatReasoningDuration(part: MessagePart): string {
-    const start = part.reasoningCreatedAt > 0 ? part.reasoningCreatedAt : 0
-    if (start === 0) {
+  // ===== Timeline 主题色 helper =====
+  // timeline 块底色跟随当前 AI 气泡主题, 避免在自定义主题下出现固定色污染。
+  private getTimelineBackgroundColor(): string {
+    return this.themeAiBubble
+  }
+  // 竖线和图标遮罩 — 竖线要在底色上可见, 图标遮罩要和底色同色才能遮住竖线
+  private getTimelineRailColor(): string {
+    return withColorAlpha(this.themePrimary, this.isDarkMode ? '88' : '55')
+  }
+
+  // ===== reasoning step 独立折叠状态 =====
+  private getReasoningKey(part: MessagePart): string {
+    return `r_${part.reasoningCreatedAt}`
+  }
+
+  private isReasoningStepExpanded(part: MessagePart): boolean {
+    const key = this.getReasoningKey(part)
+    const collapsedKey = `!${key}`
+    if (this.expandedReasoningKeys.includes(collapsedKey)) {
+      return false
+    }
+    if (this.expandedReasoningKeys.includes(key)) {
+      return true
+    }
+    // 正在输出的 reasoning 展示完整正文;生成结束后默认收起,避免深度思考长文本外露。
+    if (this.isActiveReasoningPart(part)) {
+      return true
+    }
+    return false
+  }
+
+  private toggleReasoningStep(part: MessagePart): void {
+    const key = this.getReasoningKey(part)
+    const wasExpanded = this.isReasoningStepExpanded(part)
+    const next: string[] = []
+    for (let i = 0; i < this.expandedReasoningKeys.length; i++) {
+      const k = this.expandedReasoningKeys[i]
+      if (k !== key && k !== `!${key}`) {
+        next.push(k)
+      }
+    }
+    if (wasExpanded) {
+      next.push(`!${key}`)
+    } else {
+      next.push(key)
+    }
+    this.expandedReasoningKeys = next
+  }
+
+  // timeline 标题只保留状态,不展示每段耗时和字数。
+  private buildReasoningStepLabel(part: MessagePart): string {
+    return this.isActiveReasoningPart(part) ? '思考中' : '思考过程'
+  }
+
+  // ===== tool step 点击行为 =====
+  // 优先级:
+  //  1. 抓取类 (scrape_web 等) → 直接 onOpenLink 打开 URL, 不弹中间 sheet
+  //  2. 搜索类 (search_web 等) 且成功 → 弹 sheet 列本次引用
+  //  3. 老消息: 仅当整条消息只有一个成功搜索 step 时,才允许降级用聚合 message.searchReferences
+  //  4. 其它工具但 toolArguments 能解析出 url → 直接 onOpenLink
+  //  5. 其它 → 不可点击
+  private isToolStepClickable(part: MessagePart): boolean {
+    if (isAskUserFunctionName(part.toolName)) {
+      return false
+    }
+    if (isScrapeWebFunctionName(part.toolName)) {
+      // 抓取类只要能取到 url 就可点
+      return this.extractToolStepUrl(part) !== '' || this.firstRefUrl(part) !== ''
+    }
+    if (isSearchWebFunctionName(part.toolName)) {
+      if (!this.isSuccessfulToolStep(part)) {
+        return false
+      }
+      return this.resolveToolStepSearchReferences(part).length > 0
+    }
+    return this.extractToolStepUrl(part) !== ''
+  }
+
+  private isSuccessfulToolStep(part: MessagePart): boolean {
+    return part.toolStatus === ToolPartStatus.SUCCEEDED && !part.toolIsError
+  }
+
+  private getToolStepKey(part: MessagePart): string {
+    return part.toolCallId !== '' ? `tool_${part.toolCallId}` : `tool_${part.toolName}_${part.toolArguments.length}`
+  }
+
+  private isToolStepExpanded(part: MessagePart): boolean {
+    return this.expandedToolStepKeys.includes(this.getToolStepKey(part))
+  }
+
+  private toggleToolStep(part: MessagePart): void {
+    const key = this.getToolStepKey(part)
+    const next: string[] = []
+    let found = false
+    for (let i = 0; i < this.expandedToolStepKeys.length; i++) {
+      if (this.expandedToolStepKeys[i] === key) {
+        found = true
+        continue
+      }
+      next.push(this.expandedToolStepKeys[i])
+    }
+    if (!found) {
+      next.push(key)
+    }
+    this.expandedToolStepKeys = next
+  }
+
+  private findToolResultForCall(toolCallId: string): ToolResult | null {
+    for (let i = 0; i < this.message.toolResults.length; i++) {
+      if (this.message.toolResults[i].toolCallId === toolCallId) {
+        return this.message.toolResults[i]
+      }
+    }
+    return null
+  }
+
+  private isAskUserToolCallAnswered(toolCall: ToolCall, index: number): boolean {
+    if (toolCall.approvalState === 'answered') {
+      return true
+    }
+    if (this.findToolResultForCall(toolCall.id) !== null) {
+      return true
+    }
+    return index < this.message.toolResults.length
+  }
+
+  private shouldRenderAskUserInteractionCard(toolCall: ToolCall, index: number): boolean {
+    if (!isAskUserFunctionName(toolCall.functionName) || this.shouldHideToolCallCard(toolCall)) {
+      return false
+    }
+    return !this.isAskUserToolCallAnswered(toolCall, index)
+  }
+
+  private parseAskUserQuestions(raw: string): AskUserTimelineQuestion[] {
+    const questions: AskUserTimelineQuestion[] = []
+    try {
+      const parsed = JSON.parse(raw) as Record<string, Object>
+      const rawQuestions = parsed.questions
+      if (!Array.isArray(rawQuestions)) {
+        return questions
+      }
+      const list = rawQuestions as Object[]
+      for (let i = 0; i < list.length; i++) {
+        const item = list[i] as Record<string, Object>
+        if (item === null || item === undefined) {
+          continue
+        }
+        const idValue = item.id
+        const questionValue = item.question
+        const typeValue = item.selection_type
+        questions.push({
+          id: typeof idValue === 'string' && idValue.trim() !== '' ? idValue : `q_${i}`,
+          question: typeof questionValue === 'string' ? questionValue : '',
+          selectionType: typeof typeValue === 'string' ? typeValue : 'text'
+        })
+      }
+    } catch (_e) {
+    }
+    return questions
+  }
+
+  private readAskUserAnswerValue(value: Object | undefined): string {
+    if (value === undefined || value === null) {
       return ''
     }
-    // 情况一: 记录了 finish 时间, 直接用准确时长
-    if (part.reasoningFinishedAt > 0) {
-      const seconds = Math.max(0, (part.reasoningFinishedAt - start) / 1000)
-      return `${seconds.toFixed(1)}s`
+    if (typeof value === 'string') {
+      return value.trim()
     }
-    // 情况二: 消息仍在生成且该 part 是最后一段 reasoning, 属于 "正在思考中", 用 Date.now() 实时跳秒
-    // 读一下 reasoningElapsedMs(由 syncReasoningRuntime 的 120ms 定时器驱动),
-    // ArkUI 会把它当依赖,确保该 part 的秒数随之跳动
-    if (this.isActiveReasoningPart(part)) {
-      const _tick = this.reasoningElapsedMs
-      const elapsed = Math.max(0, (Date.now() - start) / 1000)
-      const _ignored = _tick >= 0 ? 0 : 0
-      return `${elapsed.toFixed(1)}s`
+    const record = value as Record<string, Object>
+    const answer = record.answer
+    if (typeof answer === 'string') {
+      return answer.trim()
     }
-    // 情况三: 已经被后续动作打断但没记录 finish 时间 (历史数据 / 边界), 不给时长只给文字标签,
-    // 避免用当前时间 - 久远的 created 算出几万秒
+    const customAnswer = record.custom_answer
+    if (typeof customAnswer === 'string') {
+      return customAnswer.trim()
+    }
+    const selectedOptions = record.selected_options
+    if (Array.isArray(selectedOptions)) {
+      const parts: string[] = []
+      const selectedOptionList = selectedOptions as string[]
+      for (let i = 0; i < selectedOptionList.length; i++) {
+        const selected: string = selectedOptionList[i]
+        if (typeof selected === 'string' && selected.trim() !== '') {
+          parts.push(selected.trim())
+        }
+      }
+      return parts.join(', ')
+    }
     return ''
   }
 
-  // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
-  // 为了最小改动,这里不复用 ChainOfThought 组件,直接在 MessageBubble 里内联 Row/Column。
-  @Builder
-  PartsTimeline() {
-    Column() {
-      // 折叠/展开头:当步骤 >2 且当前处于折叠态时显示 "再显示 N 步",展开态显示 "收起"
-      if (this.shouldShowTimelineToggle()) {
-        Row({ space: 6 }) {
-          SymbolGlyph(this.timelineCollapsed ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up'))
-            .fontSize(12)
-            .fontColor([this.themePrimary])
-          Text(this.getTimelineToggleLabel())
-            .fontSize(12)
-            .fontColor(this.themePrimary)
-        }
-        .width('100%')
-        .padding({ top: 6, bottom: 6, left: 4 })
-        .onClick(() => {
-          this.timelineUserToggled = true
-          this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-            this.timelineCollapsed = !this.timelineCollapsed
-          })
+  private isAskUserAnswerSkipped(value: Object | undefined, answer: string): boolean {
+    if (value === undefined || value === null) {
+      return answer === ''
+    }
+    if (typeof value === 'string') {
+      return answer === ''
+    }
+    const record = value as Record<string, Object>
+    const skipped = record.skipped
+    return typeof skipped === 'boolean' ? skipped : answer === ''
+  }
+
+  private buildAskUserAnswerViews(part: MessagePart): AskUserTimelineAnswer[] {
+    const questions = this.parseAskUserQuestions(part.toolArguments)
+    const items: AskUserTimelineAnswer[] = []
+    let answersRecord: Record<string, Object> | null = null
+    try {
+      const parsed = JSON.parse(part.toolResult.trim()) as Record<string, Object>
+      const answers = parsed.answers
+      if (answers !== undefined && answers !== null) {
+        answersRecord = answers as Record<string, Object>
+      }
+    } catch (_e) {
+    }
+
+    if (questions.length > 0) {
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i]
+        const value = answersRecord !== null ? answersRecord[q.id] : undefined
+        const answer = this.readAskUserAnswerValue(value)
+        items.push({
+          id: q.id,
+          question: q.question,
+          answer: answer,
+          skipped: this.isAskUserAnswerSkipped(value, answer)
         })
       }
+      return items
+    }
 
-      Stack({ alignContent: Alignment.TopStart }) {
-        // 竖线
-        Column()
-          .width(1)
-          .height('100%')
-          .margin({ left: 10, top: 10, bottom: 10 })
-          .backgroundColor($r('app.color.divider'))
-
-        Column() {
-          ForEach(this.getVisibleThinkingSteps(), (step: MessagePart, index: number) => {
-          Row({ space: 10 }) {
-            // 左侧图标 + 背景遮罩压住竖线 (与 PartsTimeline 外层背景同色,视觉上无明显底色)
-            Stack() {
-              Column()
-                .width(20)
-                .height(20)
-                .borderRadius(10)
-                .backgroundColor($r('app.color.divider'))
-              if (step.kind === MessagePartKind.REASONING) {
-                SymbolGlyph($r('sys.symbol.lightbulb'))
-                  .fontSize(14)
-                  .fontColor([this.themePrimary])
-              } else {
-                SymbolGlyph(resolveToolSymbol(step.toolName))
-                  .fontSize(14)
-                  .fontColor([$r('app.color.text_secondary')])
-              }
-            }
-            .width(24)
-            .height(24)
-
-            Column() {
-              if (step.kind === MessagePartKind.REASONING) {
-                Row({ space: 6 }) {
-                  Text(this.isActiveReasoningPart(step) ? '思考中' : '思考过程')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_primary'))
-
-                  if (this.formatReasoningDuration(step) !== '') {
-                    Text(this.formatReasoningDuration(step))
-                      .fontSize(11)
-                      .fontColor($r('app.color.text_secondary'))
-                  }
-                }
-                .width('100%')
-
-                if (step.text.trim() !== '') {
-                  Text(step.text)
-                    .fontSize(12)
-                    .lineHeight(18)
-                    .fontColor($r('app.color.text_secondary'))
-                    .maxLines(4)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .margin({ top: 4 })
-                }
-              } else {
-                // tool step
-                Row({ space: 6 }) {
-                  Text(this.buildToolStepTitle(step))
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_primary'))
-                    .layoutWeight(1)
-                    .maxLines(2)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                  if (step.toolStatus === 'succeeded') {
-                    SymbolGlyph($r('sys.symbol.checkmark_circle'))
-                      .fontSize(14)
-                      .fontColor([$r('app.color.status_success')])
-                  } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
-                    SymbolGlyph($r('sys.symbol.xmark_circle'))
-                      .fontSize(14)
-                      .fontColor([$r('app.color.status_error')])
-                  } else if (step.toolStatus === 'pending') {
-                    Text('待授权')
-                      .fontSize(10)
-                      .fontColor(Color.White)
-                      .backgroundColor(this.themePrimary)
-                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .borderRadius(6)
-                  }
-                }
-                .width('100%')
-              }
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-          }
-          .width('100%')
-          .padding({ top: 6, bottom: 6 })
-        }, (step: MessagePart, index: number) => {
-          return step.kind === MessagePartKind.TOOL ? `tool_${step.toolCallId}_${index}` : `reasoning_${step.reasoningCreatedAt}_${index}`
+    if (answersRecord !== null) {
+      const keys = Object.keys(answersRecord)
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i]
+        const value = answersRecord[key]
+        const answer = this.readAskUserAnswerValue(value)
+        items.push({
+          id: key,
+          question: key,
+          answer: answer,
+          skipped: this.isAskUserAnswerSkipped(value, answer)
         })
-        }
-        .width('100%')
-        .padding({ left: 0, right: 0 })
-      }
-      .width('100%')
-
-      // 搜索结果作为 timeline 的一部分挂在末尾, 不再单独起一张气泡外卡片;
-      // 折叠/展开状态跟随 timelineCollapsed, 流式中默认展开便于实时看到结果
-      if (this.message.hasSearchReferences()) {
-        SearchReferenceCard({
-          query: this.extractSearchQuery(),
-          searchEngine: this.message.searchEngine || 'Web',
-          references: this.message.searchReferences,
-          sourceLabel: this.getSearchSourceLabel(),
-          initialExpanded: this.message.isGenerating || !this.timelineCollapsed
-        })
-          .margin({ top: 8 })
       }
     }
+    return items
+  }
+
+  private hasAskUserStepContent(part: MessagePart): boolean {
+    return this.parseAskUserQuestions(part.toolArguments).length > 0 || this.buildAskUserAnswerViews(part).length > 0
+  }
+
+  private isAskUserStepAnswered(part: MessagePart): boolean {
+    return part.toolStatus === ToolPartStatus.ANSWERED ||
+      (part.toolStatus === ToolPartStatus.SUCCEEDED && part.toolResult.trim() !== '')
+  }
+
+  private buildAskUserStepStatusText(part: MessagePart): string {
+    if (!this.isAskUserStepAnswered(part)) {
+      return '待回答'
+    }
+    const items = this.buildAskUserAnswerViews(part)
+    let answered = 0
+    let skipped = 0
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].answer !== '') {
+        answered++
+      } else {
+        skipped++
+      }
+    }
+    if (answered === 0) {
+      return '已跳过'
+    }
+    if (skipped > 0) {
+      return `已回答 ${answered}`
+    }
+    return '已回答'
+  }
+
+  private countSuccessfulSearchToolSteps(): number {
+    let count = 0
+    for (let i = 0; i < this.message.parts.length; i++) {
+      const p = this.message.parts[i]
+      if (p.kind === MessagePartKind.TOOL && isSearchWebFunctionName(p.toolName) && this.isSuccessfulToolStep(p)) {
+        count += 1
+      }
+    }
+    return count
+  }
+
+  private canUseAggregateSearchReferencesForToolStep(part: MessagePart): boolean {
+    if (!this.isSuccessfulToolStep(part) || this.message.searchReferences.length === 0) {
+      return false
+    }
+    // 这是老消息兜底:新消息应使用 toolSearchReferences 或 toolResult 精确切片。
+    // 多个搜索 step 时聚合列表无法证明属于当前 step,不能拿来展示,否则失败/空结果会串到别的搜索结果。
+    return this.countSuccessfulSearchToolSteps() === 1
+  }
+
+  private buildSearchReferencesFromToolResult(part: MessagePart): SearchReference[] {
+    const raw = part.toolResult.trim()
+    if (raw === '') {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(raw) as ToolSearchResultPayload
+      if (!Array.isArray(parsed.results)) {
+        return []
+      }
+      const refs: SearchReference[] = []
+      for (let i = 0; i < parsed.results.length; i++) {
+        const item = parsed.results[i]
+        const title = typeof item.title === 'string' ? item.title : ''
+        const url = typeof item.url === 'string' ? item.url : ''
+        const snippet = typeof item.snippet === 'string' ? item.snippet : ''
+        if (url.trim() === '' && title.trim() === '' && snippet.trim() === '') {
+          continue
+        }
+        refs.push(new SearchReference(`tool_ref_${part.toolCallId}_${i}`, title, url, snippet))
+      }
+      return refs
+    } catch (_e) {
+      return []
+    }
+  }
+
+  private resolveToolStepSearchReferences(part: MessagePart): SearchReference[] {
+    if (!isSearchWebFunctionName(part.toolName) || !this.isSuccessfulToolStep(part)) {
+      return []
+    }
+    if (part.toolSearchReferences.length > 0) {
+      return part.toolSearchReferences
+    }
+    const refsFromResult = this.buildSearchReferencesFromToolResult(part)
+    if (refsFromResult.length > 0) {
+      return refsFromResult
+    }
+    if (this.canUseAggregateSearchReferencesForToolStep(part)) {
+      return this.message.searchReferences
+    }
+    return []
+  }
+
+  private extractToolStepSearchQuery(part: MessagePart): string {
+    try {
+      const result = JSON.parse(part.toolResult.trim()) as ToolSearchResultPayload
+      if (typeof result.query === 'string' && result.query.trim() !== '') {
+        return result.query.trim()
+      }
+    } catch (_e) {
+    }
+    try {
+      const args = JSON.parse(part.toolArguments.trim()) as ToolSearchArgumentPayload
+      const candidate = args.query ?? args.q ?? args.keyword ?? args.keywords
+      if (typeof candidate === 'string' && candidate.trim() !== '') {
+        return candidate.trim()
+      }
+    } catch (_e) {
+    }
+    return this.extractSearchQuery()
+  }
+
+  private firstRefUrl(part: MessagePart): string {
+    if (part.toolSearchReferences.length > 0 && part.toolSearchReferences[0].url.trim() !== '') {
+      return part.toolSearchReferences[0].url.trim()
+    }
+    return ''
+  }
+
+  // 尝试从 toolArguments 里取一个 url 字段(抓取类工具通常都是 {"url": "..."} 或 {"urls": [...]}  )
+  private extractToolStepUrl(part: MessagePart): string {
+    const raw = part.toolArguments.trim()
+    if (raw === '' || raw === '{}') {
+      return ''
+    }
+    try {
+      const parsed = JSON.parse(raw) as Record<string, Object>
+      const candidate = parsed.url ?? parsed.URL ?? parsed.link
+      if (typeof candidate === 'string' && candidate.trim() !== '') {
+        return candidate.trim()
+      }
+      const urls = parsed.urls
+      if (Array.isArray(urls) && urls.length > 0 && typeof urls[0] === 'string') {
+        return (urls[0] as string).trim()
+      }
+    } catch (_e) {
+      return ''
+    }
+    return ''
+  }
+
+  private handleToolStepClick(part: MessagePart): void {
+    // 抓取类: 直接打开 URL
+    if (isScrapeWebFunctionName(part.toolName)) {
+      const url = this.extractToolStepUrl(part) !== '' ? this.extractToolStepUrl(part) : this.firstRefUrl(part)
+      if (url !== '') {
+        this.onOpenLink(this.buildToolStepTitle(part), url)
+      }
+      return
+    }
+    // 搜索类: 弹 sheet 列引用。失败/空结果不打开,避免串到同消息内其它搜索结果。
+    if (isSearchWebFunctionName(part.toolName)) {
+      const refs = this.resolveToolStepSearchReferences(part)
+      if (refs.length > 0) {
+        this.toolDetailRefs = refs
+        this.toolDetailTitle = this.buildToolStepTitle(part)
+        this.toolDetailQuery = this.extractToolStepSearchQuery(part)
+        this.toolDetailEngine = this.message.searchEngine || 'Web'
+        this.showToolDetailSheet = true
+      }
+      return
+    }
+    // 其它工具: 参数里有 url 就直接打开
+    const url = this.extractToolStepUrl(part)
+    if (url !== '') {
+      this.onOpenLink(this.buildToolStepTitle(part), url)
+    }
+  }
+
+	  @Builder
+	  OrderedPartsTimeline() {
+	    Column() {
+	      ForEach(this.getOrderedMessagePartBlocks(), (block: MessagePartBlock, index: number) => {
+	        if (block.kind === MessagePartBlockKind.THINKING) {
+	          this.PartsTimelineBlock(this.getRenderableThinkingSteps(block.parts))
+	        } else {
+	          this.PartsContentBlock(block, index)
+	        }
+	      }, (block: MessagePartBlock, index: number) => {
+	        return block.kind + '_' + index.toString()
+	      })
+	    }
+	    .width('100%')
+	  }
+
+	  @Builder
+	  PartsContentBlock(block: MessagePartBlock, blockIndex: number) {
+	    Column() {
+	      ForEach(block.parts, (part: MessagePart, index: number) => {
+	        if (part.kind === MessagePartKind.TEXT && part.text.trim() !== '') {
+	          this.PartTextContent(part.text, blockIndex, index)
+	        }
+	      }, (part: MessagePart, index: number) => {
+	        return part.kind + '_' + blockIndex.toString() + '_' + index.toString()
+	      })
+	    }
+	    .width('100%')
+	    .margin({ bottom: 8 })
+	  }
+
+	  @Builder
+	  PartTextContent(content: string, blockIndex: number, partIndex: number) {
+	    Column() {
+	      if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(content)) {
+	        ForEach(this.splitContentToSegments(content),
+	          (segment: ContentSegment, index: number) => {
+	            if (segment.type === ContentSegmentType.HTML) {
+	              HtmlPreviewCard({
+	                htmlCode: segment.renderContent,
+	                onCopyCode: (code: string) => {
+	                  this.copyToClipboard(code)
+	                  showToast(this.getUIContext(), $r('app.string.copy_success'))
+	                }
+	              })
+	            } else if (segment.type === ContentSegmentType.MERMAID) {
+	              MermaidPreviewCard({
+	                mermaidCode: segment.renderContent,
+	                onCopyCode: (code: string) => {
+	                  this.copyToClipboard(code)
+	                  showToast(this.getUIContext(), $r('app.string.copy_success'))
+	                }
+	              })
+		            } else {
+		              Markdown({
+		                controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
+		                text: segment.renderContent
+		              })
+	                .width('100%')
+	                .backgroundColor(Color.Transparent)
+	            }
+	          },
+	          (segment: ContentSegment, index: number) => {
+	            return 'part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
+	              segment.type + '_' + index.toString()
+	          }
+	        )
+		      } else {
+		        Markdown({
+		          controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.convertTaskListToReadonly(content)),
+		          text: this.convertTaskListToReadonly(content)
+		        })
+	          .width('100%')
+	          .backgroundColor(Color.Transparent)
+	          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+	      }
+	    }
+	    .width('100%')
+	  }
+
+	  // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
+	  // 为了最小改动,这里不复用 ChainOfThought 组件,直接在 MessageBubble 里内联 Row/Column。
+	  @Builder
+	  PartsTimeline() {
+	    this.PartsTimelineBlock(this.getThinkingSteps())
+	  }
+
+	  @Builder
+	  PartsTimelineBlock(steps: MessagePart[]) {
+	    Column() {
+	      Stack({ alignContent: Alignment.TopStart }) {
+	        // 竖线 (主题色 alpha, 在 timeline 底色上可见)
+	        Column() {
+	          ForEach(steps, (step: MessagePart, index: number) => {
+	            this.TimelineStepRow(step, index < steps.length - 1)
+	          }, (step: MessagePart, index: number) => {
+	            return step.kind === MessagePartKind.TOOL
+	              ? `tool_${step.toolCallId}_${index}`
+              : `reasoning_${step.reasoningCreatedAt}_${index}`
+          })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
     .width('100%')
-    .padding(10)
-    .backgroundColor($r('app.color.divider'))
-    .borderRadius(10)
+    .padding(12)
+    .backgroundColor(this.getTimelineBackgroundColor())
+    .borderRadius(12)
     .margin({ bottom: 8 })
   }
 
-  private shouldShowTimelineToggle(): boolean {
-    return this.getThinkingSteps().length > 2
-  }
+  // 单条 timeline step 行: 左图标 + 右内容
+  @Builder
+  TimelineStepRow(step: MessagePart, hasNextStep: boolean) {
+    Row({ space: 10 }) {
+      Column() {
+        Stack() {
+          Column()
+            .width(22)
+            .height(22)
+            .borderRadius(11)
+            .backgroundColor(this.getTimelineBackgroundColor())
+          if (step.kind === MessagePartKind.REASONING) {
+            SymbolGlyph($r('sys.symbol.lightbulb'))
+              .fontSize(14)
+              .fontColor([this.themePrimary])
+          } else {
+            SymbolGlyph(resolveToolSymbol(step.toolName))
+              .fontSize(14)
+              .fontColor([$r('app.color.text_secondary')])
+          }
+        }
+        .width(24)
+        .height(24)
 
-  private getTimelineToggleLabel(): string {
-    const total = this.getThinkingSteps().length
-    const hidden = total - 2
-    return this.timelineCollapsed ? `再显示 ${hidden} 步` : '收起'
-  }
+        if (hasNextStep) {
+          Column()
+            .width(1.5)
+            .height(12)
+            .backgroundColor(this.getTimelineRailColor())
+            .margin({ top: 2 })
+        }
+      }
+      .width(24)
+      .alignItems(HorizontalAlign.Center)
 
-  private getVisibleThinkingSteps(): MessagePart[] {
-    const all = this.getThinkingSteps()
-    if (!this.timelineCollapsed || all.length <= 2) {
-      return all
+      Column() {
+        if (step.kind === MessagePartKind.REASONING) {
+          this.ReasoningStepContent(step)
+        } else {
+          this.ToolStepContent(step)
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
     }
-    // 只保留最后 2 步(rikkahub 同款:生成结束后用户先看到最终工具/推理,再自行展开历史)
-    return all.slice(all.length - 2)
+    .width('100%')
+    .padding({ top: 6, bottom: 6 })
+  }
+
+  // reasoning step 内容: 标题行(可点击 toggle) + 正文 (展开时用 Markdown 渲染)
+  @Builder
+  ReasoningStepContent(step: MessagePart) {
+    Column() {
+      Row({ space: 6 }) {
+        Text(this.buildReasoningStepLabel(step))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.isActiveReasoningPart(step) ? this.themePrimary : $r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(12)
+          .fontColor([$r('app.color.text_secondary')])
+          .rotate({ angle: this.isReasoningStepExpanded(step) ? 0 : -90 })
+      }
+      .width('100%')
+      .onClick(() => {
+        this.toggleReasoningStep(step)
+      })
+
+      if (this.isReasoningStepExpanded(step) && step.text.length > 0) {
+        Column() {
+          Markdown({
+            controller: this.reasoningMarkdownController,
+            text: this.convertTaskListToReadonly(step.text)
+          })
+            .constraintSize({ maxWidth: '100%' })
+            .backgroundColor(Color.Transparent)
+        }
+        .width('100%')
+        .margin({ top: 6 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // tool step 内容: 状态徽标在左, 标题中间(允许换行), 右侧 chevron 暗示可点
+  @Builder
+  ToolStepContent(step: MessagePart) {
+    if (isAskUserFunctionName(step.toolName)) {
+      this.AskUserStepContent(step)
+    } else {
+    Row({ space: 6 }) {
+      if (step.toolStatus === 'succeeded') {
+        SymbolGlyph($r('sys.symbol.checkmark_circle'))
+          .fontSize(13)
+          .fontColor([$r('app.color.status_success')])
+      } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
+        SymbolGlyph($r('sys.symbol.xmark_circle'))
+          .fontSize(13)
+          .fontColor([$r('app.color.status_error')])
+      } else if (step.toolStatus === 'pending') {
+        if (step.toolPermissionLevel === ToolPermissionLevel.WRITE) {
+          Text('待授权')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor(this.themePrimary)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(6)
+        } else {
+          Column()
+            .width(8)
+            .height(8)
+            .borderRadius(4)
+            .backgroundColor(this.themePrimary)
+        }
+      } else if (step.toolStatus === 'running') {
+        Column()
+          .width(8)
+          .height(8)
+          .borderRadius(4)
+          .backgroundColor(this.themePrimary)
+      }
+
+      Text(this.buildToolStepTitle(step))
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .layoutWeight(1)
+
+      if (this.isToolStepClickable(step)) {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([$r('app.color.text_tertiary')])
+      }
+    }
+    .width('100%')
+    .onClick(() => {
+      if (this.isToolStepClickable(step)) {
+        this.handleToolStepClick(step)
+      }
+    })
+    }
+  }
+
+  @Builder
+  AskUserStepContent(step: MessagePart) {
+    Column() {
+      Row({ space: 6 }) {
+        if (this.isAskUserStepAnswered(step)) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+            .fontSize(13)
+            .fontColor([$r('app.color.status_success')])
+        } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
+          SymbolGlyph($r('sys.symbol.xmark_circle'))
+            .fontSize(13)
+            .fontColor([$r('app.color.status_error')])
+        } else {
+          Column()
+            .width(8)
+            .height(8)
+            .borderRadius(4)
+            .backgroundColor(this.themePrimary)
+        }
+
+        Text(this.buildToolStepTitle(step))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Text(this.buildAskUserStepStatusText(step))
+          .fontSize(10)
+          .fontColor(this.isAskUserStepAnswered(step) ? $r('app.color.status_success') : $r('app.color.text_secondary'))
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderRadius(6)
+          .backgroundColor($r('app.color.surface'))
+
+        if (this.hasAskUserStepContent(step)) {
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(12)
+            .fontColor([$r('app.color.text_tertiary')])
+            .rotate({ angle: this.isToolStepExpanded(step) ? 0 : -90 })
+        }
+      }
+      .width('100%')
+      .onClick(() => {
+        if (this.hasAskUserStepContent(step)) {
+          this.toggleToolStep(step)
+        }
+      })
+
+      if (this.hasAskUserStepContent(step) && this.isToolStepExpanded(step)) {
+        Column({ space: 8 }) {
+          ForEach(this.buildAskUserAnswerViews(step), (item: AskUserTimelineAnswer, index: number) => {
+            this.AskUserAnswerDetailItem(item, index)
+          }, (item: AskUserTimelineAnswer, index: number) => `${item.id}_${index}`)
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4, top: 8, bottom: 2 })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  AskUserAnswerDetailItem(item: AskUserTimelineAnswer, index: number) {
+    Column({ space: 6 }) {
+      Text(item.question !== '' ? item.question : `问题 ${index + 1}`)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+
+      Text(item.answer !== '' ? item.answer : (item.skipped ? '已跳过' : '等待回答'))
+        .fontSize(12)
+        .fontColor(item.answer !== '' ? $r('app.color.text_secondary') : $r('app.color.text_tertiary'))
+        .lineHeight(18)
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .borderRadius(8)
+    .backgroundColor($r('app.color.surface'))
+  }
+
+  // tool step 点击后弹出的 sheet: 列出本次调用的 references (或老消息聚合 references 兜底)
+  @Builder
+  ToolDetailSheetBuilder() {
+    Column() {
+      // 头部
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(14)
+          .fontColor([this.themePrimary])
+        Text(this.toolDetailTitle)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+      if (this.toolDetailQuery !== '' || this.toolDetailEngine !== '') {
+        Row({ space: 6 }) {
+          if (this.toolDetailEngine !== '') {
+            Text(this.toolDetailEngine)
+              .fontSize(11)
+              .fontColor($r('app.color.text_secondary'))
+              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+              .borderRadius(6)
+              .backgroundColor($r('app.color.divider'))
+          }
+          if (this.toolDetailQuery !== '') {
+            Text(this.toolDetailQuery)
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
+              .layoutWeight(1)
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 10 })
+      }
+
+      // 列表
+      Scroll() {
+        Column() {
+          ForEach(this.toolDetailRefs, (ref: SearchReference, index: number) => {
+            this.ToolDetailRefItem(ref, index + 1)
+          }, (ref: SearchReference, index: number) => `${ref.id}_${index}`)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 20 })
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.background'))
+  }
+
+  @Builder
+  ToolDetailRefItem(ref: SearchReference, index: number) {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text(`${index}`)
+          .fontSize(11)
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .width(20)
+          .height(20)
+          .textAlign(TextAlign.Center)
+          .borderRadius(10)
+          .backgroundColor($r('app.color.text_secondary'))
+        Text(ref.title)
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+      }
+      .width('100%')
+
+      if (ref.snippet !== '') {
+        Text(ref.snippet)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .lineHeight(18)
+          .margin({ left: 28 })
+      }
+
+      Text(ref.url)
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ left: 28 })
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .borderRadius(14)
+    .margin({ bottom: 8 })
+    .border({ width: 0.5, color: $r('app.color.divider') })
+    .stateStyles({
+      normal: {
+        .backgroundColor($r('app.color.surface'))
+      },
+      pressed: {
+        .backgroundColor($r('app.color.divider'))
+      }
+    })
+    .onClick(() => {
+      this.showToolDetailSheet = false
+      this.onOpenLink(ref.title, ref.url)
+    })
   }
 
   private buildToolStepTitle(part: MessagePart): string {

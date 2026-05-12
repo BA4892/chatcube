@@ -54,6 +54,14 @@ export class PreferenceKeys {
   static readonly SEARCH_TAVILY_BASE_URL: string = 'search_tavily_base_url'
   static readonly SEARCH_EXA_API_KEY: string = 'search_exa_api_key'
   static readonly SEARCH_EXA_BASE_URL: string = 'search_exa_base_url'
+  // 内置工具开关 key 前缀: "builtin_tool_enabled_${toolId}"。
+  // 不把每个工具 id 都写成静态常量, 方便后续新增工具时无需再改 PreferenceKeys。
+  static readonly BUILTIN_TOOL_ENABLED_PREFIX: string = 'builtin_tool_enabled_'
+
+  // 生成指定 builtin tool id 对应的偏好 key
+  static builtinToolEnabledKey(toolId: string): string {
+    return PreferenceKeys.BUILTIN_TOOL_ENABLED_PREFIX + toolId
+  }
   static readonly MCP_SERVER_CONFIGS_JSON: string = 'mcp_server_configs_json'
   static readonly CHAT_SELECTED_TOOL_IDS_JSON: string = 'chat_selected_tool_ids_json'
   static readonly CHAT_REASONING_LEVEL: string = 'chat_reasoning_level'

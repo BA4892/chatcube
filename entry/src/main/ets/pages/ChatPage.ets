@@ -189,6 +189,9 @@ export struct ChatPage {
   // 搜索取消标志（用于取消正在进行的联网查询）
   private isSearchCancelled: boolean = false
   private pendingToolExecutionApprovalResolver: ((approved: boolean) => void) | null = null
+  // ask_user 待答复 resolver: key=toolCallId, value=resolve(answerJson | null)
+  // 流程: ToolExecutionService.handleAskUser → answerCallback → 存入 Map → AskUserCard.onAnswer → resolve
+  private pendingAskUserResolvers: Map<string, (answer: string | null) => void> = new Map()
   // 联网查询全局可用状态（工具中心控制）
   @Local webSearchAvailable: boolean = false
   @Local webSearchConversationEnabled: boolean = false
@@ -355,6 +358,17 @@ export struct ChatPage {
     ServiceRegistry.toolExecution().setApprovalCallback(async (toolCall, tool) => {
       return await this.requestToolExecutionApproval(tool.config.name, tool.config.sourceLabel, toolCall.arguments)
     })
+    // ask_user 答复回调: 把 pending toolCall 注入到 Map, 由 AskUserCard.onAnswer → handleAskUserAnswer 恢复
+    ServiceRegistry.toolExecution().setAnswerCallback(async (toolCall) => {
+      return await new Promise<string | null>((resolve) => {
+        // 理论上不会冲突, 保底 reject 已存在的 pending
+        const previous = this.pendingAskUserResolvers.get(toolCall.id)
+        if (previous !== undefined) {
+          previous(null)
+        }
+        this.pendingAskUserResolvers.set(toolCall.id, resolve)
+      })
+    })
 
     // 设置标题生成回调
     const titleCallbacks: TitleGenerationCallbacks = {
@@ -471,6 +485,10 @@ export struct ChatPage {
   aboutToDisappear(): void {
     this.isPageVisible = false
     ServiceRegistry.toolExecution().setApprovalCallback(null)
+    // 页面销毁时 reject 所有待答复的 ask_user, 避免 ChatViewModel 永挂
+    this.pendingAskUserResolvers.forEach((resolve) => resolve(null))
+    this.pendingAskUserResolvers.clear()
+    ServiceRegistry.toolExecution().setAnswerCallback(null)
     // 释放TTS资源
     this.ttsService.destroy()
     this.clearInitialBottomAlignmentRetries()
@@ -1064,6 +1082,21 @@ export struct ChatPage {
       if (searchTool !== undefined) {
         searchTool.config.enabled = webSearchAvailable
       }
+    }
+    // 非搜索内置工具开关同步: 设置页和聊天页共享同一份 pref, 保证任意一侧修改对方刷新都看得到
+    const allRegisteredTools = this.toolRegistry.getAllRegisteredTools()
+    for (let i = 0; i < allRegisteredTools.length; i++) {
+      const tool = allRegisteredTools[i]
+      if (tool.config.sourceType !== ToolSourceType.BUILTIN) {
+        continue
+      }
+      if (isSearchToolId(tool.id)) {
+        continue
+      }
+      tool.config.enabled = await this.preferencesService.getBoolean(
+        PreferenceKeys.builtinToolEnabledKey(tool.id),
+        tool.config.enabled
+      )
     }
     this.rebuildAvailableChatTools()
     const enabledMcpServerIds = await this.loadEnabledMcpServerIds()
@@ -2099,6 +2132,9 @@ export struct ChatPage {
           },
           onEnterMultiSelect: (messageId: string): void => {
             this.handleEnterMultiSelectMode(messageId)
+          },
+          onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
+            this.handleAskUserAnswer(toolCallId, answerJson)
           },
           onListAppear: (): void => {
             this.handleListAppear()
@@ -3176,6 +3212,17 @@ export struct ChatPage {
     if (resolver !== null) {
       resolver(approved)
     }
+  }
+
+  // AskUserCard 提交回调: 把答案 JSON 喂给 ToolExecutionService.handleAskUser 的 await
+  handleAskUserAnswer(toolCallId: string, answerJson: string): void {
+    const resolver = this.pendingAskUserResolvers.get(toolCallId)
+    if (resolver === undefined) {
+      console.warn('ChatPage', `handleAskUserAnswer: no pending resolver for ${toolCallId}`)
+      return
+    }
+    this.pendingAskUserResolvers.delete(toolCallId)
+    resolver(answerJson)
   }
 
   private handleToolExecutionApprovalSheetDisappear(): void {

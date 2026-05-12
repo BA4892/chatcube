@@ -35,6 +35,7 @@ import {
 } from '../utils/SearchQueryUtils'
 import {
   isScrapeWebFunctionName,
+  isAskUserFunctionName,
   isSearchToolFunctionName
 } from '../utils/SearchToolIdentityUtils'
 
@@ -445,6 +446,84 @@ export class ChatViewModel {
     aiMessage.parts = aiMessage.parts.concat([part])
   }
 
+  private mergeToolFunctionNameFragment(previousName: string, incomingName: string): string {
+    const prev = previousName.trim()
+    const next = incomingName.trim()
+    if (next === '') {
+      return prev
+    }
+    if (prev === '') {
+      return next
+    }
+    if (next.startsWith(prev)) {
+      return next
+    }
+    if (prev.endsWith(next)) {
+      return prev
+    }
+    return prev + next
+  }
+
+  private mergeToolArgumentsFragment(previousArgs: string, incomingArgs: string): string {
+    if (incomingArgs === '') {
+      return previousArgs
+    }
+    if (previousArgs === '') {
+      return incomingArgs
+    }
+    // OpenAI Responses 的 arguments.done 会给完整参数；普通 Chat Completions 给增量片段。
+    if (incomingArgs.startsWith(previousArgs)) {
+      return incomingArgs
+    }
+    return previousArgs + incomingArgs
+  }
+
+  private applyToolCallDelta(toolCall: ToolCall, delta: ToolCallDelta): void {
+    const incomingId = delta.id !== undefined ? delta.id.trim() : ''
+    if (incomingId !== '') {
+      toolCall.id = incomingId
+    }
+
+    const incomingName = delta.functionName !== undefined ? delta.functionName.trim() : ''
+    if (incomingName !== '') {
+      const previousName = toolCall.functionName
+      const mergedName = this.mergeToolFunctionNameFragment(previousName, incomingName)
+      toolCall.functionName = mergedName
+      if (toolCall.toolId === '' || toolCall.toolId === previousName) {
+        toolCall.toolId = mergedName
+      }
+      if (toolCall.displayName === '' || toolCall.displayName === previousName) {
+        toolCall.displayName = mergedName
+      }
+    }
+
+    const incomingArgs = delta.arguments !== undefined ? delta.arguments : ''
+    if (incomingArgs !== '') {
+      toolCall.arguments = this.mergeToolArgumentsFragment(toolCall.arguments, incomingArgs)
+    }
+  }
+
+  private syncToolPartFromToolCall(part: MessagePart, toolCall: ToolCall): void {
+    part.toolCallId = toolCall.id
+    part.toolName = toolCall.functionName
+    part.toolDisplayName = toolCall.displayName
+    part.toolArguments = toolCall.arguments
+    part.toolSourceType = toolCall.sourceType
+    part.toolSourceLabel = toolCall.sourceLabel
+    part.toolPermissionLevel = toolCall.permissionLevel
+    part.toolApprovalReason = toolCall.approvalReason
+  }
+
+  private syncToolPartByCall(aiMessage: ChatMessage, toolCall: ToolCall): void {
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const part = aiMessage.parts[i]
+      if (part.kind === MessagePartKind.TOOL && part.toolCallId === toolCall.id) {
+        this.syncToolPartFromToolCall(part, toolCall)
+        return
+      }
+    }
+  }
+
   // 工具结果到达时, 按 toolCallId 回写到对应 ToolPart
   private attachToolResultPart(aiMessage: ChatMessage, result: ToolResult): void {
     for (let i = 0; i < aiMessage.parts.length; i++) {
@@ -452,7 +531,8 @@ export class ChatViewModel {
       if (p.kind === MessagePartKind.TOOL && p.toolCallId === result.toolCallId) {
         p.toolResult = result.content
         p.toolIsError = result.isError
-        p.toolStatus = result.isError ? ToolPartStatus.FAILED : ToolPartStatus.SUCCEEDED
+        p.toolStatus = result.isError ? ToolPartStatus.FAILED :
+          (isAskUserFunctionName(p.toolName) ? ToolPartStatus.ANSWERED : ToolPartStatus.SUCCEEDED)
         return
       }
     }
@@ -478,17 +558,158 @@ export class ChatViewModel {
     }
   }
 
-  private buildConversationRequestHistory(messages: ChatMessage[], contextStartIndex: number): RequestMessage[] {
+  private appendStreamedContent(
+    aiMessage: ChatMessage,
+    content: string,
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    if (content === '') {
+      return
+    }
+    aiMessage.content += content
+    this.pushPartText(aiMessage, content)
+    onAIMessageUpdated(aiMessage)
+  }
+
+  private appendStreamedReasoning(
+    aiMessage: ChatMessage,
+    reasoning: string,
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    if (reasoning === '') {
+      return
+    }
+    aiMessage.reasoningContent += reasoning
+    this.pushPartReasoning(aiMessage, reasoning)
+    onAIMessageUpdated(aiMessage)
+  }
+
+  private flushPendingReasoningBeforeContent(
+    localReasoningThrottle: ThrottleUtil,
+    shouldSkip: () => boolean,
+    aiMessage: ChatMessage,
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    localReasoningThrottle.flush((throttledReasoning: string) => {
+      if (shouldSkip()) {
+        return
+      }
+      this.appendStreamedReasoning(aiMessage, throttledReasoning, onAIMessageUpdated)
+    })
+  }
+
+  private appendFlatRequestHistoryMessage(historyMessages: RequestMessage[], msg: ChatMessage): void {
+    const requestMessage = new RequestMessage(msg.role, msg.content, this.cloneAttachments(msg.attachments))
+    requestMessage.reasoningContent = msg.reasoningContent
+    requestMessage.reasoningSignatureBlob = msg.reasoningSignatureBlob
+    historyMessages.push(requestMessage)
+  }
+
+  private hasCompletedToolPart(parts: MessagePart[]): boolean {
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (part.kind === MessagePartKind.TOOL && part.toolCallId !== '' && part.toolName !== '' && part.toolResult !== '') {
+        return true
+      }
+    }
+    return false
+  }
+
+  private buildToolCallFromPart(part: MessagePart): ToolCall {
+    const toolCall = new ToolCall(
+      part.toolCallId,
+      part.toolName,
+      part.toolArguments,
+      part.toolName,
+      part.toolDisplayName,
+      part.toolSourceType,
+      part.toolSourceLabel,
+      part.toolPermissionLevel
+    )
+    toolCall.approvalReason = part.toolApprovalReason
+    return toolCall
+  }
+
+  private appendPartsRequestHistory(historyMessages: RequestMessage[], msg: ChatMessage): boolean {
+    if (msg.role !== MessageRole.ASSISTANT || msg.parts.length === 0 || !this.hasCompletedToolPart(msg.parts)) {
+      return false
+    }
+
+    let contentBuffer = ''
+    let reasoningBuffer = ''
+    let pendingToolParts: MessagePart[] = []
+
+    const flushToolGroup = (): void => {
+      if (pendingToolParts.length === 0) {
+        return
+      }
+
+      const toolCalls: ToolCall[] = []
+      for (let i = 0; i < pendingToolParts.length; i++) {
+        toolCalls.push(this.buildToolCallFromPart(pendingToolParts[i]))
+      }
+
+      const assistantMsg = RequestMessage.createAssistantWithToolCalls(contentBuffer, toolCalls)
+      assistantMsg.reasoningContent = reasoningBuffer
+      historyMessages.push(assistantMsg)
+
+      for (let i = 0; i < pendingToolParts.length; i++) {
+        const part = pendingToolParts[i]
+        historyMessages.push(RequestMessage.createToolResultMessage(part.toolCallId, part.toolResult))
+      }
+
+      contentBuffer = ''
+      reasoningBuffer = ''
+      pendingToolParts = []
+    }
+
+    for (let i = 0; i < msg.parts.length; i++) {
+      const part = msg.parts[i]
+      if (part.kind === MessagePartKind.TOOL) {
+        if (part.toolCallId !== '' && part.toolName !== '' && part.toolResult !== '') {
+          pendingToolParts.push(part)
+        }
+        continue
+      }
+
+      if (pendingToolParts.length > 0) {
+        flushToolGroup()
+      }
+
+      if (part.kind === MessagePartKind.TEXT) {
+        contentBuffer += part.text
+      } else if (part.kind === MessagePartKind.REASONING) {
+        reasoningBuffer += part.text
+      }
+    }
+
+    flushToolGroup()
+
+    if (contentBuffer !== '' || reasoningBuffer !== '') {
+      const finalAssistantMsg = new RequestMessage(MessageRole.ASSISTANT, contentBuffer)
+      finalAssistantMsg.reasoningContent = reasoningBuffer
+      finalAssistantMsg.reasoningSignatureBlob = msg.reasoningSignatureBlob
+      historyMessages.push(finalAssistantMsg)
+    }
+
+    return true
+  }
+
+  private buildConversationRequestHistory(
+    messages: ChatMessage[],
+    contextStartIndex: number,
+    preserveToolPartOrder: boolean = false
+  ): RequestMessage[] {
     const historyMessages: RequestMessage[] = []
     for (let i = contextStartIndex; i < messages.length; i++) {
       const msg = messages[i]
       if (msg.role === MessageRole.SYSTEM) {
         continue
       }
-      const requestMessage = new RequestMessage(msg.role, msg.content, this.cloneAttachments(msg.attachments))
-      requestMessage.reasoningContent = msg.reasoningContent
-      requestMessage.reasoningSignatureBlob = msg.reasoningSignatureBlob
-      historyMessages.push(requestMessage)
+      if (preserveToolPartOrder && this.appendPartsRequestHistory(historyMessages, msg)) {
+        continue
+      }
+      this.appendFlatRequestHistoryMessage(historyMessages, msg)
     }
     return historyMessages
   }
@@ -856,9 +1077,13 @@ export class ChatViewModel {
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
             hasReceivedFirstChunk = true
           })
         } else {
@@ -866,9 +1091,13 @@ export class ChatViewModel {
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           })
         }
       },
@@ -877,35 +1106,35 @@ export class ChatViewModel {
           return
         }
         // 刷新节流器
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
 
         this.fillEmptyAIContentPlaceholder(aiMessage)
@@ -929,35 +1158,35 @@ export class ChatViewModel {
         if (cancelled) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
@@ -982,9 +1211,7 @@ export class ChatViewModel {
           if (cancelled) {
             return
           }
-          aiMessage.reasoningContent += throttledContent
-          this.pushPartReasoning(aiMessage, throttledContent)
-          onAIMessageUpdated(aiMessage)
+          this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
       async (base64Data: string, mimeType: string) => {
@@ -1157,9 +1384,13 @@ ${webContext.content}
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
             hasReceivedFirstChunk = true
           })
         } else {
@@ -1167,9 +1398,13 @@ ${webContext.content}
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           })
         }
       },
@@ -1177,35 +1412,35 @@ ${webContext.content}
         if (cancelled) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
@@ -1226,35 +1461,35 @@ ${webContext.content}
         if (cancelled) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
@@ -1279,9 +1514,7 @@ ${webContext.content}
           if (cancelled) {
             return
           }
-          aiMessage.reasoningContent += throttledContent
-          this.pushPartReasoning(aiMessage, throttledContent)
-          onAIMessageUpdated(aiMessage)
+          this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
       async (base64Data: string, mimeType: string) => {
@@ -1485,9 +1718,13 @@ ${limitedSearchContext}
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
             hasReceivedFirstChunk = true
           })
         } else {
@@ -1495,9 +1732,13 @@ ${limitedSearchContext}
             if (cancelled) {
               return
             }
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           })
         }
       },
@@ -1505,35 +1746,35 @@ ${limitedSearchContext}
         if (cancelled) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
@@ -1554,35 +1795,35 @@ ${limitedSearchContext}
         if (cancelled) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (cancelled) {
-            return
-          }
-          if (throttledReasoning !== '') {
-            aiMessage.reasoningContent += throttledReasoning
-            this.pushPartReasoning(aiMessage, throttledReasoning)
-            onAIMessageUpdated(aiMessage)
-          }
-        })
+        this.flushPendingReasoningBeforeContent(
+          localReasoningThrottle,
+          () => cancelled,
+          aiMessage,
+          onAIMessageUpdated
+        )
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (cancelled) {
             return
           }
-          if (throttledContent !== '') {
-            aiMessage.content += throttledContent
-            this.pushPartText(aiMessage, throttledContent)
-            onAIMessageUpdated(aiMessage)
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
+        })
+        localContentThrottle.flush((throttledContent: string) => {
+          if (cancelled) {
+            return
           }
+          this.flushPendingReasoningBeforeContent(
+            localReasoningThrottle,
+            () => cancelled,
+            aiMessage,
+            onAIMessageUpdated
+          )
+          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
@@ -1607,9 +1848,7 @@ ${limitedSearchContext}
           if (cancelled) {
             return
           }
-          aiMessage.reasoningContent += throttledContent
-          this.pushPartReasoning(aiMessage, throttledContent)
-          onAIMessageUpdated(aiMessage)
+          this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
       async (base64Data: string, mimeType: string) => {
@@ -1680,7 +1919,7 @@ ${limitedSearchContext}
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
     const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
-    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex)
+    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex, true)
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1963,82 +2202,101 @@ ${limitedSearchContext}
     }
 
     console.info('ChatViewModel', `Tool step ${toolStepIndex + 1}`)
-    let roundContentBuffer = ''
-    let roundReasoningBuffer = ''
+    let toolContinuationContent = ''
     let toolContinuationReasoningContent = ''
     let roundHasToolCallDelta = false
     let streamedContentLength = 0
     let streamedReasoningLength = 0
-
-    const rollbackStreamedRoundOutput = (): void => {
-      if (streamedContentLength > 0 && aiMessage.content.length >= streamedContentLength) {
-        aiMessage.content = aiMessage.content.substring(0, aiMessage.content.length - streamedContentLength)
-        streamedContentLength = 0
-      }
-      if (streamedReasoningLength > 0 && aiMessage.reasoningContent.length >= streamedReasoningLength) {
-        aiMessage.reasoningContent = aiMessage.reasoningContent.substring(
-          0,
-          aiMessage.reasoningContent.length - streamedReasoningLength
-        )
-        streamedReasoningLength = 0
-      }
-    }
+    const roundStreamingToolCalls: Map<number, ToolCall> = new Map()
+    const roundToolPartIndexes: Map<number, number> = new Map()
 
     const markCurrentRoundAsToolCall = (): void => {
       if (roundHasToolCallDelta) {
         return
       }
       roundHasToolCallDelta = true
+      if (streamedContentLength > 0 && aiMessage.content.length >= streamedContentLength) {
+        toolContinuationContent = aiMessage.content.substring(aiMessage.content.length - streamedContentLength)
+      }
       if (streamedReasoningLength > 0 && aiMessage.reasoningContent.length >= streamedReasoningLength) {
         toolContinuationReasoningContent = aiMessage.reasoningContent.substring(
           aiMessage.reasoningContent.length - streamedReasoningLength
         )
       }
-      rollbackStreamedRoundOutput()
+      this.finishTrailingReasoningPart(aiMessage)
       onAIMessageUpdated(aiMessage)
     }
 
-    const appendRoundContent = (content: string): void => {
-      if (content === '') {
-        return
+    const upsertRoundToolPart = (delta: ToolCallDelta): void => {
+      let toolCall = roundStreamingToolCalls.get(delta.index)
+      if (toolCall === undefined) {
+        toolCall = new ToolCall('', '', '')
+        roundStreamingToolCalls.set(delta.index, toolCall)
       }
-      if (roundHasToolCallDelta) {
-        roundContentBuffer += content
-        return
+      this.applyToolCallDelta(toolCall, delta)
+
+      const existingPartIndex = roundToolPartIndexes.get(delta.index)
+      if (existingPartIndex !== undefined && existingPartIndex >= 0 && existingPartIndex < aiMessage.parts.length) {
+        const existingPart = aiMessage.parts[existingPartIndex]
+        if (existingPart.kind === MessagePartKind.TOOL) {
+          this.syncToolPartFromToolCall(existingPart, toolCall)
+          return
+        }
       }
-      aiMessage.content += content
-      this.pushPartText(aiMessage, content)
-      streamedContentLength += content.length
-      onAIMessageUpdated(aiMessage)
+
+      this.finishTrailingReasoningPart(aiMessage)
+      const part = createToolPart(toolCall, null)
+      aiMessage.parts = aiMessage.parts.concat([part])
+      roundToolPartIndexes.set(delta.index, aiMessage.parts.length - 1)
     }
 
     const appendRoundReasoning = (content: string): void => {
       if (content === '') {
         return
       }
-      if (roundHasToolCallDelta) {
-        roundReasoningBuffer += content
-        return
-      }
       aiMessage.reasoningContent += content
       this.pushPartReasoning(aiMessage, content)
-      streamedReasoningLength += content.length
+      if (!roundHasToolCallDelta) {
+        streamedReasoningLength += content.length
+      }
       onAIMessageUpdated(aiMessage)
     }
 
-    const flushBufferedRoundOutput = (): void => {
-      // 注意顺序: reasoning 先 flush, 避免 text 先 push 时触发 finishTrailingReasoningPart
-      // 把同轮真正连续的 reasoning 切成多个 part
-      if (roundReasoningBuffer !== '') {
-        aiMessage.reasoningContent += roundReasoningBuffer
-        this.pushPartReasoning(aiMessage, roundReasoningBuffer)
-        roundReasoningBuffer = ''
+    const flushPendingRoundReasoning = (): void => {
+      localReasoningThrottle.flush((throttledReasoning: string) => {
+        if (isCancelledFn()) {
+          return
+        }
+        appendRoundReasoning(throttledReasoning)
+      })
+    }
+
+    const flushPendingRoundContent = (): void => {
+      localFirstChunkThrottle.flush((throttledContent: string) => {
+        if (isCancelledFn()) {
+          return
+        }
+        appendRoundContent(throttledContent)
+      })
+      localContentThrottle.flush((throttledContent: string) => {
+        if (isCancelledFn()) {
+          return
+        }
+        appendRoundContent(throttledContent)
+      })
+    }
+
+    const appendRoundContent = (content: string): void => {
+      if (content === '') {
+        return
       }
-      if (roundContentBuffer !== '') {
-        aiMessage.content += roundContentBuffer
-        this.pushPartText(aiMessage, roundContentBuffer)
-        roundContentBuffer = ''
+      flushPendingRoundReasoning()
+      aiMessage.content += content
+      this.pushPartText(aiMessage, content)
+      if (!roundHasToolCallDelta) {
+        streamedContentLength += content.length
       }
+      onAIMessageUpdated(aiMessage)
     }
 
     // 检查是否已取消
@@ -2084,24 +2342,8 @@ ${limitedSearchContext}
           return
         }
         // 刷新节流器
-        localContentThrottle.flush((throttledContent: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundContent(throttledContent)
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundReasoning(throttledReasoning)
-        })
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundContent(throttledContent)
-        })
+        flushPendingRoundReasoning()
+        flushPendingRoundContent()
         setHasReceivedFirstChunk(false)
 
         // 检查是否有工具调用
@@ -2110,11 +2352,7 @@ ${limitedSearchContext}
           const latestUserQuery = this.getLatestUserQueryFromRequestMessages(requestMessages)
           markCurrentRoundAsToolCall()
 
-          // tools 回合的正文是中间态，不应展示成一条正式回答。
-          roundContentBuffer = ''
-          roundReasoningBuffer = ''
-
-          // 保存工具调用到 AI 消息
+          // 保存工具调用到 AI 消息，并把最终 id/name/arguments 同步回 delta 阶段创建的 ToolPart。
           for (let i = 0; i < toolCalls.length; i++) {
             if (this.isWebSearchFunction(toolCalls[i].functionName)) {
               const normalizedSearchQuery = this.normalizeSearchToolCallArguments(toolCalls[i], latestUserQuery)
@@ -2124,7 +2362,29 @@ ${limitedSearchContext}
               }
             }
             aiMessage.toolCalls.push(toolCalls[i])
-            this.pushToolPart(aiMessage, toolCalls[i])
+
+            let synced = false
+            const partIndex = roundToolPartIndexes.get(i)
+            if (partIndex !== undefined && partIndex >= 0 && partIndex < aiMessage.parts.length) {
+              const part = aiMessage.parts[partIndex]
+              if (part.kind === MessagePartKind.TOOL) {
+                this.syncToolPartFromToolCall(part, toolCalls[i])
+                synced = true
+              }
+            }
+            if (!synced && toolCalls[i].id !== '') {
+              for (let j = 0; j < aiMessage.parts.length; j++) {
+                const part = aiMessage.parts[j]
+                if (part.kind === MessagePartKind.TOOL && part.toolCallId === toolCalls[i].id) {
+                  this.syncToolPartFromToolCall(part, toolCalls[i])
+                  synced = true
+                  break
+                }
+              }
+            }
+            if (!synced) {
+              this.pushToolPart(aiMessage, toolCalls[i])
+            }
           }
           onAIMessageUpdated(aiMessage)
 
@@ -2171,6 +2431,9 @@ ${limitedSearchContext}
           }
 
           // 保存工具结果到 AI 消息
+          for (let i = 0; i < toolCalls.length; i++) {
+            this.syncToolPartByCall(aiMessage, toolCalls[i])
+          }
           for (let i = 0; i < toolResults.length; i++) {
             aiMessage.toolResults.push(toolResults[i])
             this.attachToolResultPart(aiMessage, toolResults[i])
@@ -2215,6 +2478,9 @@ ${limitedSearchContext}
                   if (searchData.query !== undefined && searchData.query !== '') {
                     console.info('ChatViewModel', `[Function Calling] search tool result query="${searchData.query}"`)
                   }
+                  // 收集本次工具调用对应的 references,既汇入聚合列表,也按 toolCallId 切片塞回到对应 part,
+                  // 让 timeline 里点击单条搜索 step 时能精确展示这一次的结果
+                  const refsForThisCall: SearchReference[] = []
                   for (let j = 0; j < searchData.results.length; j++) {
                     const item = searchData.results[j]
                     const ref = new SearchReference(
@@ -2224,6 +2490,16 @@ ${limitedSearchContext}
                       item.snippet
                     )
                     aiMessage.searchReferences.push(ref)
+                    refsForThisCall.push(ref)
+                  }
+                  if (refsForThisCall.length > 0) {
+                    for (let k = 0; k < aiMessage.parts.length; k++) {
+                      const p = aiMessage.parts[k]
+                      if (p.kind === MessagePartKind.TOOL && p.toolCallId === toolCalls[i].id) {
+                        p.toolSearchReferences = refsForThisCall
+                        break
+                      }
+                    }
                   }
                 }
               } catch (e) {
@@ -2241,7 +2517,7 @@ ${limitedSearchContext}
           }
 
           // 构建下一轮请求消息
-          const assistantMsg = RequestMessage.createAssistantWithToolCalls(aiMessage.content, toolCalls)
+          const assistantMsg = RequestMessage.createAssistantWithToolCalls(toolContinuationContent, toolCalls)
           assistantMsg.reasoningContent = toolContinuationReasoningContent
           requestMessages.push(assistantMsg)
 
@@ -2252,10 +2528,6 @@ ${limitedSearchContext}
             )
             requestMessages.push(toolResultMsg)
           }
-
-          // 清空 AI 消息内容，准备接收新的回复
-          aiMessage.content = ''
-          onAIMessageUpdated(aiMessage)
 
           // 继续下一轮
           await this.executeToolCallLoop(
@@ -2290,7 +2562,6 @@ ${limitedSearchContext}
             console.warn('ChatViewModel', `Ignored ${toolCalls.length} tool calls because tool round limit is reached`)
           }
           // 没有工具调用，完成
-          flushBufferedRoundOutput()
           await this.finalizeAIMessage(
             aiMessage,
             onAIMessageUpdated,
@@ -2306,25 +2577,19 @@ ${limitedSearchContext}
         if (isCancelledFn()) {
           return
         }
-        localContentThrottle.flush((throttledContent: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundContent(throttledContent)
-        })
-        localReasoningThrottle.flush((throttledReasoning: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundReasoning(throttledReasoning)
-        })
+        flushPendingRoundReasoning()
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (isCancelledFn()) {
             return
           }
           appendRoundContent(throttledContent)
         })
-        flushBufferedRoundOutput()
+        localContentThrottle.flush((throttledContent: string) => {
+          if (isCancelledFn()) {
+            return
+          }
+          appendRoundContent(throttledContent)
+        })
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
         aiMessage.isSearching = false
@@ -2370,7 +2635,13 @@ ${limitedSearchContext}
         if (isCancelledFn() || !toolsEnabledInThisRound || toolCallDeltas.length <= 0) {
           return
         }
+        flushPendingRoundReasoning()
+        flushPendingRoundContent()
         markCurrentRoundAsToolCall()
+        for (let i = 0; i < toolCallDeltas.length; i++) {
+          upsertRoundToolPart(toolCallDeltas[i])
+        }
+        onAIMessageUpdated(aiMessage)
       }
     )
 

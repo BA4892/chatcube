@@ -1,9 +1,11 @@
-import { ToolCall, ToolResult } from '../models/ChatModels'
+import { ToolCall, ToolResult, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
 import { getToolRegistry, RegisteredTool, ToolRegistry } from './ToolRegistry'
 import {
+  ASK_USER_TOOL_ID,
   LEGACY_WEB_SEARCH_TOOL_ID,
   SCRAPE_WEB_TOOL_ID,
   SEARCH_WEB_TOOL_ID,
+  isAskUserFunctionName,
   isScrapeWebFunctionName,
   isSearchWebFunctionName
 } from '../utils/SearchToolIdentityUtils'
@@ -11,6 +13,9 @@ import {
 // 取消检查回调类型
 type CancelCheckCallback = () => boolean
 type ToolApprovalCallback = (toolCall: ToolCall, tool: RegisteredTool) => Promise<boolean>
+// ask_user 答复回调: UI 层(ChatPage)等用户在 AskUserCard 里填完并提交后 resolve(answerJson),
+// 用户放弃/页面销毁时 resolve(null) 代表取消。
+type ToolAnswerCallback = (toolCall: ToolCall) => Promise<string | null>
 
 // 工具执行服务 - 负责执行工具调用
 export class ToolExecutionService {
@@ -19,6 +24,7 @@ export class ToolExecutionService {
   // 当前取消检查回调
   private cancelCheckCallback: CancelCheckCallback | null = null
   private approvalCallback: ToolApprovalCallback | null = null
+  private answerCallback: ToolAnswerCallback | null = null
 
   private constructor() {
     this.registry = getToolRegistry()
@@ -43,6 +49,12 @@ export class ToolExecutionService {
 
   setApprovalCallback(callback: ToolApprovalCallback | null): void {
     this.approvalCallback = callback
+  }
+
+  // ask_user 专用答复回调: UI 层 (ChatPage) 在这里管理 pending toolCall 的 resolver,
+  // 用户点击 AskUserCard 的 "提交" 后把 answer JSON 喂回来。
+  setAnswerCallback(callback: ToolAnswerCallback | null): void {
+    this.answerCallback = callback
   }
 
   // 检查是否已取消
@@ -115,6 +127,81 @@ export class ToolExecutionService {
     }
   }
 
+  // ask_user 特殊路径: 不走通用 executor, 挂起等待 UI 层 (AskUserCard) 的回答,
+  // 拿到 answerJson 后直接作为 ToolResult 返回; 用户取消/页面销毁则按 denied 处理。
+  private async handleAskUser(toolCall: ToolCall): Promise<ToolResult> {
+    // 用 ASK_USER_TOOL_ID 回填, 保证工具卡片/消息事件按统一 id 识别
+    toolCall.toolId = ASK_USER_TOOL_ID
+    if (toolCall.displayName.trim() === '') {
+      toolCall.displayName = '向用户提问'
+    }
+    toolCall.sourceType = ToolSourceType.BUILTIN
+    if (toolCall.sourceLabel.trim() === '') {
+      toolCall.sourceLabel = '内置工具'
+    }
+    toolCall.permissionLevel = ToolPermissionLevel.READ
+
+    if (this.answerCallback === null) {
+      console.error('ToolExecutionService', 'ask_user answer callback not registered')
+      toolCall.approvalState = 'denied'
+      return new ToolResult(
+        toolCall.id,
+        JSON.stringify({ error: 'ask_user 未启用: 当前界面不支持人机交互工具' }),
+        true,
+        toolCall.displayName,
+        toolCall.sourceLabel
+      )
+    }
+
+    // 标记为 pending, UI (AskUserCard) 据此判断是否可交互
+    toolCall.approvalState = 'pending'
+
+    let answerJson: string | null = null
+    try {
+      answerJson = await this.answerCallback(toolCall)
+    } catch (error) {
+      console.error('ToolExecutionService', `ask_user answer callback failed: ${JSON.stringify(error)}`)
+      toolCall.approvalState = 'denied'
+      return new ToolResult(
+        toolCall.id,
+        JSON.stringify({ error: `ask_user 失败: ${JSON.stringify(error)}`, cancelled: true }),
+        true,
+        toolCall.displayName,
+        toolCall.sourceLabel
+      )
+    }
+
+    // 执行期间被取消 (例如用户在 AskUserCard 外按了停止)
+    if (this.isCancelled()) {
+      console.info('ToolExecutionService', 'ask_user cancelled by external stop')
+      toolCall.approvalState = 'denied'
+      return this.buildCancelledResult(toolCall, toolCall.displayName, toolCall.sourceLabel)
+    }
+
+    if (answerJson === null) {
+      toolCall.approvalState = 'denied'
+      return new ToolResult(
+        toolCall.id,
+        JSON.stringify({ cancelled: true, error: '用户未回答该问题' }),
+        true,
+        toolCall.displayName,
+        toolCall.sourceLabel
+      )
+    }
+
+    // 标记为已回答, 答案 JSON 既写入 approvalReason (UI 显示)也作为 tool_result 回传给模型
+    toolCall.approvalState = 'answered'
+    toolCall.approvalReason = answerJson
+    console.info('ToolExecutionService', `ask_user answered: ${toolCall.id}`)
+    return new ToolResult(
+      toolCall.id,
+      answerJson,
+      false,
+      toolCall.displayName,
+      toolCall.sourceLabel
+    )
+  }
+
   // 执行单个工具调用
   async executeToolCall(toolCall: ToolCall): Promise<ToolResult> {
     console.info('ToolExecutionService', `Executing tool call: ${toolCall.functionName} (${toolCall.id})`)
@@ -126,6 +213,13 @@ export class ToolExecutionService {
     }
 
     const normalizedFunctionName = this.normalizeFunctionName(toolCall.functionName)
+
+    // === ask_user 特殊路径 ===
+    // 人机交互工具, 不走通用 executor 和 write 审批 sheet, 由 AskUserCard 直接收集答案。
+    if (isAskUserFunctionName(normalizedFunctionName)) {
+      return await this.handleAskUser(toolCall)
+    }
+
     // 通过函数名获取工具 ID
     const toolId = this.resolveToolId(normalizedFunctionName)
     if (toolId === undefined) {

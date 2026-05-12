@@ -6,7 +6,6 @@
 import { ReasoningLevel } from '../models/ChatModels'
 import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
 import { getAppUiState } from '../state/AppUiState'
-import { ReasoningLevelSheet } from './ReasoningLevelSheet'
 
 @ComponentV2
 export struct ChatToolbar {
@@ -24,8 +23,6 @@ export struct ChatToolbar {
   @Param reasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   @Event onReasoningLevelChange: (value: ReasoningLevel) => void =
     (_value: ReasoningLevel): void => {}
-
-  @Local showReasoningSheet: boolean = false
 
   // 主题颜色
   private get themePrimary(): string {
@@ -171,16 +168,11 @@ export struct ChatToolbar {
         .shadow({ radius: 10, color: this.getChipShadowColor(), offsetX: 0, offsetY: 2 })
         .margin({ left: this.webSearchAvailable || this.toolSelectionAvailable ? 8 : 0 })
         .animation({ duration: 200, curve: Curve.EaseOut })
-        .onClick(() => {
-          this.showReasoningSheet = true
-        })
-        .bindSheet($$this.showReasoningSheet, this.ReasoningSheetBuilder(), {
-          height: SheetSize.FIT_CONTENT,
-          dragBar: true,
-          showClose: false,
-          preferType: SheetType.BOTTOM,
+        .bindMenu(this.ReasoningMenuBuilder(), {
+          placement: Placement.BottomLeft,
+          offset: { x: 0, y: 8 },
           backgroundColor: this.themeSurface,
-          blurStyle: BlurStyle.Regular
+          backgroundBlurStyle: BlurStyle.Regular
         })
       }
 
@@ -191,47 +183,16 @@ export struct ChatToolbar {
     .margin({ bottom: 8 })
   }
 
-  @Builder
-  private ReasoningSheetBuilder() {
-    Column() {
-      ReasoningLevelSheet({
-        value: this.reasoningLevel,
-        $value: (next: string) => {
-          this.onReasoningLevelChange(this.mapStringToLevel(next))
-        },
-        reasoningControlMode: this.reasoningControlMode,
-        reasoningXhighAvailable: this.reasoningXhighAvailable,
-        allowFollowGlobal: false,
-        onClose: () => {
-          this.showReasoningSheet = false
-        }
-      })
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  private mapStringToLevel(value: string): ReasoningLevel {
-    switch (value) {
-      case ReasoningLevel.OFF:
-        return ReasoningLevel.OFF
-      case ReasoningLevel.AUTO:
-        return ReasoningLevel.AUTO
-      case ReasoningLevel.LOW:
-        return ReasoningLevel.LOW
-      case ReasoningLevel.MEDIUM:
-        return ReasoningLevel.MEDIUM
-      case ReasoningLevel.HIGH:
-        return ReasoningLevel.HIGH
-      case ReasoningLevel.XHIGH:
-        return ReasoningLevel.XHIGH
-      default:
-        return ReasoningLevel.OFF
-    }
-  }
-
   private isReasoningEnabled(): boolean {
     return this.reasoningLevel !== ReasoningLevel.OFF
+  }
+
+  private supportsEffortLevels(): boolean {
+    return this.reasoningControlMode === ReasoningControlMode.EFFORT
+  }
+
+  private supportsHighMaxLevels(): boolean {
+    return this.reasoningControlMode === ReasoningControlMode.HIGH_MAX
   }
 
   private getReasoningLevelText(level: ReasoningLevel): ResourceStr {
@@ -248,6 +209,49 @@ export struct ChatToolbar {
         return $r('app.string.reasoning_level_xhigh')
       default:
         return $r('app.string.reasoning_level_off')
+    }
+  }
+
+  @Builder
+  private ReasoningMenuBuilder() {
+    Menu() {
+      this.ReasoningMenuItem(ReasoningLevel.OFF)
+      this.ReasoningMenuItem(ReasoningLevel.AUTO)
+      if (this.supportsEffortLevels()) {
+        this.ReasoningMenuItem(ReasoningLevel.LOW)
+        this.ReasoningMenuItem(ReasoningLevel.MEDIUM)
+        this.ReasoningMenuItem(ReasoningLevel.HIGH)
+        if (this.reasoningXhighAvailable) {
+          this.ReasoningMenuItem(ReasoningLevel.XHIGH)
+        }
+      } else if (this.supportsHighMaxLevels()) {
+        this.ReasoningMenuItem(ReasoningLevel.HIGH)
+        if (this.reasoningXhighAvailable) {
+          this.ReasoningMenuItem(ReasoningLevel.XHIGH)
+        }
+      }
+    }
+  }
+
+  @Builder
+  private ReasoningMenuItem(level: ReasoningLevel) {
+    if (this.reasoningLevel === level) {
+      MenuItem({
+        startIcon: $r('sys.symbol.checkmark'),
+        content: this.getReasoningLevelText(level)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.onReasoningLevelChange(level)
+        })
+    } else {
+      MenuItem({
+        content: this.getReasoningLevelText(level)
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.onReasoningLevelChange(level)
+        })
     }
   }
 }

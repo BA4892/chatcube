@@ -331,6 +331,32 @@ export struct ToolsCenterPanel {
   private async loadToolEnabledStates(): Promise<void> {
     const webSearchEnabled = await this.preferencesService.getBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, false)
     this.applySearchServiceEnabledState(webSearchEnabled)
+    // 逐个加载非搜索内置工具的开关: key = builtin_tool_enabled_${toolId}, 默认值取代码层 config.enabled
+    const allTools = this.toolRegistry.getAllRegisteredTools()
+    for (let i = 0; i < allTools.length; i++) {
+      const tool = allTools[i]
+      if (tool.config.sourceType !== ToolSourceType.BUILTIN) {
+        continue
+      }
+      if (isSearchToolId(tool.id)) {
+        continue
+      }
+      const enabled = await this.preferencesService.getBoolean(
+        PreferenceKeys.builtinToolEnabledKey(tool.id),
+        tool.config.enabled
+      )
+      tool.config.enabled = enabled
+    }
+  }
+
+  private async handleBuiltinToolEnabledChanged(toolId: string, enabled: boolean): Promise<void> {
+    const registeredTool = this.toolRegistry.getTool(toolId)
+    if (registeredTool !== undefined) {
+      registeredTool.config.enabled = enabled
+    }
+    await this.preferencesService.setBoolean(PreferenceKeys.builtinToolEnabledKey(toolId), enabled)
+    // 重新触发列表绑定, 让 Toggle 反映最新状态
+    this.syncBuiltinToolsFromRegistry()
   }
 
   private handleSearchServiceEnabledChanged(enabled: boolean): void {
@@ -1783,7 +1809,10 @@ export struct ToolsCenterPanel {
 
                 ForEach(this.builtinTools, (tool: ToolConfig) => {
                   BuiltinToolCardItem({
-                    tool: tool
+                    tool: tool,
+                    onToggleEnabled: (enabled: boolean): void => {
+                      this.handleBuiltinToolEnabledChanged(tool.id, enabled)
+                    }
                   })
                 }, (tool: ToolConfig) => tool.id)
               }
@@ -2064,28 +2093,41 @@ struct SearchServiceCardItem {
 @ComponentV2
 struct BuiltinToolCardItem {
   @Param tool: ToolConfig = new ToolConfig()
+  @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean): void => {}
 
   @Builder
   ToolCardText() {
-    Column() {
-      Text(this.tool.name)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+    Row() {
+      Column() {
+        Text(this.tool.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
 
-      Text(this.tool.description)
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 2 })
+        Text(this.tool.description)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 2 })
 
-      Text(this.tool.id)
-        .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
-        .margin({ top: 6 })
+        Text(this.tool.id)
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+          .margin({ top: 6 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.tool.enabled })
+        .selectedColor(getAppUiState().themePrimary)
+        .margin({ left: 12 })
+        .onChange((isOn: boolean): void => {
+          this.onToggleEnabled(isOn)
+        })
     }
-    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   build() {

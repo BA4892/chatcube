@@ -39,6 +39,8 @@ export struct ChatMessageListItem {
   @Event onTTSStop: () => void = (): void => {}
   @Event onSelect: (messageId: string) => void = (_messageId: string): void => {}
   @Event onEnterMultiSelect: (messageId: string) => void = (_messageId: string): void => {}
+  @Event onAskUserAnswer: (toolCallId: string, answerJson: string) => void =
+    (_toolCallId: string, _answerJson: string): void => {}
 
   private getEffectiveContentMaxWidth(): number {
     return this.contentMaxWidth > 0 ? this.contentMaxWidth : 99999
@@ -103,6 +105,9 @@ export struct ChatMessageListItem {
           },
           onEnterMultiSelect: (messageId: string): void => {
             this.onEnterMultiSelect(messageId)
+          },
+          onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
+            this.onAskUserAnswer(toolCallId, answerJson)
           }
         })
       }
