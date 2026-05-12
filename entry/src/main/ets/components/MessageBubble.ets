@@ -1923,13 +1923,13 @@ export struct MessageBubble {
         Column() {
           ForEach(this.getVisibleThinkingSteps(), (step: MessagePart, index: number) => {
           Row({ space: 10 }) {
-            // 左侧图标 + 背景遮罩压住竖线
+            // 左侧图标 + 背景遮罩压住竖线 (与 PartsTimeline 外层背景同色,视觉上无明显底色)
             Stack() {
               Column()
                 .width(20)
                 .height(20)
                 .borderRadius(10)
-                .backgroundColor(this.themeAiBubble)
+                .backgroundColor($r('app.color.divider'))
               if (step.kind === MessagePartKind.REASONING) {
                 SymbolGlyph($r('sys.symbol.lightbulb'))
                   .fontSize(14)
