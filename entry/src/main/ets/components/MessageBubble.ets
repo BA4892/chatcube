@@ -1876,23 +1876,47 @@ export struct MessageBubble {
     return steps
   }
 
+  // 判定某个 reasoning part 是否处于 "仍在思考中": 消息还在生成 + 该 part 是 parts 里最后一个 reasoning
+  // 且其后没有任何 reasoning/tool/text part (即确实是当前正在输出的那段 reasoning)
+  private isActiveReasoningPart(part: MessagePart): boolean {
+    if (!this.message.isGenerating) {
+      return false
+    }
+    if (part.kind !== MessagePartKind.REASONING) {
+      return false
+    }
+    // 该 part 之后若还有其它 part (工具调用、文本、甚至另一段 reasoning), 说明这段已经结束
+    for (let i = 0; i < this.message.parts.length; i++) {
+      if (this.message.parts[i] !== part) {
+        continue
+      }
+      return i === this.message.parts.length - 1
+    }
+    return false
+  }
+
   private formatReasoningDuration(part: MessagePart): string {
     const start = part.reasoningCreatedAt > 0 ? part.reasoningCreatedAt : 0
     if (start === 0) {
       return ''
     }
-    // 读一下 reasoningElapsedMs(由 syncReasoningRuntime 的 120ms 定时器驱动),
-    // ArkUI 会把它当依赖, 在流式中的 reasoning part 就能实时跳秒
-    const _tick = this.reasoningElapsedMs
-    const end = part.reasoningFinishedAt > 0 ? part.reasoningFinishedAt :
-      (_tick >= 0 ? Date.now() : Date.now())
-    const seconds = Math.max(0, (end - start) / 1000)
-    // 异常保护: 历史消息里遗留的未 finish reasoning 或异常数据可能得出上万秒, 这里只显示上限
-    // 10 分钟, 避免 UI 出现 "思考中 34740.9s" 之类的离谱计时
-    if (seconds > 600) {
-      return '—'
+    // 情况一: 记录了 finish 时间, 直接用准确时长
+    if (part.reasoningFinishedAt > 0) {
+      const seconds = Math.max(0, (part.reasoningFinishedAt - start) / 1000)
+      return `${seconds.toFixed(1)}s`
     }
-    return `${seconds.toFixed(1)}s`
+    // 情况二: 消息仍在生成且该 part 是最后一段 reasoning, 属于 "正在思考中", 用 Date.now() 实时跳秒
+    // 读一下 reasoningElapsedMs(由 syncReasoningRuntime 的 120ms 定时器驱动),
+    // ArkUI 会把它当依赖,确保该 part 的秒数随之跳动
+    if (this.isActiveReasoningPart(part)) {
+      const _tick = this.reasoningElapsedMs
+      const elapsed = Math.max(0, (Date.now() - start) / 1000)
+      const _ignored = _tick >= 0 ? 0 : 0
+      return `${elapsed.toFixed(1)}s`
+    }
+    // 情况三: 已经被后续动作打断但没记录 finish 时间 (历史数据 / 边界), 不给时长只给文字标签,
+    // 避免用当前时间 - 久远的 created 算出几万秒
+    return ''
   }
 
   // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
@@ -1954,7 +1978,7 @@ export struct MessageBubble {
             Column() {
               if (step.kind === MessagePartKind.REASONING) {
                 Row({ space: 6 }) {
-                  Text(step.reasoningFinishedAt > 0 ? '思考过程' : '思考中')
+                  Text(this.isActiveReasoningPart(step) ? '思考中' : '思考过程')
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor($r('app.color.text_primary'))
