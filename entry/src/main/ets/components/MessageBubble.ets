@@ -1846,7 +1846,15 @@ export struct MessageBubble {
     const steps: MessagePart[] = []
     for (let i = 0; i < this.message.parts.length; i++) {
       const p = this.message.parts[i]
-      if (p.kind === MessagePartKind.REASONING || p.kind === MessagePartKind.TOOL) {
+      // 过滤空 reasoning: 流式期间偶尔会 push 内容为空的 reasoning part(边界重置),
+      // 折叠视图里显示两条 "思考中" 且没有正文会特别奇怪, 直接剔除
+      if (p.kind === MessagePartKind.REASONING) {
+        if (p.text.trim() !== '') {
+          steps.push(p)
+        }
+        continue
+      }
+      if (p.kind === MessagePartKind.TOOL) {
         steps.push(p)
       }
     }

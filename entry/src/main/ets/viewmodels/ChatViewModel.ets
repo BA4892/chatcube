@@ -2027,15 +2027,17 @@ ${limitedSearchContext}
     }
 
     const flushBufferedRoundOutput = (): void => {
-      if (roundContentBuffer !== '') {
-        aiMessage.content += roundContentBuffer
-        this.pushPartText(aiMessage, roundContentBuffer)
-        roundContentBuffer = ''
-      }
+      // 注意顺序: reasoning 先 flush, 避免 text 先 push 时触发 finishTrailingReasoningPart
+      // 把同轮真正连续的 reasoning 切成多个 part
       if (roundReasoningBuffer !== '') {
         aiMessage.reasoningContent += roundReasoningBuffer
         this.pushPartReasoning(aiMessage, roundReasoningBuffer)
         roundReasoningBuffer = ''
+      }
+      if (roundContentBuffer !== '') {
+        aiMessage.content += roundContentBuffer
+        this.pushPartText(aiMessage, roundContentBuffer)
+        roundContentBuffer = ''
       }
     }
 
