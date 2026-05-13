@@ -2087,12 +2087,14 @@ export struct MessageBubble {
     } else {
       next.push(key)
     }
-    this.expandedReasoningKeys = next
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+      this.expandedReasoningKeys = next
+    })
   }
 
   // timeline 标题只保留状态,不展示每段耗时和字数。
   private buildReasoningStepLabel(part: MessagePart): string {
-    return this.isActiveReasoningPart(part) ? '思考中' : '思考过程'
+    return this.isActiveReasoningPart(part) ? '深度思考中' : '深度思考'
   }
 
   // ===== tool step 点击行为 =====
@@ -2145,7 +2147,9 @@ export struct MessageBubble {
     if (!found) {
       next.push(key)
     }
-    this.expandedToolStepKeys = next
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+      this.expandedToolStepKeys = next
+    })
   }
 
   private findToolResultForCall(toolCallId: string): ToolResult | null {
@@ -2598,7 +2602,7 @@ export struct MessageBubble {
           if (step.kind === MessagePartKind.REASONING) {
             SymbolGlyph($r('sys.symbol.lightbulb'))
               .fontSize(14)
-              .fontColor([this.themePrimary])
+              .fontColor([$r('app.color.text_secondary')])
           } else {
             SymbolGlyph(resolveToolSymbol(step.toolName))
               .fontSize(14)
@@ -2611,7 +2615,7 @@ export struct MessageBubble {
         if (hasNextStep) {
           Column()
             .width(1.5)
-            .height(12)
+            .height(8)
             .backgroundColor(this.getTimelineRailColor())
             .margin({ top: 2 })
         }
@@ -2630,7 +2634,7 @@ export struct MessageBubble {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .padding({ top: 6, bottom: 6 })
+    .padding({ top: 3, bottom: 3 })
   }
 
   // reasoning step 内容: 标题行(可点击 toggle) + 正文 (展开时用 Markdown 渲染)
@@ -2641,7 +2645,7 @@ export struct MessageBubble {
         Text(this.buildReasoningStepLabel(step))
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.isActiveReasoningPart(step) ? this.themePrimary : $r('app.color.text_primary'))
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
 
         SymbolGlyph($r('sys.symbol.chevron_down'))
@@ -2665,6 +2669,7 @@ export struct MessageBubble {
         }
         .width('100%')
         .margin({ top: 6 })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
       }
     }
     .width('100%')
@@ -2716,9 +2721,10 @@ export struct MessageBubble {
         .layoutWeight(1)
 
       if (this.isToolStepClickable(step)) {
-        SymbolGlyph($r('sys.symbol.chevron_right'))
+        SymbolGlyph($r('sys.symbol.chevron_down'))
           .fontSize(12)
           .fontColor([$r('app.color.text_tertiary')])
+          .rotate({ angle: -90 })
       }
     }
     .width('100%')
@@ -3101,15 +3107,15 @@ export struct MessageBubble {
   // 流式中标题:已思考 X.X 秒
   private getReasoningThinkingLabel(): string {
     const seconds = Math.max(0, this.reasoningElapsedMs / 1000)
-    return `思考中 · 已思考 ${seconds.toFixed(1)} 秒`
+    return `深度思考中 · 已思考 ${seconds.toFixed(1)} 秒`
   }
 
   // 生成结束后标题:带总时长(若已记录)
   private getReasoningFinishedLabel(): string {
     if (this.reasoningFinalMs > 0) {
-      return `思考过程 · 用时 ${(this.reasoningFinalMs / 1000).toFixed(1)} 秒`
+      return `深度思考 · 用时 ${(this.reasoningFinalMs / 1000).toFixed(1)} 秒`
     }
-    return '思考过程'
+    return '深度思考'
   }
 
   /**
