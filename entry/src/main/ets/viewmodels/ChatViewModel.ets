@@ -808,6 +808,17 @@ export class ChatViewModel {
     cancelCallback: () => void,
     sessionId: string
   ): void {
+    // 多轮工具调用每轮会重新调 registerActiveRequest 覆盖同一个 requestId, 上一轮的 httpRequest
+    // 必须显式 destroy。HttpService.streamPost 内部正常完成时已经 destroy 过, 这里是兜底:
+    // 防止流式未触发 dataEnd / 中间态被覆盖时 native 资源累积导致 OOM 闪退。
+    const existing = this.activeRequests.get(requestId)
+    if (existing !== undefined && existing.httpRequest !== httpRequest) {
+      try {
+        existing.httpRequest.destroy()
+      } catch (_e) {
+        // ignore destroy errors (already destroyed by streamPost / stopGeneration)
+      }
+    }
     this.activeRequests.set(requestId, {
       httpRequest: httpRequest,
       cancelCallback: cancelCallback,
@@ -816,6 +827,16 @@ export class ChatViewModel {
   }
 
   private unregisterActiveRequest(requestId: string): void {
+    // unregister 同时 destroy 是防御性兜底, 应对 HttpService.streamPost 漏 destroy 的极端路径
+    // (如 onComplete 未触发就走 cancel 流程)。已 destroy 的 native 句柄重复 destroy 由 try/catch 兜住。
+    const info = this.activeRequests.get(requestId)
+    if (info !== undefined) {
+      try {
+        info.httpRequest.destroy()
+      } catch (_e) {
+        // ignore
+      }
+    }
     this.activeRequests.delete(requestId)
   }
 
@@ -2081,7 +2102,9 @@ ${limitedSearchContext}
 	    const requestTemperature = await this.getRequestTemperature()
 
 	    // 先注册到活跃请求 Map（使用占位 httpRequest，executeToolCallLoop 内部会更新实际引用）
-    // 必须在 await 之前注册，否则 stopGeneration 无法取消正在执行的请求
+    // 必须在 await 之前注册，否则 stopGeneration 无法取消正在执行的请求。
+    // 占位 httpRequest 不会发请求, 但 native 句柄已分配; executeToolCallLoop 拿到真实 httpRequest
+    // 后会通过 registerActiveRequest 内部逻辑把它 destroy 掉, 不会泄漏。
     const placeholderHttp = http.createHttp()
     this.registerActiveRequest(requestId, placeholderHttp, () => {
       cancelled = true
@@ -2323,6 +2346,8 @@ ${limitedSearchContext}
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
         onComplete()
+        // 必须释放占位 / 上一轮残留的 httpRequest, 否则取消后 native 句柄留挂在 activeRequests
+        this.unregisterActiveRequest(requestId)
         return
       }
 
@@ -2455,9 +2480,20 @@ ${limitedSearchContext}
           }
         )
 
-        // 更新活跃请求中的 httpRequest 引用(每轮 stream 可能创建新的 httpRequest)
+        // 更新活跃请求中的 httpRequest 引用(每轮 stream 可能创建新的 httpRequest)。
+        // 必须 destroy 上一轮的 httpRequest (sendMessageWithTools 创建的 placeholderHttp,
+        // 或上一轮工具循环里的真实 httpRequest), 否则每轮泄漏一个 native HttpRequest 实例,
+        // 多轮工具调用 + 深度推理会累积到触发 native OOM kill。
+        // registerActiveRequest 内部已经做了 destroy 覆盖, 这里走它统一入口避免遗漏。
         const existingInfo = this.activeRequests.get(requestId)
         if (existingInfo !== undefined) {
+          if (existingInfo.httpRequest !== httpRequest) {
+            try {
+              existingInfo.httpRequest.destroy()
+            } catch (_e) {
+              // ignore: 已被 streamPost 内部 destroy 或被 stopGeneration 提前 destroy
+            }
+          }
           existingInfo.httpRequest = httpRequest
         } else {
           this.registerActiveRequest(requestId, httpRequest, () => {
@@ -2574,6 +2610,7 @@ ${limitedSearchContext}
       // 执行工具调用
       const toolResults = await this.toolExecutionService.executeToolCalls(toolCalls)
       if (isCancelledFn()) {
+        // stopGeneration 已经触发, 它内部会 destroy + unregister, 这里直接 return
         return
       }
 
@@ -2583,6 +2620,9 @@ ${limitedSearchContext}
         onAIMessageUpdated(aiMessage)
         onComplete()
         this.toolExecutionService.clearCancelCheckCallback()
+        // 工具用户取消时 stream 已结束, 必须主动 unregister + destroy 当前轮 httpRequest, 避免泄漏
+        this.unregisterActiveRequest(requestId)
+        this.clearPendingAIMessageIfMatches(aiMessage.id)
         return
       }
 

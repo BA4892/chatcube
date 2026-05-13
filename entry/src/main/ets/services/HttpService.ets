@@ -506,6 +506,12 @@ export class HttpService {
   }
 
   // 流式 POST 请求
+  //
+  // 关键: 流完成 / 出错 / 主动取消都必须 off + destroy。
+  // 官方 @ohos.net.http 文档明确要求每个 HttpRequest 实例使用完毕后调用 destroy() 释放 native 资源
+  // (socket / 连接池 / 内部缓冲); off() 取消监听器闭包对 httpRequest 的强引用,防止 JS 端 GC 环。
+  // 多轮工具调用 / 深度推理场景下,如果不清理,每轮新建的 HttpRequest 都会泄漏,native 资源累积
+  // 到一定数量就会触发系统级 OOM kill, 应用闪退无 JS 异常日志。
   streamPost(
     url: string,
     body: string,
@@ -518,8 +524,34 @@ export class HttpService {
 
     let dataEnded = false
     let resolvedCode: number = -1
+    let cleaned = false
     // 仅保留最后一个 data chunk 的引用（零拷贝），用于错误响应时提取错误信息
     let lastDataChunk: ArrayBuffer | null = null
+
+    // 取消所有监听器并销毁 native 句柄。幂等(cleaned 标志位防重复),外部 stopGeneration 再次
+    // destroy 同一实例也会被 try/catch 兜住。
+    const cleanupHttpRequest = (): void => {
+      if (cleaned) {
+        return
+      }
+      cleaned = true
+      lastDataChunk = null
+      try {
+        httpRequest.off('headersReceive')
+      } catch (_e) {}
+      try {
+        httpRequest.off('dataReceive')
+      } catch (_e) {}
+      try {
+        httpRequest.off('dataReceiveProgress')
+      } catch (_e) {}
+      try {
+        httpRequest.off('dataEnd')
+      } catch (_e) {}
+      try {
+        httpRequest.destroy()
+      } catch (_e) {}
+    }
 
     // 当 dataEnd 和 requestInStream 都完成后，再触发 onComplete
     const tryFinish = (): void => {
@@ -547,7 +579,13 @@ export class HttpService {
       }
       lastDataChunk = null
       if (onComplete) {
-        onComplete(result)
+        try {
+          onComplete(result)
+        } finally {
+          cleanupHttpRequest()
+        }
+      } else {
+        cleanupHttpRequest()
       }
     }
 
@@ -600,7 +638,13 @@ export class HttpService {
     }).catch((error: Error) => {
       console.error('HttpService', `[streamPost] Error: ${JSON.stringify(error)}`)
       if (onError) {
-        onError(HttpService.formatHttpError(error))
+        try {
+          onError(HttpService.formatHttpError(error))
+        } finally {
+          cleanupHttpRequest()
+        }
+      } else {
+        cleanupHttpRequest()
       }
     })
 
