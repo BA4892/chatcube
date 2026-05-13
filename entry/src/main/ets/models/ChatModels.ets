@@ -380,6 +380,8 @@ export enum SearchEngine {
   BRAVE = 'brave',
   EXA = 'exa',
   TAVILY = 'tavily',
+  METASO = 'metaso',
+  FIRECRAWL = 'firecrawl',
   CUSTOM = 'custom'
 }
 

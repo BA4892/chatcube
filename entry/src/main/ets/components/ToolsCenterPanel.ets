@@ -18,6 +18,10 @@ import {
   parseCustomHeaderEntries,
   validateCustomHeaderEntries
 } from '../utils/CustomHeaderUtils'
+import {
+  getSearchEngineRegistry,
+  registerAllSearchEngines
+} from '../services/search/Index'
 
 @ObservedV2
 class McpHeaderEntry {
@@ -48,6 +52,9 @@ export struct ToolsCenterPanel {
   @Local searchTavilyBaseUrl: string = 'https://api.tavily.com'
   @Local searchExaApiKey: string = ''
   @Local searchExaBaseUrl: string = 'https://api.exa.ai'
+  @Local searchMetasoApiKey: string = ''
+  @Local searchFirecrawlApiKey: string = ''
+  @Local searchFirecrawlBaseUrl: string = 'https://api.firecrawl.dev'
   @Local searchQueryOptimizationEnabled: boolean = false
   @Local isLoading: boolean = false
   @Local isRefreshingMcpServers: boolean = false
@@ -89,12 +96,10 @@ export struct ToolsCenterPanel {
   private toolRegistry: ToolRegistry = ServiceRegistry.toolRegistry()
   private mcpService: McpService = ServiceRegistry.mcp()
   private preferencesService: PreferencesService = getPreferencesService()
-  private readonly searchEngineOptions: Array<SelectOption> = [
-    { value: 'Bing(local)' },
-    { value: 'Brave Search' },
-    { value: 'Tavily' },
-    { value: 'Exa' }
-  ]
+  private get searchEngineOptions(): Array<SelectOption> {
+    registerAllSearchEngines()
+    return getSearchEngineRegistry().getSelectOptions()
+  }
   private readonly mcpAuthTypeOptions: Array<SelectOption> = [
     { value: 'None' },
     { value: 'Bearer' }
@@ -106,13 +111,6 @@ export struct ToolsCenterPanel {
     'mcp-session-id',
     'authorization'
   ]
-  private originalSearchEngine: SearchEngine = SearchEngine.BING
-  private originalSearchBraveApiKey: string = ''
-  private originalSearchTavilyApiKey: string = ''
-  private originalSearchTavilyBaseUrl: string = 'https://api.tavily.com'
-  private originalSearchExaApiKey: string = ''
-  private originalSearchExaBaseUrl: string = 'https://api.exa.ai'
-  private originalSearchQueryOptimizationEnabled: boolean = false
 
   private showToolsSnack(message: string | Resource, duration: number = 2000,
     tone: SnackBarTone = SnackBarTone.DEFAULT): void {
@@ -266,55 +264,21 @@ export struct ToolsCenterPanel {
   }
 
   private parseSearchEngine(raw: string): SearchEngine {
-    if (raw === SearchEngine.BRAVE) {
-      return SearchEngine.BRAVE
-    }
-    if (raw === SearchEngine.TAVILY) {
-      return SearchEngine.TAVILY
-    }
-    if (raw === SearchEngine.EXA) {
-      return SearchEngine.EXA
-    }
-    return SearchEngine.BING
+    registerAllSearchEngines()
+    return getSearchEngineRegistry().parseEngine(raw)
   }
 
   private getSearchEngineLabel(engine: SearchEngine): string {
-    if (engine === SearchEngine.BRAVE) {
-      return 'Brave Search'
-    }
-    if (engine === SearchEngine.TAVILY) {
-      return 'Tavily'
-    }
-    if (engine === SearchEngine.EXA) {
-      return 'Exa'
-    }
-    return 'Bing(local)'
+    return getSearchEngineRegistry().getLabel(engine)
   }
 
   private getSearchEngineByIndex(index: number): SearchEngine {
-    if (index === 1) {
-      return SearchEngine.BRAVE
-    }
-    if (index === 2) {
-      return SearchEngine.TAVILY
-    }
-    if (index === 3) {
-      return SearchEngine.EXA
-    }
-    return SearchEngine.BING
+    const desc = getSearchEngineRegistry().getByIndex(index)
+    return desc !== undefined ? desc.id : SearchEngine.BING
   }
 
   private getSearchEngineSelectedIndex(engine: SearchEngine): number {
-    if (engine === SearchEngine.BRAVE) {
-      return 1
-    }
-    if (engine === SearchEngine.TAVILY) {
-      return 2
-    }
-    if (engine === SearchEngine.EXA) {
-      return 3
-    }
-    return 0
+    return getSearchEngineRegistry().indexOf(engine)
   }
 
   private applySearchServiceEnabledState(enabled: boolean): void {
@@ -368,14 +332,9 @@ export struct ToolsCenterPanel {
   }
 
   private async loadSearchSettings(): Promise<void> {
+    registerAllSearchEngines()
     const searchServiceEnabled = await this.preferencesService.getBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, false)
     const engineRaw = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENGINE, SearchEngine.BING)
-    const braveApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_BRAVE_API_KEY, '')
-    const tavilyApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_TAVILY_API_KEY, '')
-    const tavilyBaseUrl =
-      await this.preferencesService.getString(PreferenceKeys.SEARCH_TAVILY_BASE_URL, 'https://api.tavily.com')
-    const exaApiKey = await this.preferencesService.getString(PreferenceKeys.SEARCH_EXA_API_KEY, '')
-    const exaBaseUrl = await this.preferencesService.getString(PreferenceKeys.SEARCH_EXA_BASE_URL, 'https://api.exa.ai')
     const optimizationEnabled = await this.preferencesService.getBoolean(
       PreferenceKeys.SEARCH_QUERY_OPTIMIZATION_ENABLED,
       false
@@ -385,12 +344,19 @@ export struct ToolsCenterPanel {
     this.searchEngine = this.parseSearchEngine(engineRaw)
     this.searchEngineSelectedIndex = this.getSearchEngineSelectedIndex(this.searchEngine)
     this.searchEngineDisplayValue = this.getSearchEngineLabel(this.searchEngine)
-    this.searchBraveApiKey = braveApiKey.trim()
-    this.searchTavilyApiKey = tavilyApiKey.trim()
-    this.searchTavilyBaseUrl = this.normalizeSearchBaseUrl(tavilyBaseUrl, 'https://api.tavily.com')
-    this.searchExaApiKey = exaApiKey
-    this.searchExaBaseUrl = this.normalizeSearchBaseUrl(exaBaseUrl, 'https://api.exa.ai')
     this.searchQueryOptimizationEnabled = optimizationEnabled
+
+    // 动态加载所有引擎的配置字段
+    const allEngines = getSearchEngineRegistry().getAll()
+    for (const engine of allEngines) {
+      for (const field of engine.configFields) {
+        const value = await this.preferencesService.getString(field.key, field.defaultValue)
+        const normalized = field.isPassword ? value.trim() :
+          this.normalizeSearchBaseUrl(value, field.defaultValue)
+        this.setConfigFieldValue(field.key, normalized)
+      }
+    }
+
     this.syncOriginalSearchSettings()
   }
 
@@ -405,41 +371,29 @@ export struct ToolsCenterPanel {
     return trimmed
   }
 
+  private originalSearchConfigSnapshot: string = ''
+
+  private buildSearchConfigSnapshot(): string {
+    return JSON.stringify({
+      engine: this.searchEngine,
+      brave: this.searchBraveApiKey.trim(),
+      tavily: this.searchTavilyApiKey.trim(),
+      tavilyUrl: this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com'),
+      exa: this.searchExaApiKey.trim(),
+      exaUrl: this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai'),
+      metaso: this.searchMetasoApiKey.trim(),
+      firecrawl: this.searchFirecrawlApiKey.trim(),
+      firecrawlUrl: this.normalizeSearchBaseUrl(this.searchFirecrawlBaseUrl, 'https://api.firecrawl.dev'),
+      optimization: this.searchQueryOptimizationEnabled
+    })
+  }
+
   private syncOriginalSearchSettings(): void {
-    this.originalSearchEngine = this.searchEngine
-    this.originalSearchBraveApiKey = this.searchBraveApiKey.trim()
-    this.originalSearchTavilyApiKey = this.searchTavilyApiKey.trim()
-    this.originalSearchTavilyBaseUrl =
-      this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com')
-    this.originalSearchExaApiKey = this.searchExaApiKey.trim()
-    this.originalSearchExaBaseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai')
-    this.originalSearchQueryOptimizationEnabled = this.searchQueryOptimizationEnabled
+    this.originalSearchConfigSnapshot = this.buildSearchConfigSnapshot()
   }
 
   private hasPendingSearchConfigChanges(): boolean {
-    if (this.searchEngine !== this.originalSearchEngine) {
-      return true
-    }
-    if (this.searchBraveApiKey.trim() !== this.originalSearchBraveApiKey) {
-      return true
-    }
-    if (this.searchTavilyApiKey.trim() !== this.originalSearchTavilyApiKey) {
-      return true
-    }
-    if (this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com') !==
-      this.originalSearchTavilyBaseUrl) {
-      return true
-    }
-    if (this.searchExaApiKey.trim() !== this.originalSearchExaApiKey) {
-      return true
-    }
-    if (this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai') !== this.originalSearchExaBaseUrl) {
-      return true
-    }
-    if (this.searchQueryOptimizationEnabled !== this.originalSearchQueryOptimizationEnabled) {
-      return true
-    }
-    return false
+    return this.buildSearchConfigSnapshot() !== this.originalSearchConfigSnapshot
   }
 
   private performCloseSearchConfigSheet(sheetDismiss?: SheetDismiss): void {
@@ -475,60 +429,85 @@ export struct ToolsCenterPanel {
   }
 
   private async handleSaveSearchSettings(): Promise<boolean> {
-    const braveKey = this.searchBraveApiKey.trim()
-    const tavilyKey = this.searchTavilyApiKey.trim()
-    const exaKey = this.searchExaApiKey.trim()
-    const tavilyBaseUrl = this.normalizeSearchBaseUrl(this.searchTavilyBaseUrl, 'https://api.tavily.com')
-    const exaBaseUrl = this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai')
-    if (this.searchEngine === SearchEngine.BRAVE && braveKey === '') {
-      this.showToolsSnack(pickLocalizedText(
-        '请选择 Brave Search 时先填写 API Key',
-        'Enter the API key before selecting Brave Search'
-      ), 2000, SnackBarTone.ERROR)
-      return false
-    }
-    if (this.searchEngine === SearchEngine.TAVILY && tavilyKey === '') {
-      this.showToolsSnack(pickLocalizedText(
-        '请选择 Tavily 时先填写 API Key',
-        'Enter the API key before selecting Tavily'
-      ), 2000, SnackBarTone.ERROR)
-      return false
-    }
-    if (this.searchEngine === SearchEngine.EXA && exaKey === '') {
-      this.showToolsSnack($r('app.string.search_exa_key_required'), 2000, SnackBarTone.ERROR)
-      return false
+    const registry = getSearchEngineRegistry()
+    const descriptor = registry.getById(this.searchEngine)
+
+    // 验证当前引擎的必填字段
+    if (descriptor !== undefined) {
+      for (const field of descriptor.configFields) {
+        const value = this.getConfigFieldValue(field.key)
+        if (field.isPassword && value.trim() === '') {
+          this.showToolsSnack(pickLocalizedText(
+            `请选择 ${descriptor.label} 时先填写 API Key`,
+            `Enter the API key before selecting ${descriptor.label}`
+          ), 2000, SnackBarTone.ERROR)
+          return false
+        }
+        if (!field.isPassword && field.defaultValue !== '') {
+          const normalized = this.normalizeSearchBaseUrl(value, field.defaultValue)
+          if (normalized !== field.defaultValue && !normalized.startsWith('http://') &&
+            !normalized.startsWith('https://')) {
+            this.showToolsSnack($r('app.string.search_base_url_invalid'), 2000, SnackBarTone.ERROR)
+            return false
+          }
+        }
+      }
     }
 
-    const shouldValidateTavilyBaseUrl = this.searchEngine === SearchEngine.TAVILY
-    if (shouldValidateTavilyBaseUrl && !tavilyBaseUrl.startsWith('http://') && !tavilyBaseUrl.startsWith('https://')) {
-      this.showToolsSnack($r('app.string.search_base_url_invalid'), 2000, SnackBarTone.ERROR)
-      return false
-    }
-    const shouldValidateExaBaseUrl = this.searchEngine === SearchEngine.EXA
-    if (shouldValidateExaBaseUrl && !exaBaseUrl.startsWith('http://') && !exaBaseUrl.startsWith('https://')) {
-      this.showToolsSnack($r('app.string.search_base_url_invalid'), 2000, SnackBarTone.ERROR)
-      return false
-    }
-
+    // 保存引擎选择
     await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, this.searchEngine)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_BRAVE_API_KEY, braveKey)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_TAVILY_API_KEY, tavilyKey)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_TAVILY_BASE_URL, tavilyBaseUrl)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_EXA_API_KEY, exaKey)
-    await this.preferencesService.setString(PreferenceKeys.SEARCH_EXA_BASE_URL, exaBaseUrl)
+
+    // 保存所有引擎的配置字段
+    const allEngines = registry.getAll()
+    for (const engine of allEngines) {
+      for (const field of engine.configFields) {
+        const value = this.getConfigFieldValue(field.key)
+        const normalized = field.isPassword ? value.trim() :
+          this.normalizeSearchBaseUrl(value, field.defaultValue)
+        await this.preferencesService.setString(field.key, normalized)
+        this.setConfigFieldValue(field.key, normalized)
+      }
+    }
+
+    // 保存查询优化开关
     await this.preferencesService.setBoolean(
       PreferenceKeys.SEARCH_QUERY_OPTIMIZATION_ENABLED,
       this.searchQueryOptimizationEnabled
     )
-    this.searchBraveApiKey = braveKey
-    this.searchTavilyApiKey = tavilyKey
-    this.searchTavilyBaseUrl = tavilyBaseUrl
-    this.searchExaApiKey = exaKey
-    this.searchExaBaseUrl = exaBaseUrl
-    this.syncOriginalSearchSettings()
 
+    this.syncOriginalSearchSettings()
     this.showToolsSnack($r('app.string.search_config_saved'), 2000, SnackBarTone.SUCCESS)
     return true
+  }
+
+  // 通过 preference key 获取对应的 UI 状态变量值
+  private getConfigFieldValue(key: string): string {
+    if (key === PreferenceKeys.SEARCH_BRAVE_API_KEY) return this.searchBraveApiKey
+    if (key === PreferenceKeys.SEARCH_TAVILY_API_KEY) return this.searchTavilyApiKey
+    if (key === PreferenceKeys.SEARCH_TAVILY_BASE_URL) return this.searchTavilyBaseUrl
+    if (key === PreferenceKeys.SEARCH_EXA_API_KEY) return this.searchExaApiKey
+    if (key === PreferenceKeys.SEARCH_EXA_BASE_URL) return this.searchExaBaseUrl
+    if (key === PreferenceKeys.SEARCH_METASO_API_KEY) return this.searchMetasoApiKey
+    if (key === PreferenceKeys.SEARCH_FIRECRAWL_API_KEY) return this.searchFirecrawlApiKey
+    if (key === PreferenceKeys.SEARCH_FIRECRAWL_BASE_URL) return this.searchFirecrawlBaseUrl
+    return ''
+  }
+
+  // 通过 preference key 设置对应的 UI 状态变量值
+  private setConfigFieldValue(key: string, value: string): void {
+    if (key === PreferenceKeys.SEARCH_BRAVE_API_KEY) this.searchBraveApiKey = value
+    else if (key === PreferenceKeys.SEARCH_TAVILY_API_KEY) this.searchTavilyApiKey = value
+    else if (key === PreferenceKeys.SEARCH_TAVILY_BASE_URL) this.searchTavilyBaseUrl = value
+    else if (key === PreferenceKeys.SEARCH_EXA_API_KEY) this.searchExaApiKey = value
+    else if (key === PreferenceKeys.SEARCH_EXA_BASE_URL) this.searchExaBaseUrl = value
+    else if (key === PreferenceKeys.SEARCH_METASO_API_KEY) this.searchMetasoApiKey = value
+    else if (key === PreferenceKeys.SEARCH_FIRECRAWL_API_KEY) this.searchFirecrawlApiKey = value
+    else if (key === PreferenceKeys.SEARCH_FIRECRAWL_BASE_URL) this.searchFirecrawlBaseUrl = value
+  }
+
+  private currentEngineSupportsQueryOptimization(): boolean {
+    const desc = getSearchEngineRegistry().getById(this.searchEngine)
+    return desc !== undefined && desc.supportsQueryOptimization
   }
 
   private handleSaveAndCloseSearchSettings(): void {
@@ -1073,19 +1052,14 @@ export struct ToolsCenterPanel {
       .alignItems(VerticalAlign.Center)
 
       Scroll() {
-        Column() {
-          Text($r('app.string.search_service_config_desc'))
-            .fontSize(11)
-            .fontColor($r('app.color.text_tertiary'))
-            .width('100%')
-            .margin({ bottom: 10 })
-
-          Column() {
-            Text($r('app.string.search_engine'))
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
+        Column({ space: 16 }) {
+          // 引擎选择卡片
+          Column({ space: 10 }) {
+            Text(pickLocalizedText('搜索引擎', 'Search Engine'))
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
               .width('100%')
-              .margin({ bottom: 6 })
 
             Select(this.searchEngineOptions)
               .selected(this.searchEngineSelectedIndex)
@@ -1100,100 +1074,184 @@ export struct ToolsCenterPanel {
               .borderRadius(10)
               .padding({ left: 8, right: 8 })
 
-            if (this.searchEngine === SearchEngine.BRAVE) {
-              TextInput({ text: this.searchBraveApiKey, placeholder: 'Brave Search API Key' })
-                .onChange((value: string) => {
-                  this.searchBraveApiKey = value
-                })
-                .type(InputType.Password)
-                .enableAutoFill(false)
-                .fontSize(13)
-                .width('100%')
-                .height(40)
-                .borderRadius(10)
-                .backgroundColor(getAppUiState().themeBackground)
-                .padding({ left: 12, right: 12 })
-                .margin({ top: 8 })
-            }
-
-            if (this.searchEngine === SearchEngine.TAVILY) {
-              TextInput({ text: this.searchTavilyApiKey, placeholder: 'Tavily API Key' })
-                .onChange((value: string) => {
-                  this.searchTavilyApiKey = value
-                })
-                .type(InputType.Password)
-                .enableAutoFill(false)
-                .fontSize(13)
-                .width('100%')
-                .height(40)
-                .borderRadius(10)
-                .backgroundColor(getAppUiState().themeBackground)
-                .padding({ left: 12, right: 12 })
-                .margin({ top: 8 })
-
-              TextInput({ text: this.searchTavilyBaseUrl, placeholder: $r('app.string.search_tavily_base_url') })
-                .onChange((value: string) => {
-                  this.searchTavilyBaseUrl = value
-                })
-                .fontSize(13)
-                .width('100%')
-                .height(40)
-                .borderRadius(10)
-                .backgroundColor(getAppUiState().themeBackground)
-                .padding({ left: 12, right: 12 })
-                .margin({ top: 8 })
-
-              Text($r('app.string.search_tavily_base_url_hint'))
+            // 能力标签
+            Row({ space: 8 }) {
+              Text(pickLocalizedText('搜索', 'Search'))
                 .fontSize(11)
-                .lineHeight(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.themePrimary)
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                .borderRadius(6)
+                .backgroundColor(withColorAlpha(this.themePrimary, '18'))
+                .border({ width: 1, color: withColorAlpha(this.themePrimary, '40') })
+
+              if (this.currentEngineSupportsScrape()) {
+                Text(pickLocalizedText('网页抓取', 'Scrape'))
+                  .fontSize(11)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.themePrimary)
+                  .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                  .borderRadius(6)
+                  .backgroundColor(withColorAlpha(this.themePrimary, '18'))
+                  .border({ width: 1, color: withColorAlpha(this.themePrimary, '40') })
+              } else {
+                Text(pickLocalizedText('网页抓取', 'Scrape'))
+                  .fontSize(11)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_tertiary'))
+                  .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                  .borderRadius(6)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .border({ width: 1, color: $r('app.color.divider') })
+              }
+            }
+            .width('100%')
+            .margin({ top: 4 })
+          }
+          .width('100%')
+          .padding(14)
+          .borderRadius(14)
+          .backgroundColor(getAppUiState().themeSurface)
+
+          // 配置区域（仅需要 API Key 的引擎显示）
+          if (this.currentEngineHasConfig()) {
+            Column({ space: 10 }) {
+              Text(pickLocalizedText('认证配置', 'Authentication'))
+                .fontSize(13)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+
+              if (this.searchEngine === SearchEngine.BRAVE) {
+                TextInput({ text: this.searchBraveApiKey, placeholder: 'Brave Search API Key' })
+                  .onChange((value: string) => { this.searchBraveApiKey = value })
+                  .type(InputType.Password)
+                  .enableAutoFill(false)
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+              }
+
+              if (this.searchEngine === SearchEngine.TAVILY) {
+                TextInput({ text: this.searchTavilyApiKey, placeholder: 'Tavily API Key' })
+                  .onChange((value: string) => { this.searchTavilyApiKey = value })
+                  .type(InputType.Password)
+                  .enableAutoFill(false)
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+
+                TextInput({ text: this.searchTavilyBaseUrl, placeholder: 'https://api.tavily.com' })
+                  .onChange((value: string) => { this.searchTavilyBaseUrl = value })
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+                  .margin({ top: 4 })
+              }
+
+              if (this.searchEngine === SearchEngine.EXA) {
+                TextInput({ text: this.searchExaApiKey, placeholder: 'Exa API Key' })
+                  .onChange((value: string) => { this.searchExaApiKey = value })
+                  .type(InputType.Password)
+                  .enableAutoFill(false)
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+
+                TextInput({ text: this.searchExaBaseUrl, placeholder: 'https://api.exa.ai' })
+                  .onChange((value: string) => { this.searchExaBaseUrl = value })
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+                  .margin({ top: 4 })
+              }
+
+              if (this.searchEngine === SearchEngine.METASO) {
+                TextInput({ text: this.searchMetasoApiKey, placeholder: 'Metaso API Key' })
+                  .onChange((value: string) => { this.searchMetasoApiKey = value })
+                  .type(InputType.Password)
+                  .enableAutoFill(false)
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+              }
+
+              if (this.searchEngine === SearchEngine.FIRECRAWL) {
+                TextInput({ text: this.searchFirecrawlApiKey, placeholder: 'Firecrawl API Key' })
+                  .onChange((value: string) => { this.searchFirecrawlApiKey = value })
+                  .type(InputType.Password)
+                  .enableAutoFill(false)
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+
+                TextInput({ text: this.searchFirecrawlBaseUrl, placeholder: 'https://api.firecrawl.dev' })
+                  .onChange((value: string) => { this.searchFirecrawlBaseUrl = value })
+                  .fontSize(13)
+                  .width('100%')
+                  .height(40)
+                  .borderRadius(10)
+                  .backgroundColor(getAppUiState().themeBackground)
+                  .padding({ left: 12, right: 12 })
+                  .margin({ top: 4 })
+              }
+
+              Text(pickLocalizedText(
+                '支持自定义 Base URL 的引擎可接入代理或私有部署',
+                'Engines with Base URL support can connect to proxies or private deployments'
+              ))
+                .fontSize(11)
                 .fontColor($r('app.color.text_tertiary'))
                 .width('100%')
-                .margin({ top: 6 })
+                .margin({ top: 2 })
             }
+            .width('100%')
+            .padding(14)
+            .borderRadius(14)
+            .backgroundColor(getAppUiState().themeSurface)
+          }
 
-            if (this.searchEngine === SearchEngine.EXA) {
-              TextInput({ text: this.searchExaApiKey, placeholder: $r('app.string.search_exa_api_key') })
-                .onChange((value: string) => {
-                  this.searchExaApiKey = value
-                })
-                .type(InputType.Password)
-                .enableAutoFill(false)
+          // 高级选项
+          if (this.currentEngineSupportsQueryOptimization()) {
+            Column({ space: 8 }) {
+              Text(pickLocalizedText('高级选项', 'Advanced'))
                 .fontSize(13)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
                 .width('100%')
-                .height(40)
-                .borderRadius(10)
-                .backgroundColor(getAppUiState().themeBackground)
-                .padding({ left: 12, right: 12 })
-                .margin({ top: 8 })
 
-              TextInput({ text: this.searchExaBaseUrl, placeholder: $r('app.string.search_exa_base_url') })
-                .onChange((value: string) => {
-                  this.searchExaBaseUrl = value
-                })
-                .fontSize(13)
-                .width('100%')
-                .height(40)
-                .borderRadius(10)
-                .backgroundColor(getAppUiState().themeBackground)
-                .padding({ left: 12, right: 12 })
-                .margin({ top: 8 })
-            }
-
-            Text($r('app.string.search_engine_runtime_hint'))
-              .fontSize(11)
-              .fontColor($r('app.color.text_tertiary'))
-              .width('100%')
-              .margin({ top: 8 })
-
-            if (this.searchEngine === SearchEngine.BING) {
               Row() {
                 Column() {
-                  Text($r('app.string.search_query_optimization'))
+                  Text(pickLocalizedText('搜索词优化', 'Query Optimization'))
                     .fontSize(12)
                     .fontColor($r('app.color.text_secondary'))
                     .width('100%')
 
-                  Text($r('app.string.search_query_optimization_hint'))
+                  Text(pickLocalizedText(
+                    '使用 AI 优化搜索关键词，提升结果相关性',
+                    'Use AI to optimize search keywords for better relevance'
+                  ))
                     .fontSize(11)
                     .fontColor($r('app.color.text_tertiary'))
                     .width('100%')
@@ -1207,13 +1265,12 @@ export struct ToolsCenterPanel {
                   })
               }
               .width('100%')
-              .margin({ top: 10 })
             }
+            .width('100%')
+            .padding(14)
+            .borderRadius(14)
+            .backgroundColor(getAppUiState().themeSurface)
           }
-          .width('100%')
-          .padding(12)
-          .borderRadius(12)
-          .backgroundColor(getAppUiState().themeSurface)
         }
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 24 })
@@ -1225,6 +1282,16 @@ export struct ToolsCenterPanel {
     .width('100%')
     .height('100%')
     .backgroundColor(getAppUiState().themeBackground)
+  }
+
+  private currentEngineSupportsScrape(): boolean {
+    const desc = getSearchEngineRegistry().getById(this.searchEngine)
+    return desc !== undefined && desc.supportsScrape
+  }
+
+  private currentEngineHasConfig(): boolean {
+    const desc = getSearchEngineRegistry().getById(this.searchEngine)
+    return desc !== undefined && desc.configFields.length > 0
   }
 
   @Builder

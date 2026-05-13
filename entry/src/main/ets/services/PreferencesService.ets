@@ -54,6 +54,9 @@ export class PreferenceKeys {
   static readonly SEARCH_TAVILY_BASE_URL: string = 'search_tavily_base_url'
   static readonly SEARCH_EXA_API_KEY: string = 'search_exa_api_key'
   static readonly SEARCH_EXA_BASE_URL: string = 'search_exa_base_url'
+  static readonly SEARCH_METASO_API_KEY: string = 'search_metaso_api_key'
+  static readonly SEARCH_FIRECRAWL_API_KEY: string = 'search_firecrawl_api_key'
+  static readonly SEARCH_FIRECRAWL_BASE_URL: string = 'search_firecrawl_base_url'
   // 内置工具开关 key 前缀: "builtin_tool_enabled_${toolId}"。
   // 不把每个工具 id 都写成静态常量, 方便后续新增工具时无需再改 PreferenceKeys。
   static readonly BUILTIN_TOOL_ENABLED_PREFIX: string = 'builtin_tool_enabled_'

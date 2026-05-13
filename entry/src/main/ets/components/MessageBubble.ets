@@ -1813,7 +1813,7 @@ export struct MessageBubble {
         }
         .width('100%')
         .margin({ top: this.showHeader ? 8 : 0 })
-        .padding({ left: 6, right: 6, top: 10, bottom: 10 })
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
           .backgroundColor(this.isMultiSelectMode && this.isSelected
             ? this.themePrimaryLight
             : this.themeAiBubble)

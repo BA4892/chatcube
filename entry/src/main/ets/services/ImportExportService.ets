@@ -38,6 +38,7 @@ import { getProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { buildProviderImportOrder } from '../config/ProviderOrderUtils'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { setAppUiStateValue } from '../state/AppUiState'
+import { getSearchEngineRegistry, registerAllSearchEngines } from './search/Index'
 
 const ASSISTANT_AVATAR_EXPORT_DIR: string = 'assistant_avatars'
 
@@ -183,15 +184,15 @@ export interface PreferenceEntry {
 }
 
 // 敏感偏好键（不含 API 密钥时需跳过）
-const SENSITIVE_PREFERENCE_KEYS: string[] = [
-  PreferenceKeys.SEARCH_BRAVE_API_KEY,
-  PreferenceKeys.SEARCH_TAVILY_API_KEY,
-  PreferenceKeys.SEARCH_EXA_API_KEY,
-  PreferenceKeys.MCP_SERVER_CONFIGS_JSON,
-  PreferenceKeys.WEBDAV_SERVER_URL,
-  PreferenceKeys.WEBDAV_USERNAME,
-  PreferenceKeys.WEBDAV_PASSWORD
-]
+function getSensitivePreferenceKeys(): string[] {
+  registerAllSearchEngines()
+  const keys = getSearchEngineRegistry().getSensitiveKeys()
+  keys.push(PreferenceKeys.MCP_SERVER_CONFIGS_JSON)
+  keys.push(PreferenceKeys.WEBDAV_SERVER_URL)
+  keys.push(PreferenceKeys.WEBDAV_USERNAME)
+  keys.push(PreferenceKeys.WEBDAV_PASSWORD)
+  return keys
+}
 
 // 会话数据
 interface SessionData {
@@ -495,7 +496,7 @@ export class ImportExportService {
       const includeSecrets = this.shouldIncludeSecrets(options)
       for (const key of keys) {
         // 若不含 API 密钥，跳过敏感键
-        if (!includeSecrets && SENSITIVE_PREFERENCE_KEYS.includes(key)) {
+        if (!includeSecrets && getSensitivePreferenceKeys().includes(key)) {
           continue
         }
         const value = allData.get(key)
