@@ -53,6 +53,15 @@ export interface ToolCallCallbacks {
   onSearching?: (query: string) => void
 }
 
+// 单轮 streamChat 完成时回传的结果, 让外层 while 循环决定继续/终结/报错
+interface ToolStreamRoundOutcome {
+  toolCalls: ToolCall[]
+  toolContinuationContent: string
+  toolContinuationReasoningContent: string
+  hasError: boolean
+  error: string
+}
+
 // 搜索工具参数接口
 interface WebSearchArgs {
   query?: string
@@ -2165,6 +2174,13 @@ ${limitedSearchContext}
   }
 
   // 工具调用循环
+  //
+  // 重要: 这里曾经是"onComplete 内 await this.executeToolCallLoop(...)"的递归实现,
+  // 每多一轮工具调用就多一层 await + 一份闭包(roundStreamingToolCalls/upsertRoundToolPart 等),
+  // 20+ 轮时栈和闭包累积可导致 native OOM kill(无日志的应用闪退)以及 UI 刷新调度阻塞。
+  // 现在改成 while 迭代: 把每轮 streamChatRequestWithTools 的 callback 包装成
+  // Promise<ToolStreamRoundOutcome>, 上层根据 outcome 决定继续工具/finalize/报错,
+  // 每轮闭包在迭代结束后即可 GC, 栈深度保持常数。
   private async executeToolCallLoop(
     apiConfig: AIApiConfig,
     requestMessages: RequestMessage[],
@@ -2177,7 +2193,7 @@ ${limitedSearchContext}
     toolCallbacks: ToolCallCallbacks | undefined,
     reasoningLevel: ReasoningLevel,
     requestTemperature: number,
-    toolStepIndex: number,
+    initialToolStepIndex: number,
     snapshotSessionId: string,
     snapshotSession: ChatSession | null,
     shouldAutoGenerateTitle: boolean,
@@ -2192,392 +2208,102 @@ ${limitedSearchContext}
     localContentThrottle: ThrottleUtil,
     localReasoningThrottle: ThrottleUtil
   ): Promise<void> {
-    if (isCancelledFn()) {
-      return
-    }
-
-    const toolsEnabledInThisRound = toolStepIndex < this.MAX_TOOL_STEPS
-    if (!toolsEnabledInThisRound) {
-      console.warn('ChatViewModel', `Max tool steps (${this.MAX_TOOL_STEPS}) reached, forcing final answer without tools`)
-    }
-
-    console.info('ChatViewModel', `Tool step ${toolStepIndex + 1}`)
-    let toolContinuationContent = ''
-    let toolContinuationReasoningContent = ''
-    let roundHasToolCallDelta = false
-    let streamedContentLength = 0
-    let streamedReasoningLength = 0
-    const roundStreamingToolCalls: Map<number, ToolCall> = new Map()
-    const roundToolPartIndexes: Map<number, number> = new Map()
-
-    const markCurrentRoundAsToolCall = (): void => {
-      if (roundHasToolCallDelta) {
+    let toolStepIndex = initialToolStepIndex
+    while (true) {
+      if (isCancelledFn()) {
         return
       }
-      roundHasToolCallDelta = true
-      if (streamedContentLength > 0 && aiMessage.content.length >= streamedContentLength) {
-        toolContinuationContent = aiMessage.content.substring(aiMessage.content.length - streamedContentLength)
-      }
-      if (streamedReasoningLength > 0 && aiMessage.reasoningContent.length >= streamedReasoningLength) {
-        toolContinuationReasoningContent = aiMessage.reasoningContent.substring(
-          aiMessage.reasoningContent.length - streamedReasoningLength
-        )
-      }
-      this.finishTrailingReasoningPart(aiMessage)
-      onAIMessageUpdated(aiMessage)
-    }
 
-    const upsertRoundToolPart = (delta: ToolCallDelta): void => {
-      let toolCall = roundStreamingToolCalls.get(delta.index)
-      if (toolCall === undefined) {
-        toolCall = new ToolCall('', '', '')
-        roundStreamingToolCalls.set(delta.index, toolCall)
+      const toolsEnabledInThisRound = toolStepIndex < this.MAX_TOOL_STEPS
+      if (!toolsEnabledInThisRound) {
+        console.warn('ChatViewModel', `Max tool steps (${this.MAX_TOOL_STEPS}) reached, forcing final answer without tools`)
       }
-      this.applyToolCallDelta(toolCall, delta)
+      console.info('ChatViewModel', `Tool step ${toolStepIndex + 1}`)
 
-      const existingPartIndex = roundToolPartIndexes.get(delta.index)
-      if (existingPartIndex !== undefined && existingPartIndex >= 0 && existingPartIndex < aiMessage.parts.length) {
-        const existingPart = aiMessage.parts[existingPartIndex]
-        if (existingPart.kind === MessagePartKind.TOOL) {
-          this.syncToolPartFromToolCall(existingPart, toolCall)
+      // 每轮独立闭包变量 (while 迭代结束自动 GC, 不会像递归那样跨轮累积)
+      let toolContinuationContent = ''
+      let toolContinuationReasoningContent = ''
+      let roundHasToolCallDelta = false
+      let streamedContentLength = 0
+      let streamedReasoningLength = 0
+      const roundStreamingToolCalls: Map<number, ToolCall> = new Map()
+      const roundToolPartIndexes: Map<number, number> = new Map()
+
+      const markCurrentRoundAsToolCall = (): void => {
+        if (roundHasToolCallDelta) {
           return
         }
+        roundHasToolCallDelta = true
+        if (streamedContentLength > 0 && aiMessage.content.length >= streamedContentLength) {
+          toolContinuationContent = aiMessage.content.substring(aiMessage.content.length - streamedContentLength)
+        }
+        if (streamedReasoningLength > 0 && aiMessage.reasoningContent.length >= streamedReasoningLength) {
+          toolContinuationReasoningContent = aiMessage.reasoningContent.substring(
+            aiMessage.reasoningContent.length - streamedReasoningLength
+          )
+        }
+        this.finishTrailingReasoningPart(aiMessage)
+        onAIMessageUpdated(aiMessage)
       }
 
-      this.finishTrailingReasoningPart(aiMessage)
-      const part = createToolPart(toolCall, null)
-      aiMessage.parts = aiMessage.parts.concat([part])
-      roundToolPartIndexes.set(delta.index, aiMessage.parts.length - 1)
-    }
-
-    const appendRoundReasoning = (content: string): void => {
-      if (content === '') {
-        return
-      }
-      aiMessage.reasoningContent += content
-      this.pushPartReasoning(aiMessage, content)
-      if (!roundHasToolCallDelta) {
-        streamedReasoningLength += content.length
-      }
-      onAIMessageUpdated(aiMessage)
-    }
-
-    const flushPendingRoundReasoning = (): void => {
-      localReasoningThrottle.flush((throttledReasoning: string) => {
-        if (isCancelledFn()) {
-          return
+      const upsertRoundToolPart = (delta: ToolCallDelta): void => {
+        let toolCall = roundStreamingToolCalls.get(delta.index)
+        if (toolCall === undefined) {
+          toolCall = new ToolCall('', '', '')
+          roundStreamingToolCalls.set(delta.index, toolCall)
         }
-        appendRoundReasoning(throttledReasoning)
-      })
-    }
+        this.applyToolCallDelta(toolCall, delta)
 
-    const flushPendingRoundContent = (): void => {
-      localFirstChunkThrottle.flush((throttledContent: string) => {
-        if (isCancelledFn()) {
-          return
-        }
-        appendRoundContent(throttledContent)
-      })
-      localContentThrottle.flush((throttledContent: string) => {
-        if (isCancelledFn()) {
-          return
-        }
-        appendRoundContent(throttledContent)
-      })
-    }
-
-    const appendRoundContent = (content: string): void => {
-      if (content === '') {
-        return
-      }
-      flushPendingRoundReasoning()
-      aiMessage.content += content
-      this.pushPartText(aiMessage, content)
-      if (!roundHasToolCallDelta) {
-        streamedContentLength += content.length
-      }
-      onAIMessageUpdated(aiMessage)
-    }
-
-    // 检查是否已取消
-    if (isToolCancelledFn()) {
-      console.info('ChatViewModel', 'Tool execution cancelled by user')
-      aiMessage.isGenerating = false
-      onAIMessageUpdated(aiMessage)
-      onComplete()
-      return
-    }
-
-    // 设置取消检查回调
-    this.toolExecutionService.setCancelCheckCallback(isToolCancelledFn)
-
-    // 发送流式请求（带工具）
-    const httpRequest = this.aiApiService.streamChatRequestWithTools(
-      apiConfig,
-      requestMessages,
-      modelId,
-      (contentChunk: string) => {
-        if (isCancelledFn()) {
-          return
-        }
-        if (!getHasReceivedFirstChunk()) {
-          localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (isCancelledFn()) {
-              return
-            }
-            appendRoundContent(throttledContent)
-            setHasReceivedFirstChunk(true)
-          })
-        } else {
-          localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (isCancelledFn()) {
-              return
-            }
-            appendRoundContent(throttledContent)
-          })
-        }
-      },
-      async (toolCalls: ToolCall[]) => {
-        if (isCancelledFn()) {
-          return
-        }
-        // 刷新节流器
-        flushPendingRoundReasoning()
-        flushPendingRoundContent()
-        setHasReceivedFirstChunk(false)
-
-        // 检查是否有工具调用
-        if (toolCalls.length > 0 && toolsEnabledInThisRound) {
-          console.info('ChatViewModel', `[Function Calling] Received ${toolCalls.length} tool calls`)
-          const latestUserQuery = this.getLatestUserQueryFromRequestMessages(requestMessages)
-          markCurrentRoundAsToolCall()
-
-          // 保存工具调用到 AI 消息，并把最终 id/name/arguments 同步回 delta 阶段创建的 ToolPart。
-          for (let i = 0; i < toolCalls.length; i++) {
-            if (this.isWebSearchFunction(toolCalls[i].functionName)) {
-              const normalizedSearchQuery = this.normalizeSearchToolCallArguments(toolCalls[i], latestUserQuery)
-              if (normalizedSearchQuery !== '') {
-                console.info('ChatViewModel',
-                  `[Function Calling] normalized search tool request="${normalizedSearchQuery}"`)
-              }
-            }
-            aiMessage.toolCalls.push(toolCalls[i])
-
-            let synced = false
-            const partIndex = roundToolPartIndexes.get(i)
-            if (partIndex !== undefined && partIndex >= 0 && partIndex < aiMessage.parts.length) {
-              const part = aiMessage.parts[partIndex]
-              if (part.kind === MessagePartKind.TOOL) {
-                this.syncToolPartFromToolCall(part, toolCalls[i])
-                synced = true
-              }
-            }
-            if (!synced && toolCalls[i].id !== '') {
-              for (let j = 0; j < aiMessage.parts.length; j++) {
-                const part = aiMessage.parts[j]
-                if (part.kind === MessagePartKind.TOOL && part.toolCallId === toolCalls[i].id) {
-                  this.syncToolPartFromToolCall(part, toolCalls[i])
-                  synced = true
-                  break
-                }
-              }
-            }
-            if (!synced) {
-              this.pushToolPart(aiMessage, toolCalls[i])
-            }
+        const existingPartIndex = roundToolPartIndexes.get(delta.index)
+        if (existingPartIndex !== undefined && existingPartIndex >= 0 && existingPartIndex < aiMessage.parts.length) {
+          const existingPart = aiMessage.parts[existingPartIndex]
+          if (existingPart.kind === MessagePartKind.TOOL) {
+            this.syncToolPartFromToolCall(existingPart, toolCall)
+            return
           }
-          onAIMessageUpdated(aiMessage)
+        }
 
-          // 通知工具调用开始
-          if (toolCallbacks !== undefined && toolCallbacks.onToolCallStarted !== undefined) {
-            toolCallbacks.onToolCallStarted(toolCalls)
-          }
+        this.finishTrailingReasoningPart(aiMessage)
+        const part = createToolPart(toolCall, null)
+        aiMessage.parts = aiMessage.parts.concat([part])
+        roundToolPartIndexes.set(delta.index, aiMessage.parts.length - 1)
+      }
 
-          // 检查是否是搜索工具，更新搜索状态
-          for (let i = 0; i < toolCalls.length; i++) {
-            if (this.isWebSearchFunction(toolCalls[i].functionName)) {
-              aiMessage.searchSource = 'tool'
-              aiMessage.isSearching = true
-              try {
-                const searchRequestText = this.extractSearchToolRequestText(toolCalls[i])
-                aiMessage.searchQuery = searchRequestText
-                console.info('ChatViewModel',
-                  `[Function Calling] ${toolCalls[i].functionName}(request="${searchRequestText}")`)
-                if (toolCallbacks !== undefined && toolCallbacks.onSearching !== undefined) {
-                  toolCallbacks.onSearching(searchRequestText)
-                }
-              } catch (e) {
-                console.warn('ChatViewModel', `Failed to parse search tool args: ${JSON.stringify(e)}`)
-              }
-              onAIMessageUpdated(aiMessage)
-              break
-            }
-          }
+      const appendRoundReasoning = (content: string): void => {
+        if (content === '') {
+          return
+        }
+        aiMessage.reasoningContent += content
+        this.pushPartReasoning(aiMessage, content)
+        if (!roundHasToolCallDelta) {
+          streamedReasoningLength += content.length
+        }
+        onAIMessageUpdated(aiMessage)
+      }
 
-          // 执行工具调用
-          const toolResults = await this.toolExecutionService.executeToolCalls(toolCalls)
+      const flushPendingRoundReasoning = (): void => {
+        localReasoningThrottle.flush((throttledReasoning: string) => {
           if (isCancelledFn()) {
             return
           }
+          appendRoundReasoning(throttledReasoning)
+        })
+      }
 
-          // 检查工具执行是否被取消
-          if (toolResults.length > 0 && toolResults[0].content.includes('"cancelled":true')) {
-            console.info('ChatViewModel', 'Tool execution was cancelled')
-            aiMessage.isGenerating = false
-            onAIMessageUpdated(aiMessage)
-            onComplete()
-            this.toolExecutionService.clearCancelCheckCallback()
-            return
-          }
-
-          // 保存工具结果到 AI 消息
-          for (let i = 0; i < toolCalls.length; i++) {
-            this.syncToolPartByCall(aiMessage, toolCalls[i])
-          }
-          for (let i = 0; i < toolResults.length; i++) {
-            aiMessage.toolResults.push(toolResults[i])
-            this.attachToolResultPart(aiMessage, toolResults[i])
-          }
-
-          // 持久化工具事件到数据库（使用快照 sessionId）
-          if (snapshotSession !== null) {
-            for (let i = 0; i < toolCalls.length; i++) {
-              if (isCancelledFn()) {
-                return
-              }
-              const result = i < toolResults.length ? toolResults[i] : null
-              const status = result !== null ? (result.isError ? 'failed' : 'completed') : 'pending'
-              await this.databaseService.saveToolEvent(
-                snapshotSessionId,
-                aiMessage.id,
-                toolCalls[i].id,
-                toolCalls[i].functionName,
-                toolCalls[i].displayName,
-                toolCalls[i].sourceLabel,
-                toolCalls[i].sourceType,
-                toolCalls[i].permissionLevel,
-                toolCalls[i].arguments,
-                result !== null ? result.content : '',
-                status
-              )
-            }
-          }
-
-          // 处理搜索结果，提取引用
-          for (let i = 0; i < toolCalls.length; i++) {
-            if (this.isWebSearchFunction(toolCalls[i].functionName)) {
-              const result = toolResults[i]
-              try {
-                const searchData = JSON.parse(result.content) as SearchResultData
-                if (searchData.results !== undefined) {
-                  if (searchData.query !== undefined && searchData.query !== '') {
-                    aiMessage.searchQuery = searchData.query
-                  }
-                  aiMessage.searchEngine = searchData.searchEngine || 'Web'
-                  aiMessage.searchSource = 'tool'
-                  if (searchData.query !== undefined && searchData.query !== '') {
-                    console.info('ChatViewModel', `[Function Calling] search tool result query="${searchData.query}"`)
-                  }
-                  // 收集本次工具调用对应的 references,既汇入聚合列表,也按 toolCallId 切片塞回到对应 part,
-                  // 让 timeline 里点击单条搜索 step 时能精确展示这一次的结果
-                  const refsForThisCall: SearchReference[] = []
-                  for (let j = 0; j < searchData.results.length; j++) {
-                    const item = searchData.results[j]
-                    const ref = new SearchReference(
-                      `ref_${Date.now()}_${j}`,
-                      item.title,
-                      item.url,
-                      item.snippet
-                    )
-                    aiMessage.searchReferences.push(ref)
-                    refsForThisCall.push(ref)
-                  }
-                  if (refsForThisCall.length > 0) {
-                    for (let k = 0; k < aiMessage.parts.length; k++) {
-                      const p = aiMessage.parts[k]
-                      if (p.kind === MessagePartKind.TOOL && p.toolCallId === toolCalls[i].id) {
-                        p.toolSearchReferences = refsForThisCall
-                        break
-                      }
-                    }
-                  }
-                }
-              } catch (e) {
-                console.warn('ChatViewModel', `Failed to parse search result: ${JSON.stringify(e)}`)
-              }
-              aiMessage.isSearching = false
-              break
-            }
-          }
-          onAIMessageUpdated(aiMessage)
-
-          // 通知工具调用完成
-          if (toolCallbacks !== undefined && toolCallbacks.onToolCallCompleted !== undefined) {
-            toolCallbacks.onToolCallCompleted(toolResults)
-          }
-
-          // 构建下一轮请求消息
-          const assistantMsg = RequestMessage.createAssistantWithToolCalls(toolContinuationContent, toolCalls)
-          assistantMsg.reasoningContent = toolContinuationReasoningContent
-          requestMessages.push(assistantMsg)
-
-          for (let i = 0; i < toolResults.length; i++) {
-            const toolResultMsg = RequestMessage.createToolResultMessage(
-              toolResults[i].toolCallId,
-              toolResults[i].content
-            )
-            requestMessages.push(toolResultMsg)
-          }
-
-          // 继续下一轮
-          await this.executeToolCallLoop(
-            apiConfig,
-            requestMessages,
-            modelId,
-            aiMessage,
-            onAIMessageUpdated,
-            onComplete,
-            onError,
-            tools,
-            toolCallbacks,
-            reasoningLevel,
-            requestTemperature,
-            toolStepIndex + 1,
-            snapshotSessionId,
-            snapshotSession,
-            shouldAutoGenerateTitle,
-            requestId,
-            isCancelledFn,
-            isUserCancelledFn,
-            isToolCancelledFn,
-            setUserCancelled,
-            getHasReceivedFirstChunk,
-            setHasReceivedFirstChunk,
-            localFirstChunkThrottle,
-            localContentThrottle,
-            localReasoningThrottle
-          )
-        } else {
-          if (toolCalls.length > 0) {
-            console.warn('ChatViewModel', `Ignored ${toolCalls.length} tool calls because tool round limit is reached`)
-          }
-          // 没有工具调用，完成
-          await this.finalizeAIMessage(
-            aiMessage,
-            onAIMessageUpdated,
-            onComplete,
-            snapshotSessionId,
-            snapshotSession,
-            shouldAutoGenerateTitle,
-            requestId
-          )
-        }
-      },
-      (error: string) => {
-        if (isCancelledFn()) {
+      const appendRoundContent = (content: string): void => {
+        if (content === '') {
           return
         }
         flushPendingRoundReasoning()
+        aiMessage.content += content
+        this.pushPartText(aiMessage, content)
+        if (!roundHasToolCallDelta) {
+          streamedContentLength += content.length
+        }
+        onAIMessageUpdated(aiMessage)
+      }
+
+      const flushPendingRoundContent = (): void => {
         localFirstChunkThrottle.flush((throttledContent: string) => {
           if (isCancelledFn()) {
             return
@@ -2590,69 +2316,375 @@ ${limitedSearchContext}
           }
           appendRoundContent(throttledContent)
         })
-        this.fillEmptyAIContentPlaceholder(aiMessage, error)
+      }
+
+      if (isToolCancelledFn()) {
+        console.info('ChatViewModel', 'Tool execution cancelled by user')
+        aiMessage.isGenerating = false
+        onAIMessageUpdated(aiMessage)
+        onComplete()
+        return
+      }
+
+      this.toolExecutionService.setCancelCheckCallback(isToolCancelledFn)
+
+      // 把单轮 streamChat 的 callback 化接口包成 Promise:
+      // - onComplete(toolCalls) → resolve({toolCalls, ...})
+      // - onError(error)        → resolve({hasError: true, error, ...})
+      // 之后外层根据 outcome 在 while 迭代里做 finalize / 工具执行 / 错误处理。
+      const outcome: ToolStreamRoundOutcome = await new Promise<ToolStreamRoundOutcome>((resolve) => {
+        const httpRequest = this.aiApiService.streamChatRequestWithTools(
+          apiConfig,
+          requestMessages,
+          modelId,
+          (contentChunk: string) => {
+            if (isCancelledFn()) {
+              return
+            }
+            if (!getHasReceivedFirstChunk()) {
+              localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
+                if (isCancelledFn()) {
+                  return
+                }
+                appendRoundContent(throttledContent)
+                setHasReceivedFirstChunk(true)
+              })
+            } else {
+              localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
+                if (isCancelledFn()) {
+                  return
+                }
+                appendRoundContent(throttledContent)
+              })
+            }
+          },
+          (toolCalls: ToolCall[]) => {
+            if (isCancelledFn()) {
+              resolve({
+                toolCalls: [],
+                toolContinuationContent: '',
+                toolContinuationReasoningContent: '',
+                hasError: false,
+                error: ''
+              })
+              return
+            }
+            flushPendingRoundReasoning()
+            flushPendingRoundContent()
+            setHasReceivedFirstChunk(false)
+            if (toolCalls.length > 0 && toolsEnabledInThisRound) {
+              markCurrentRoundAsToolCall()
+            }
+            resolve({
+              toolCalls: toolCalls,
+              toolContinuationContent: toolContinuationContent,
+              toolContinuationReasoningContent: toolContinuationReasoningContent,
+              hasError: false,
+              error: ''
+            })
+          },
+          (error: string) => {
+            if (isCancelledFn()) {
+              resolve({
+                toolCalls: [],
+                toolContinuationContent: '',
+                toolContinuationReasoningContent: '',
+                hasError: false,
+                error: ''
+              })
+              return
+            }
+            flushPendingRoundReasoning()
+            localFirstChunkThrottle.flush((throttledContent: string) => {
+              if (isCancelledFn()) {
+                return
+              }
+              appendRoundContent(throttledContent)
+            })
+            localContentThrottle.flush((throttledContent: string) => {
+              if (isCancelledFn()) {
+                return
+              }
+              appendRoundContent(throttledContent)
+            })
+            resolve({
+              toolCalls: [],
+              toolContinuationContent: '',
+              toolContinuationReasoningContent: '',
+              hasError: true,
+              error: error
+            })
+          },
+          requestTemperature,
+          this.appStateManager.getDefaultMaxTokens(),
+          (reasoningContent: string) => {
+            if (isCancelledFn()) {
+              return
+            }
+            localReasoningThrottle.throttle(reasoningContent, (throttledContent: string) => {
+              if (isCancelledFn()) {
+                return
+              }
+              appendRoundReasoning(throttledContent)
+            })
+          },
+          async (base64Data: string, mimeType: string) => {
+            if (isCancelledFn()) {
+              return
+            }
+            try {
+              await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
+            } catch (error) {
+              console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
+            }
+          },
+          reasoningLevel,
+          toolsEnabledInThisRound ? tools : undefined,
+          undefined,
+          (toolCallDeltas: ToolCallDelta[]) => {
+            if (isCancelledFn() || !toolsEnabledInThisRound || toolCallDeltas.length <= 0) {
+              return
+            }
+            flushPendingRoundReasoning()
+            flushPendingRoundContent()
+            markCurrentRoundAsToolCall()
+            for (let i = 0; i < toolCallDeltas.length; i++) {
+              upsertRoundToolPart(toolCallDeltas[i])
+            }
+            onAIMessageUpdated(aiMessage)
+          }
+        )
+
+        // 更新活跃请求中的 httpRequest 引用(每轮 stream 可能创建新的 httpRequest)
+        const existingInfo = this.activeRequests.get(requestId)
+        if (existingInfo !== undefined) {
+          existingInfo.httpRequest = httpRequest
+        } else {
+          this.registerActiveRequest(requestId, httpRequest, () => {
+            // cancel 回调由 sendMessageWithTools 中注册的回调处理
+          }, snapshotSessionId)
+        }
+      })
+
+      // ===== 处理 outcome =====
+      if (isCancelledFn()) {
+        return
+      }
+
+      if (outcome.hasError) {
+        this.fillEmptyAIContentPlaceholder(aiMessage, outcome.error)
         aiMessage.isGenerating = false
         aiMessage.isSearching = false
         onAIMessageUpdated(aiMessage)
-
         if (isUserCancelledFn()) {
           setUserCancelled(false)
           console.info('ChatViewModel', 'Request cancelled by user')
           onComplete()
         } else {
-          onError(error)
+          onError(outcome.error)
         }
         this.clearPendingAIMessageIfMatches(aiMessage.id)
         this.unregisterActiveRequest(requestId)
-      },
-      requestTemperature,
-      this.appStateManager.getDefaultMaxTokens(),
-      (reasoningContent: string) => {
-        if (isCancelledFn()) {
-          return
+        return
+      }
+
+      const toolCalls = outcome.toolCalls
+
+      if (toolCalls.length === 0 || !toolsEnabledInThisRound) {
+        if (toolCalls.length > 0) {
+          console.warn('ChatViewModel', `Ignored ${toolCalls.length} tool calls because tool round limit is reached`)
         }
-        localReasoningThrottle.throttle(reasoningContent, (throttledContent: string) => {
+        await this.finalizeAIMessage(
+          aiMessage,
+          onAIMessageUpdated,
+          onComplete,
+          snapshotSessionId,
+          snapshotSession,
+          shouldAutoGenerateTitle,
+          requestId
+        )
+        return
+      }
+
+      // 有工具调用要执行
+      console.info('ChatViewModel', `[Function Calling] Received ${toolCalls.length} tool calls`)
+      const latestUserQuery = this.getLatestUserQueryFromRequestMessages(requestMessages)
+
+      // 同步 toolCalls 到 aiMessage.toolCalls 和 parts
+      for (let i = 0; i < toolCalls.length; i++) {
+        if (this.isWebSearchFunction(toolCalls[i].functionName)) {
+          const normalizedSearchQuery = this.normalizeSearchToolCallArguments(toolCalls[i], latestUserQuery)
+          if (normalizedSearchQuery !== '') {
+            console.info('ChatViewModel',
+              `[Function Calling] normalized search tool request="${normalizedSearchQuery}"`)
+          }
+        }
+        aiMessage.toolCalls.push(toolCalls[i])
+
+        let synced = false
+        const partIndex = roundToolPartIndexes.get(i)
+        if (partIndex !== undefined && partIndex >= 0 && partIndex < aiMessage.parts.length) {
+          const part = aiMessage.parts[partIndex]
+          if (part.kind === MessagePartKind.TOOL) {
+            this.syncToolPartFromToolCall(part, toolCalls[i])
+            synced = true
+          }
+        }
+        if (!synced && toolCalls[i].id !== '') {
+          for (let j = 0; j < aiMessage.parts.length; j++) {
+            const part = aiMessage.parts[j]
+            if (part.kind === MessagePartKind.TOOL && part.toolCallId === toolCalls[i].id) {
+              this.syncToolPartFromToolCall(part, toolCalls[i])
+              synced = true
+              break
+            }
+          }
+        }
+        if (!synced) {
+          this.pushToolPart(aiMessage, toolCalls[i])
+        }
+      }
+      onAIMessageUpdated(aiMessage)
+
+      if (toolCallbacks !== undefined && toolCallbacks.onToolCallStarted !== undefined) {
+        toolCallbacks.onToolCallStarted(toolCalls)
+      }
+
+      // 搜索工具状态
+      for (let i = 0; i < toolCalls.length; i++) {
+        if (this.isWebSearchFunction(toolCalls[i].functionName)) {
+          aiMessage.searchSource = 'tool'
+          aiMessage.isSearching = true
+          try {
+            const searchRequestText = this.extractSearchToolRequestText(toolCalls[i])
+            aiMessage.searchQuery = searchRequestText
+            console.info('ChatViewModel',
+              `[Function Calling] ${toolCalls[i].functionName}(request="${searchRequestText}")`)
+            if (toolCallbacks !== undefined && toolCallbacks.onSearching !== undefined) {
+              toolCallbacks.onSearching(searchRequestText)
+            }
+          } catch (e) {
+            console.warn('ChatViewModel', `Failed to parse search tool args: ${JSON.stringify(e)}`)
+          }
+          onAIMessageUpdated(aiMessage)
+          break
+        }
+      }
+
+      // 执行工具调用
+      const toolResults = await this.toolExecutionService.executeToolCalls(toolCalls)
+      if (isCancelledFn()) {
+        return
+      }
+
+      if (toolResults.length > 0 && toolResults[0].content.includes('"cancelled":true')) {
+        console.info('ChatViewModel', 'Tool execution was cancelled')
+        aiMessage.isGenerating = false
+        onAIMessageUpdated(aiMessage)
+        onComplete()
+        this.toolExecutionService.clearCancelCheckCallback()
+        return
+      }
+
+      // 写入结果到 aiMessage
+      for (let i = 0; i < toolCalls.length; i++) {
+        this.syncToolPartByCall(aiMessage, toolCalls[i])
+      }
+      for (let i = 0; i < toolResults.length; i++) {
+        aiMessage.toolResults.push(toolResults[i])
+        this.attachToolResultPart(aiMessage, toolResults[i])
+      }
+      // 工具结果到达后立刻通知 UI 把 step 状态切到 succeeded/failed,
+      // 不要等下面 saveToolEvent (await 持久化) 完才刷新 timeline
+      onAIMessageUpdated(aiMessage)
+
+      // 持久化工具事件
+      if (snapshotSession !== null) {
+        for (let i = 0; i < toolCalls.length; i++) {
           if (isCancelledFn()) {
             return
           }
-          appendRoundReasoning(throttledContent)
-        })
-      },
-      async (base64Data: string, mimeType: string) => {
-        if (isCancelledFn()) {
-          return
+          const result = i < toolResults.length ? toolResults[i] : null
+          const status = result !== null ? (result.isError ? 'failed' : 'completed') : 'pending'
+          await this.databaseService.saveToolEvent(
+            snapshotSessionId,
+            aiMessage.id,
+            toolCalls[i].id,
+            toolCalls[i].functionName,
+            toolCalls[i].displayName,
+            toolCalls[i].sourceLabel,
+            toolCalls[i].sourceType,
+            toolCalls[i].permissionLevel,
+            toolCalls[i].arguments,
+            result !== null ? result.content : '',
+            status
+          )
         }
-        try {
-          await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
-        } catch (error) {
-          console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-        }
-      },
-      reasoningLevel,
-      toolsEnabledInThisRound ? tools : undefined,
-      undefined,
-      (toolCallDeltas: ToolCallDelta[]) => {
-        if (isCancelledFn() || !toolsEnabledInThisRound || toolCallDeltas.length <= 0) {
-          return
-        }
-        flushPendingRoundReasoning()
-        flushPendingRoundContent()
-        markCurrentRoundAsToolCall()
-        for (let i = 0; i < toolCallDeltas.length; i++) {
-          upsertRoundToolPart(toolCallDeltas[i])
-        }
-        onAIMessageUpdated(aiMessage)
       }
-    )
 
-    // 更新活跃请求中的 httpRequest 引用（每轮循环可能创建新的 httpRequest）
-    const existingInfo = this.activeRequests.get(requestId)
-    if (existingInfo !== undefined) {
-      existingInfo.httpRequest = httpRequest
-    } else {
-      this.registerActiveRequest(requestId, httpRequest, () => {
-        // cancel 回调由 sendMessageWithTools 中注册的回调处理
-      }, snapshotSessionId)
+      // 处理搜索结果引用
+      for (let i = 0; i < toolCalls.length; i++) {
+        if (this.isWebSearchFunction(toolCalls[i].functionName)) {
+          const result = toolResults[i]
+          try {
+            const searchData = JSON.parse(result.content) as SearchResultData
+            if (searchData.results !== undefined) {
+              if (searchData.query !== undefined && searchData.query !== '') {
+                aiMessage.searchQuery = searchData.query
+              }
+              aiMessage.searchEngine = searchData.searchEngine || 'Web'
+              aiMessage.searchSource = 'tool'
+              if (searchData.query !== undefined && searchData.query !== '') {
+                console.info('ChatViewModel', `[Function Calling] search tool result query="${searchData.query}"`)
+              }
+              const refsForThisCall: SearchReference[] = []
+              for (let j = 0; j < searchData.results.length; j++) {
+                const item = searchData.results[j]
+                const ref = new SearchReference(
+                  `ref_${Date.now()}_${j}`,
+                  item.title,
+                  item.url,
+                  item.snippet
+                )
+                aiMessage.searchReferences.push(ref)
+                refsForThisCall.push(ref)
+              }
+              if (refsForThisCall.length > 0) {
+                for (let k = 0; k < aiMessage.parts.length; k++) {
+                  const p = aiMessage.parts[k]
+                  if (p.kind === MessagePartKind.TOOL && p.toolCallId === toolCalls[i].id) {
+                    p.toolSearchReferences = refsForThisCall
+                    break
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('ChatViewModel', `Failed to parse search result: ${JSON.stringify(e)}`)
+          }
+          aiMessage.isSearching = false
+          break
+        }
+      }
+      onAIMessageUpdated(aiMessage)
+
+      if (toolCallbacks !== undefined && toolCallbacks.onToolCallCompleted !== undefined) {
+        toolCallbacks.onToolCallCompleted(toolResults)
+      }
+
+      // 准备下一轮 requestMessages
+      const assistantMsg = RequestMessage.createAssistantWithToolCalls(outcome.toolContinuationContent, toolCalls)
+      assistantMsg.reasoningContent = outcome.toolContinuationReasoningContent
+      requestMessages.push(assistantMsg)
+      for (let i = 0; i < toolResults.length; i++) {
+        const toolResultMsg = RequestMessage.createToolResultMessage(
+          toolResults[i].toolCallId,
+          toolResults[i].content
+        )
+        requestMessages.push(toolResultMsg)
+      }
+
+      toolStepIndex++
     }
   }
 

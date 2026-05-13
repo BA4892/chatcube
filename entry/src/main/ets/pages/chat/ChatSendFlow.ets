@@ -378,6 +378,12 @@ export class ChatSendFlow {
       return
     }
     syncChatMessageFromSource(this.deps.messages[index], aiMessage)
+    // 流式增量必须递增 syncVersion 触发 ChatMessageListSection 重算 renderSignature,
+    // 否则 LazyForEach 数据源不会下发变更通知, 即使 ChatMessage 是 @ObservedV2 + @Trace,
+    // 在 LazyForEach 嵌套场景下也无法精确刷新 item 内部 - 第一轮 reasoning 之后 timeline
+    // 看似"卡住"就是这条路径漏掉导致的(handleAIMessageAdded 调过一次 onSyncMessages,
+    // 之后 streaming 全程只走 sync 不递增 version)。
+    this.deps.onSyncMessages()
     this.deps.onScrollBottom()
   }
 

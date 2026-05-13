@@ -2472,7 +2472,11 @@ export struct MessageBubble {
 	          this.PartsContentBlock(block, index)
 	        }
 	      }, (block: MessagePartBlock, index: number) => {
-	        return block.kind + '_' + index.toString()
+	        // 必须把 block.parts.length 拼进 key, 否则 push 新 part (新 reasoning / 新 tool) 时,
+	        // blocks 数组结构通常仍是 [THINKING] 或 [THINKING, CONTENT], index 不变, 老 key 'thinking_0' 不变,
+	        // ForEach 会复用旧 PartsTimelineBlock 不重新调用, 内部 steps 静止 → 第一轮 reasoning 完成后 UI 卡死。
+	        // V2 在 ForEach itemArray 引用变化但 key 不变时不会重建子组件, 必须 key 变化触发重建。
+	        return block.kind + '_' + index.toString() + '_' + block.parts.length.toString()
 	      })
 	    }
 	    .width('100%')
@@ -2482,8 +2486,8 @@ export struct MessageBubble {
 	  PartsContentBlock(block: MessagePartBlock, blockIndex: number) {
 	    Column() {
 	      ForEach(block.parts, (part: MessagePart, index: number) => {
-	        if (part.kind === MessagePartKind.TEXT && part.text.trim() !== '') {
-	          this.PartTextContent(part.text, blockIndex, index)
+	        if (part.kind === MessagePartKind.TEXT) {
+	          this.PartTextContent(part, blockIndex, index)
 	        }
 	      }, (part: MessagePart, index: number) => {
 	        return part.kind + '_' + blockIndex.toString() + '_' + index.toString()
@@ -2493,50 +2497,56 @@ export struct MessageBubble {
 	    .margin({ bottom: 8 })
 	  }
 
+	  // 注意: 必须接收整个 MessagePart 对象 (而非 part.text 字符串), 内部直接访问 part.text。
+	  // MessagePart 是 @ObservedV2 + @Trace text, 只有在 Builder 内访问 part.text 才能让
+	  // Markdown 的 text 属性建立响应式依赖, 流式增量 (pushPartText 中 last.text += delta) 才会实时刷新。
+	  // 若把 part.text 在父 Builder 内提取成 string 再传入, 依赖会在参数边界处断链, 表现为正文不实时渲染。
 	  @Builder
-	  PartTextContent(content: string, blockIndex: number, partIndex: number) {
+	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
-	      if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(content)) {
-	        ForEach(this.splitContentToSegments(content),
-	          (segment: ContentSegment, index: number) => {
-	            if (segment.type === ContentSegmentType.HTML) {
-	              HtmlPreviewCard({
-	                htmlCode: segment.renderContent,
-	                onCopyCode: (code: string) => {
-	                  this.copyToClipboard(code)
-	                  showToast(this.getUIContext(), $r('app.string.copy_success'))
-	                }
-	              })
-	            } else if (segment.type === ContentSegmentType.MERMAID) {
-	              MermaidPreviewCard({
-	                mermaidCode: segment.renderContent,
-	                onCopyCode: (code: string) => {
-	                  this.copyToClipboard(code)
-	                  showToast(this.getUIContext(), $r('app.string.copy_success'))
-	                }
-	              })
-		            } else {
-		              Markdown({
-		                controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
-		                text: segment.renderContent
-		              })
-	                .width('100%')
-	                .backgroundColor(Color.Transparent)
+	      if (part.text.trim() !== '') {
+	        if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(part.text)) {
+	          ForEach(this.splitContentToSegments(part.text),
+	            (segment: ContentSegment, index: number) => {
+	              if (segment.type === ContentSegmentType.HTML) {
+	                HtmlPreviewCard({
+	                  htmlCode: segment.renderContent,
+	                  onCopyCode: (code: string) => {
+	                    this.copyToClipboard(code)
+	                    showToast(this.getUIContext(), $r('app.string.copy_success'))
+	                  }
+	                })
+	              } else if (segment.type === ContentSegmentType.MERMAID) {
+	                MermaidPreviewCard({
+	                  mermaidCode: segment.renderContent,
+	                  onCopyCode: (code: string) => {
+	                    this.copyToClipboard(code)
+	                    showToast(this.getUIContext(), $r('app.string.copy_success'))
+	                  }
+	                })
+	              } else {
+	                Markdown({
+	                  controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
+	                  text: segment.renderContent
+	                })
+	                  .width('100%')
+	                  .backgroundColor(Color.Transparent)
+	              }
+	            },
+	            (segment: ContentSegment, index: number) => {
+	              return 'part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
+	                segment.type + '_' + index.toString()
 	            }
-	          },
-	          (segment: ContentSegment, index: number) => {
-	            return 'part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
-	              segment.type + '_' + index.toString()
-	          }
-	        )
-		      } else {
-		        Markdown({
-		          controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.convertTaskListToReadonly(content)),
-		          text: this.convertTaskListToReadonly(content)
-		        })
-	          .width('100%')
-	          .backgroundColor(Color.Transparent)
-	          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+	          )
+	        } else {
+	          Markdown({
+	            controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.convertTaskListToReadonly(part.text)),
+	            text: this.convertTaskListToReadonly(part.text)
+	          })
+	            .width('100%')
+	            .backgroundColor(Color.Transparent)
+	            .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+	        }
 	      }
 	    }
 	    .width('100%')
