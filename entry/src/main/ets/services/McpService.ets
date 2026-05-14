@@ -4,9 +4,11 @@ import {
   ToolConfig,
   ToolDefinition,
   ToolFunction,
+  ToolApprovalPolicy,
   ToolParameters,
   ToolPermissionLevel,
-  ToolSourceType
+  ToolSourceType,
+  normalizeToolApprovalPolicy
 } from '../models/ChatModels'
 import {
   McpAuthType,
@@ -85,6 +87,7 @@ class McpServerConfigJson {
   authType: string = McpAuthType.NONE
   authToken: string = ''
   customHeadersJson: string = ''
+  toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
 }
 
 class McpToolCallParams {
@@ -180,7 +183,8 @@ export class McpService {
           this.readBoolean(item, 'enabled', true),
           this.readString(item, 'authType', McpAuthType.NONE),
           this.readString(item, 'authToken'),
-          this.readString(item, 'customHeadersJson')
+          this.readString(item, 'customHeadersJson'),
+          this.readMcpToolApprovalPolicy(item)
         ))
       }
       return result
@@ -201,6 +205,7 @@ export class McpService {
       item.authType = configs[i].authType
       item.authToken = configs[i].authToken
       item.customHeadersJson = configs[i].customHeadersJson
+      item.toolApprovalPolicy = normalizeToolApprovalPolicy(configs[i].toolApprovalPolicy)
       serialized.push(item)
     }
     await this.preferencesService.setString(
@@ -433,7 +438,8 @@ export class McpService {
       server.id,
       discovered.functionName,
       server.name,
-      discovered.permissionLevel
+      discovered.permissionLevel,
+      server.toolApprovalPolicy
     )
     return new RegisteredTool(
       discovered.toolId,
@@ -946,6 +952,19 @@ export class McpService {
   private readString(data: Record<string, Object>, key: string, defaultValue: string = ''): string {
     const value = data[key]
     return typeof value === 'string' ? value : defaultValue
+  }
+
+  private readMcpToolApprovalPolicy(data: Record<string, Object>): string {
+    const rawPolicy = this.readString(data, 'toolApprovalPolicy')
+    if (rawPolicy !== '') {
+      return normalizeToolApprovalPolicy(rawPolicy)
+    }
+
+    const legacySkipApproval = data['skipApproval']
+    if (typeof legacySkipApproval === 'boolean' && legacySkipApproval) {
+      return ToolApprovalPolicy.ALWAYS_ALLOW
+    }
+    return ToolApprovalPolicy.UNCONFIGURED
   }
 
   private readBoolean(data: Record<string, Object>, key: string, defaultValue: boolean = false): boolean {

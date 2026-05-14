@@ -1,4 +1,10 @@
-import { ToolCall, ToolResult, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
+import {
+  ToolApprovalPolicy,
+  ToolCall,
+  ToolPermissionLevel,
+  ToolResult,
+  ToolSourceType
+} from '../models/ChatModels'
 import { getToolRegistry, RegisteredTool, ToolRegistry } from './ToolRegistry'
 import {
   ASK_USER_TOOL_ID,
@@ -107,10 +113,24 @@ export class ToolExecutionService {
   }
 
   private async requestApprovalIfNeeded(toolCall: ToolCall, tool: RegisteredTool): Promise<boolean> {
+    if (tool.config.sourceType === ToolSourceType.MCP) {
+      if (tool.config.approvalPolicy === ToolApprovalPolicy.ALWAYS_ALLOW) {
+        toolCall.approvalState = 'auto'
+        toolCall.approvalReason = 'always_allow'
+        return true
+      }
+      return await this.requestManualApproval(toolCall, tool)
+    }
+
     if (tool.config.permissionLevel !== 'write') {
       toolCall.approvalState = 'auto'
       return true
     }
+
+    return await this.requestManualApproval(toolCall, tool)
+  }
+
+  private async requestManualApproval(toolCall: ToolCall, tool: RegisteredTool): Promise<boolean> {
     if (this.approvalCallback === null) {
       toolCall.approvalState = 'denied'
       return false
@@ -251,6 +271,7 @@ export class ToolExecutionService {
     toolCall.sourceType = registeredTool.config.sourceType
     toolCall.sourceLabel = registeredTool.config.sourceLabel
     toolCall.permissionLevel = registeredTool.config.permissionLevel
+    toolCall.approvalPolicy = registeredTool.config.approvalPolicy
 
     const approved = await this.requestApprovalIfNeeded(toolCall, registeredTool)
     if (!approved) {

@@ -1,5 +1,7 @@
 import { ChatMessage, ChatSession, ToolCall, ToolResult } from '../models/ChatModels'
+import { serializeMessageParts } from '../models/MessageParts'
 import { DatabaseService, ToolEventData } from '../services/DatabaseService'
+import { ensureMessageParts } from '../utils/ChatMessagePartsHelper'
 import { AppStateManager } from './AppStateManager'
 
 // 会话存储与状态聚合：集中处理会话的创建、加载、删除和偏好状态更新
@@ -95,6 +97,7 @@ export class ChatSessionStore {
     const messages = await loadMessages()
     const toolEvents = await this.databaseService.getToolEventsBySession(sessionId)
     this.rehydrateToolEvents(messages, toolEvents)
+    await this.migrateLegacyMessageParts(messages)
     session.messages = messages
     this.pendingSession = null
     this.currentSession = session
@@ -148,6 +151,16 @@ export class ChatSessionStore {
           ))
         }
       }
+    }
+  }
+
+  private async migrateLegacyMessageParts(messages: ChatMessage[]): Promise<void> {
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]
+      if (!ensureMessageParts(message)) {
+        continue
+      }
+      await this.databaseService.updateMessageParts(message.id, serializeMessageParts(message.parts))
     }
   }
 

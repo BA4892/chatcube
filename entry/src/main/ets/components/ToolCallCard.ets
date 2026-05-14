@@ -1,4 +1,4 @@
-import { ToolCall, ToolResult, ToolPermissionLevel } from '../models/ChatModels'
+import { ToolCall, ToolResult } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
 import { buildToolArgumentsPreview, buildToolResultPreview, ToolPayloadPreview } from '../utils/ToolPayloadSummaryUtils'
 import { isScrapeWebFunctionName, isSearchWebFunctionName } from '../utils/SearchToolIdentityUtils'
@@ -123,8 +123,8 @@ export struct ToolCallCard {
         }
 
         // 审批状态徽章(pending/denied): 让用户在卡片上直接看到工具执行被拦住/拒绝
-        if (this.toolCall.approvalState === 'pending' && this.toolCall.permissionLevel === ToolPermissionLevel.WRITE) {
-          Text('待授权')
+        if (this.toolCall.approvalState === 'pending') {
+          Text('待确认')
             .fontSize(10)
             .fontColor(Color.White)
             .backgroundColor(this.themePrimary)

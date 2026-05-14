@@ -1,6 +1,7 @@
 import { ToolPreviewEntry } from '../../utils/ToolPayloadSummaryUtils'
 import { getAppUiState } from '../../state/AppUiState'
 import { pickLocalizedText } from '../../utils/LocalizedTextUtils'
+import { withColorAlpha } from '../../utils/ColorAlphaUtils'
 
 @ComponentV2
 export struct ChatToolExecutionApprovalSheetContent {
@@ -11,10 +12,12 @@ export struct ChatToolExecutionApprovalSheetContent {
   @Param argumentsPreview: string = '{}'
   @Param argumentsTruncated: boolean = false
   @Param showRawArguments: boolean = false
+  @Param alwaysAllowAvailable: boolean = false
   @Param themePrimary: ResourceColor = ''
   @Param isDarkMode: boolean = false
   @Event onToggleShowRaw: () => void = (): void => {}
   @Event onCancel: () => void = (): void => {}
+  @Event onAlwaysAllow: () => void = (): void => {}
   @Event onApprove: () => void = (): void => {}
 
   private get themeBackground(): string {
@@ -23,6 +26,18 @@ export struct ChatToolExecutionApprovalSheetContent {
 
   private get themeSurface(): string {
     return getAppUiState().themeSurface
+  }
+
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(getAppUiState().themePrimary, this.isDarkMode ? '28' : '16')
+  }
+
+  private get riskAccentColor(): string {
+    return '#D9485F'
+  }
+
+  private get riskBackgroundColor(): string {
+    return withColorAlpha(this.riskAccentColor, this.isDarkMode ? '28' : '12')
   }
 
   build() {
@@ -89,7 +104,7 @@ export struct ChatToolExecutionApprovalSheetContent {
         Text(pickLocalizedText('风险提醒', 'Risk Notice'))
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#B85A00')
+          .fontColor(this.riskAccentColor)
 
         Text(pickLocalizedText(
           '这是写操作工具。模型只是提出调用，真正执行前仍需要你明确批准。',
@@ -97,13 +112,13 @@ export struct ChatToolExecutionApprovalSheetContent {
         ))
           .fontSize(12)
           .lineHeight(18)
-          .fontColor(this.isDarkMode ? '#FFD6A6' : '#8A4B08')
+          .fontColor(getAppUiState().themeTextSecondary)
           .width('100%')
       }
       .width('100%')
       .padding(14)
       .borderRadius(16)
-      .backgroundColor(this.isDarkMode ? '#3B2413' : '#FFF3E8')
+      .backgroundColor(this.riskBackgroundColor)
 
       Column({ space: 8 }) {
         Row() {
@@ -188,8 +203,8 @@ export struct ChatToolExecutionApprovalSheetContent {
       }
       .width('100%')
 
-      Row({ space: 12 }) {
-        Button($r('app.string.cancel'))
+      Row({ space: 10 }) {
+        Button(pickLocalizedText('拒绝', 'Deny'))
           .layoutWeight(1)
           .height(46)
           .type(ButtonType.Capsule)
@@ -203,7 +218,23 @@ export struct ChatToolExecutionApprovalSheetContent {
             this.onCancel()
           })
 
-        Button(pickLocalizedText('继续执行', 'Continue'))
+        if (this.alwaysAllowAvailable) {
+          Button(pickLocalizedText('始终允许', 'Always Allow'))
+            .layoutWeight(1)
+            .height(46)
+            .type(ButtonType.Capsule)
+            .backgroundColor(this.themePrimarySubtleBackground)
+            .fontColor(this.themePrimary)
+            .border({
+              width: 0.5,
+              color: this.themePrimary
+            })
+            .onClick(() => {
+              this.onAlwaysAllow()
+            })
+        }
+
+        Button(pickLocalizedText('允许一次', 'Allow Once'))
           .layoutWeight(1)
           .height(46)
           .type(ButtonType.Capsule)

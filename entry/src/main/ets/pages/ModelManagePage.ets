@@ -62,9 +62,6 @@ struct ModelManagePage {
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
-  private get themePrimaryLight(): string {
-    return getAppUiState().themePrimaryLight
-  }
   private get layoutSizeClass(): string {
     return getAppUiState().layoutSizeClass
   }
@@ -1126,8 +1123,8 @@ struct ProviderCardItem {
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
-  private get themePrimaryLight(): string {
-    return getAppUiState().themePrimaryLight
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(this.themePrimary, getAppUiState().isDarkMode ? '28' : '16')
   }
   @Event onCardClick: () => void = () => {}
   @Event onToggleEnabled: () => void = () => {}
@@ -1187,7 +1184,7 @@ struct ProviderCardItem {
             Text($r('app.string.system_service'))
               .fontSize(11)
               .fontColor(this.themePrimary)
-              .backgroundColor(this.themePrimaryLight)
+              .backgroundColor(this.themePrimarySubtleBackground)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .borderRadius(4)
               .margin({ left: 8 })
@@ -1234,7 +1231,7 @@ struct ProviderCardItem {
     .width('100%')
     .borderRadius(16)
     .clip(true)
-    .backgroundColor(this.active ? this.themePrimaryLight : getAppUiState().themeSurface)
+    .backgroundColor(this.active ? this.themePrimarySubtleBackground : getAppUiState().themeSurface)
     .border(this.active ? { width: 1.5, color: this.themePrimary } : { width: 0, color: Color.Transparent })
   }
 }

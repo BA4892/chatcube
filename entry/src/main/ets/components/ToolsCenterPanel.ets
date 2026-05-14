@@ -1,4 +1,10 @@
-import { ToolConfig, SearchEngine, ToolSourceType } from '../models/ChatModels'
+import {
+  ToolApprovalPolicy,
+  ToolConfig,
+  SearchEngine,
+  ToolSourceType,
+  normalizeToolApprovalPolicy
+} from '../models/ChatModels'
 import { McpAuthType, McpServerConfig } from '../models/McpModels'
 import { ToolRegistry } from '../services/ToolRegistry'
 import { McpService } from '../services/McpService'
@@ -71,6 +77,8 @@ export struct ToolsCenterPanel {
   @Local mcpFormEnabled: boolean = true
   @Local mcpFormAuthType: string = McpAuthType.NONE
   @Local mcpAuthTypeSelectedIndex: number = 0
+  @Local mcpFormToolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
+  @Local mcpToolApprovalPolicySelectedIndex: number = 0
   @Local isSavingMcpServer: boolean = false
 
   private get themePrimary(): string {
@@ -79,6 +87,14 @@ export struct ToolsCenterPanel {
 
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
+  }
+
+  private get sensitiveBadgeColor(): string {
+    return '#D9485F'
+  }
+
+  private get sensitiveBadgeBackgroundColor(): string {
+    return withColorAlpha(this.sensitiveBadgeColor, this.isDarkMode ? '28' : '12')
   }
 
   private get secondaryTextHex(): string {
@@ -103,6 +119,10 @@ export struct ToolsCenterPanel {
   private readonly mcpAuthTypeOptions: Array<SelectOption> = [
     { value: 'None' },
     { value: 'Bearer' }
+  ]
+  private readonly mcpToolApprovalPolicyOptions: Array<SelectOption> = [
+    { value: pickLocalizedText('未配置', 'Not configured') },
+    { value: pickLocalizedText('始终允许', 'Always allow') }
   ]
   private readonly reservedMcpHeaderNames: string[] = [
     'content-type',
@@ -164,6 +184,7 @@ export struct ToolsCenterPanel {
     target.authType = source.authType
     target.authToken = source.authToken
     target.customHeadersJson = source.customHeadersJson
+    target.toolApprovalPolicy = normalizeToolApprovalPolicy(source.toolApprovalPolicy)
   }
 
   private applyMcpServerConfigsToLocal(configs: McpServerConfig[]): void {
@@ -537,6 +558,8 @@ export struct ToolsCenterPanel {
     this.mcpFormEnabled = true
     this.mcpFormAuthType = McpAuthType.NONE
     this.mcpAuthTypeSelectedIndex = 0
+    this.mcpFormToolApprovalPolicy = ToolApprovalPolicy.UNCONFIGURED
+    this.mcpToolApprovalPolicySelectedIndex = 0
     this.isSavingMcpServer = false
   }
 
@@ -556,12 +579,31 @@ export struct ToolsCenterPanel {
     this.mcpFormEnabled = server.enabled
     this.mcpFormAuthType = server.authType
     this.mcpAuthTypeSelectedIndex = server.authType === McpAuthType.BEARER ? 1 : 0
+    this.mcpFormToolApprovalPolicy = normalizeToolApprovalPolicy(server.toolApprovalPolicy)
+    this.mcpToolApprovalPolicySelectedIndex = this.getMcpToolApprovalPolicyIndex(this.mcpFormToolApprovalPolicy)
     this.showMcpServerSheet = true
   }
 
   private handleMcpAuthTypeSelect(index: number): void {
     this.mcpAuthTypeSelectedIndex = index
     this.mcpFormAuthType = index === 1 ? McpAuthType.BEARER : McpAuthType.NONE
+  }
+
+  private handleMcpToolApprovalPolicySelect(index: number): void {
+    this.mcpToolApprovalPolicySelectedIndex = index
+    if (index === 1) {
+      this.mcpFormToolApprovalPolicy = ToolApprovalPolicy.ALWAYS_ALLOW
+      return
+    }
+    this.mcpFormToolApprovalPolicy = ToolApprovalPolicy.UNCONFIGURED
+  }
+
+  private getMcpToolApprovalPolicyIndex(policy: string): number {
+    const normalized = normalizeToolApprovalPolicy(policy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return 1
+    }
+    return 0
   }
 
   private isEditingMcpServer(): boolean {
@@ -611,6 +653,28 @@ export struct ToolsCenterPanel {
 
   private getMcpFormEnableLabel(): string {
     return this.mcpFormEnabled ? pickLocalizedText('自动启用', 'Auto enable') : pickLocalizedText('暂不启用', 'Save disabled')
+  }
+
+  private getMcpToolApprovalPolicyLabel(policy: string): string {
+    const normalized = normalizeToolApprovalPolicy(policy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return pickLocalizedText('始终允许', 'Always allow')
+    }
+    return pickLocalizedText('未配置', 'Not configured')
+  }
+
+  private getMcpToolApprovalPolicyDescription(policy: string): string {
+    const normalized = normalizeToolApprovalPolicy(policy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return pickLocalizedText(
+        '该服务的工具调用会直接执行，不再弹出确认。',
+        'Tool calls from this server run directly without approval prompts.'
+      )
+    }
+    return pickLocalizedText(
+      '该服务的工具调用会在聊天中先询问；你也可以在确认时改成始终允许。',
+      'Tool calls from this server ask in chat first; you can switch to always allow during approval.'
+    )
   }
 
   private getServerCustomHeaderCount(server: McpServerConfig): number {
@@ -878,6 +942,7 @@ export struct ToolsCenterPanel {
       targetServer.authType = this.mcpFormAuthType
       targetServer.authToken = this.mcpFormAuthToken.trim()
       targetServer.customHeadersJson = customHeadersJson
+      targetServer.toolApprovalPolicy = normalizeToolApprovalPolicy(this.mcpFormToolApprovalPolicy)
       this.mcpFormBaseUrl = baseUrl
       this.mcpFormAuthToken = targetServer.authToken
       this.mcpFormCustomHeadersJson = customHeadersJson
@@ -1667,10 +1732,10 @@ export struct ToolsCenterPanel {
                       Text(pickLocalizedText('敏感', 'Sensitive'))
                         .fontSize(10)
                         .fontWeight(FontWeight.Medium)
-                        .fontColor('#D97757')
+                        .fontColor(this.sensitiveBadgeColor)
                         .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                         .borderRadius(999)
-                        .backgroundColor(this.isDarkMode ? '#4A2D1A' : '#FFF1E8')
+                        .backgroundColor(this.sensitiveBadgeBackgroundColor)
                         .margin({ right: 8 })
                     }
 
@@ -1760,6 +1825,59 @@ export struct ToolsCenterPanel {
                 .border({ width: 1, color: $r('app.color.divider') })
               }, (entry: McpHeaderEntry) => entry.id)
             }
+          }
+          .width('100%')
+          .padding(16)
+          .borderRadius(20)
+          .backgroundColor(getAppUiState().themeSurface)
+
+          Column({ space: 12 }) {
+            Column({ space: 4 }) {
+              Text(pickLocalizedText('工具调用策略', 'Tool Call Policy'))
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+
+              Text(pickLocalizedText(
+                '控制该 MCP Server 的工具执行是否需要你确认。',
+                'Control whether tool calls from this MCP server need your approval.'
+              ))
+                .fontSize(12)
+                .lineHeight(18)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+
+            Column({ space: 6 }) {
+              Text(pickLocalizedText('执行策略', 'Execution Policy'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+
+              Select(this.mcpToolApprovalPolicyOptions)
+                .selected(this.mcpToolApprovalPolicySelectedIndex)
+                .value(this.getMcpToolApprovalPolicyLabel(this.mcpFormToolApprovalPolicy))
+                .onSelect((index: number, _value: string) => {
+                  this.handleMcpToolApprovalPolicySelect(index)
+                })
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+                .height(46)
+                .backgroundColor(getAppUiState().themeBackground)
+                .borderRadius(14)
+                .border({ width: 1, color: $r('app.color.divider') })
+                .padding({ left: 10, right: 10 })
+
+              Text(this.getMcpToolApprovalPolicyDescription(this.mcpFormToolApprovalPolicy))
+                .fontSize(11)
+                .lineHeight(16)
+                .fontColor($r('app.color.text_tertiary'))
+                .width('100%')
+            }
+            .width('100%')
           }
           .width('100%')
           .padding(16)
@@ -1981,6 +2099,8 @@ export struct ToolsCenterPanel {
                     serverEnabled: server.enabled,
                     tools: this.getServerTools(server.id),
                     authLabel: this.getMcpServerAuthLabel(server),
+                    toolApprovalPolicyLabel: this.getMcpToolApprovalPolicyLabel(server.toolApprovalPolicy),
+                    toolApprovalPolicy: server.toolApprovalPolicy,
                     customHeaderCount: this.getServerCustomHeaderCount(server),
                     onToggleEnabled: (value: boolean) => {
                       this.handleMcpServerEnabledChanged(server.id, value)
@@ -2223,6 +2343,8 @@ struct McpServerCardItem {
   @Param serverEnabled: boolean = false
   @Param tools: ToolConfig[] = []
   @Param authLabel: string = 'None'
+  @Param toolApprovalPolicyLabel: string = ''
+  @Param toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Param customHeaderCount: number = 0
   @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Event onRefresh: () => void = () => {}
@@ -2236,6 +2358,14 @@ struct McpServerCardItem {
 
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
+  }
+
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
+  }
+
+  private get neutralBadgeBackgroundColor(): string {
+    return withColorAlpha(getAppUiState().themeTextSecondary, this.isDarkMode ? '24' : '12')
   }
 
   private get secondaryTextHex(): string {
@@ -2280,11 +2410,11 @@ struct McpServerCardItem {
   }
 
   private getStatusBackgroundColor(): string {
-    return this.serverEnabled ? (this.isDarkMode ? '#183722' : '#EAF7EE') : (this.isDarkMode ? '#2D3138' : '#EEF1F5')
+    return this.serverEnabled ? this.themePrimarySubtleBackground : this.neutralBadgeBackgroundColor
   }
 
   private getStatusFontColor(): string {
-    return this.serverEnabled ? '#2E8B57' : '#667085'
+    return this.serverEnabled ? this.themePrimary : getAppUiState().themeTextSecondary
   }
 
   private getToolToggleText(): string {
@@ -2302,7 +2432,23 @@ struct McpServerCardItem {
   }
 
   private getWriteToolCountText(): string {
-    return formatLocalizedCount(this.getWriteToolCount(), '个需确认', 'tool needs approval', 'tools need approval')
+    return formatLocalizedCount(this.getWriteToolCount(), '个写操作', 'write tool', 'write tools')
+  }
+
+  private getPolicyTagColor(): string {
+    const normalized = normalizeToolApprovalPolicy(this.toolApprovalPolicy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return this.themePrimary
+    }
+    return getAppUiState().themeTextSecondary
+  }
+
+  private getPolicyTagBackgroundColor(): string {
+    const normalized = normalizeToolApprovalPolicy(this.toolApprovalPolicy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return this.themePrimarySubtleBackground
+    }
+    return this.neutralBadgeBackgroundColor
   }
 
   build() {
@@ -2389,6 +2535,14 @@ struct McpServerCardItem {
             .backgroundColor(getAppUiState().themeBackground)
         }
 
+        Text(this.toolApprovalPolicyLabel)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.getPolicyTagColor())
+          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+          .borderRadius(999)
+          .backgroundColor(this.getPolicyTagBackgroundColor())
+
         if (this.getWriteToolCount() > 0) {
           Text(this.getWriteToolCountText())
             .fontSize(11)
@@ -2457,7 +2611,7 @@ struct McpServerCardItem {
                 .alignItems(HorizontalAlign.Start)
 
                 if (tool.permissionLevel === 'write') {
-                  Text(pickLocalizedText('需确认', 'Approval'))
+                  Text(pickLocalizedText('写操作', 'Write'))
                     .fontSize(10)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#D9485F')

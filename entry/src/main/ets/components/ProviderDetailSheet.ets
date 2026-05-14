@@ -39,6 +39,7 @@ import {
   buildSelectedModelsWithPreservedConfig
 } from '../config/ProviderModelActions'
 import { getAppUiState } from '../state/AppUiState'
+import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { applyModelDraft } from '../utils/ModelDraftUtils'
 import { getSettingsPageCompactTabsTotalInset } from '../utils/SettingsPageLayoutHelper'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
@@ -119,11 +120,17 @@ export struct ProviderDetailPanel {
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
-  private get themePrimaryLight(): string {
-    return getAppUiState().themePrimaryLight
-  }
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
+  }
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
+  }
+  private get sensitiveBadgeColor(): string {
+    return '#D9485F'
+  }
+  private get sensitiveBadgeBackgroundColor(): string {
+    return withColorAlpha(this.sensitiveBadgeColor, this.isDarkMode ? '28' : '12')
   }
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
@@ -1322,7 +1329,7 @@ export struct ProviderDetailPanel {
     .layoutWeight(1)
     .padding(0)
     .borderRadius(16)
-    .backgroundColor(this.currentTabIndex === index ? this.themePrimaryLight : Color.Transparent)
+    .backgroundColor(this.currentTabIndex === index ? this.themePrimarySubtleBackground : Color.Transparent)
     .onClick(() => {
       if (this.currentTabIndex === index) {
         return
@@ -1677,7 +1684,7 @@ export struct ProviderDetailPanel {
           .fontSize(14)
           .fontColor(this.themePrimary)
       }
-        .backgroundColor(this.themePrimaryLight)
+        .backgroundColor(this.themePrimarySubtleBackground)
         .borderRadius(20)
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -1799,7 +1806,7 @@ export struct ProviderDetailPanel {
                 .fontColor((this.provider?.isConnected ?? false) ? this.themePrimary : $r('app.color.text_secondary'))
             }
             .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-            .backgroundColor((this.provider?.isConnected ?? false) ? this.themePrimaryLight : getAppUiState().themeBackground)
+            .backgroundColor((this.provider?.isConnected ?? false) ? this.themePrimarySubtleBackground : getAppUiState().themeBackground)
             .borderRadius(14)
 
             Row({ space: 6 }) {
@@ -1970,7 +1977,7 @@ export struct ProviderDetailPanel {
         .fontColor(accent ? this.themePrimary : $r('app.color.text_secondary'))
     }
     .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-    .backgroundColor(accent ? this.themePrimaryLight : getAppUiState().themeBackground)
+    .backgroundColor(accent ? this.themePrimarySubtleBackground : getAppUiState().themeBackground)
     .borderRadius(14)
   }
 
@@ -2182,7 +2189,7 @@ export struct ProviderDetailPanel {
           }
           .height(32)
           .padding({ left: 12, right: 12 })
-          .backgroundColor(this.themePrimaryLight)
+          .backgroundColor(this.themePrimarySubtleBackground)
           .borderRadius(16)
           .margin({ left: 8 })
           .enabled(!this.isTesting)
@@ -2325,10 +2332,10 @@ export struct ProviderDetailPanel {
                   Text($r('app.string.provider_custom_header_sensitive'))
                     .fontSize(10)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#D97757')
+                    .fontColor(this.sensitiveBadgeColor)
                     .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                     .borderRadius(999)
-                    .backgroundColor(this.isDarkMode ? '#4A2D1A' : '#FFF1E8')
+                    .backgroundColor(this.sensitiveBadgeBackgroundColor)
                     .margin({ right: 8 })
                 }
 
@@ -2438,7 +2445,7 @@ export struct ProviderDetailPanel {
             .height(30)
             .padding({ left: 12, right: 12 })
             .borderRadius(15)
-            .backgroundColor(this.themePrimaryLight)
+            .backgroundColor(this.themePrimarySubtleBackground)
             .enabled(!this.isQueryingBalance)
             .onClick(() => {
               this.queryBalance()
@@ -2506,7 +2513,7 @@ ModelsCard() {
           }
           .height(32)
           .padding({ left: 10, right: 10 })
-          .backgroundColor(this.isAllModelsEnabled() ? getAppUiState().themeBackground : this.themePrimaryLight)
+          .backgroundColor(this.isAllModelsEnabled() ? getAppUiState().themeBackground : this.themePrimarySubtleBackground)
           .borderRadius(16)
           .margin({ right: 8 })
           .onClick(() => {
@@ -2529,7 +2536,7 @@ ModelsCard() {
         .type(ButtonType.Circle)
         .width(32)
         .height(32)
-        .backgroundColor(this.themePrimaryLight)
+        .backgroundColor(this.themePrimarySubtleBackground)
         .margin({ right: 8 })
         .onClick(() => {
           this.showAddModelInput = !this.showAddModelInput
@@ -2559,7 +2566,7 @@ ModelsCard() {
         }
         .height(32)
         .padding({ left: 12, right: 12 })
-        .backgroundColor(this.themePrimaryLight)
+        .backgroundColor(this.themePrimarySubtleBackground)
         .borderRadius(16)
         .enabled(!this.isFetchingModels)
         .onClick(() => {
@@ -2605,7 +2612,7 @@ ModelsCard() {
           .type(ButtonType.Circle)
           .width(36)
           .height(36)
-          .backgroundColor(this.themePrimaryLight)
+          .backgroundColor(this.themePrimarySubtleBackground)
           .onClick(() => {
             this.addManualModel()
           })

@@ -1,4 +1,4 @@
-import { ToolPermissionLevel } from './ChatModels'
+import { ToolApprovalPolicy, ToolPermissionLevel, normalizeToolApprovalPolicy } from './ChatModels'
 
 export enum McpAuthType {
   NONE = 'none',
@@ -14,6 +14,7 @@ export class McpServerConfig {
   @Trace authType: string = McpAuthType.NONE
   @Trace authToken: string = ''
   @Trace customHeadersJson: string = ''
+  @Trace toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
 
   constructor(
     id: string = '',
@@ -22,7 +23,8 @@ export class McpServerConfig {
     enabled: boolean = true,
     authType: string = McpAuthType.NONE,
     authToken: string = '',
-    customHeadersJson: string = ''
+    customHeadersJson: string = '',
+    toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   ) {
     this.id = id
     this.name = name
@@ -31,6 +33,7 @@ export class McpServerConfig {
     this.authType = authType
     this.authToken = authToken
     this.customHeadersJson = customHeadersJson
+    this.toolApprovalPolicy = normalizeToolApprovalPolicy(toolApprovalPolicy)
   }
 }
 

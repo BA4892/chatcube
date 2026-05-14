@@ -6,12 +6,20 @@
  * 以便旧会话仍能正常展示。
  */
 
-import { ChatMessage, ToolCall, ToolResult } from '../models/ChatModels'
+import {
+  ChatMessage,
+  MessageRole,
+  ToolCall,
+  ToolPermissionLevel,
+  ToolResult,
+  ToolSourceType
+} from '../models/ChatModels'
 import {
   MessagePart,
   MessagePartKind,
   ToolPartStatus
 } from '../models/MessageParts'
+import { isSearchWebFunctionName, SEARCH_WEB_TOOL_ID } from './SearchToolIdentityUtils'
 
 export function createToolPart(toolCall: ToolCall, result: ToolResult | null): MessagePart {
   const part = new MessagePart(MessagePartKind.TOOL)
@@ -22,6 +30,7 @@ export function createToolPart(toolCall: ToolCall, result: ToolResult | null): M
   part.toolSourceType = toolCall.sourceType
   part.toolSourceLabel = toolCall.sourceLabel
   part.toolPermissionLevel = toolCall.permissionLevel
+  part.toolApprovalReason = toolCall.approvalReason
   if (result !== null) {
     part.toolResult = result.content
     part.toolIsError = result.isError
@@ -32,9 +41,78 @@ export function createToolPart(toolCall: ToolCall, result: ToolResult | null): M
   return part
 }
 
+export function hasLegacyMessagePartSource(message: ChatMessage): boolean {
+  return message.content.trim() !== '' ||
+    message.reasoningContent.trim() !== '' ||
+    message.toolCalls.length > 0 ||
+    message.toolResults.length > 0 ||
+    message.searchReferences.length > 0
+}
+
+function createLegacySearchPart(message: ChatMessage): MessagePart {
+  const part = new MessagePart(MessagePartKind.TOOL)
+  part.toolCallId = 'legacy_search_' + message.id
+  part.toolName = SEARCH_WEB_TOOL_ID
+  part.toolDisplayName = '联网搜索'
+  const query = message.searchQuery.trim()
+  part.toolArguments = query !== '' ? JSON.stringify({ query: query }) : '{}'
+  part.toolSourceType = ToolSourceType.BUILTIN
+  part.toolSourceLabel = message.searchEngine.trim() !== '' ? message.searchEngine.trim() : 'Web'
+  part.toolPermissionLevel = ToolPermissionLevel.READ
+  part.toolStatus = ToolPartStatus.SUCCEEDED
+  part.toolSearchReferences = message.searchReferences.slice()
+  return part
+}
+
+function findSearchReferenceInsertIndex(parts: MessagePart[]): number {
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i].kind !== MessagePartKind.REASONING) {
+      return i
+    }
+  }
+  return parts.length
+}
+
+function enrichLegacySearchReferences(message: ChatMessage, parts: MessagePart[]): boolean {
+  if (message.role !== MessageRole.ASSISTANT || message.searchReferences.length === 0) {
+    return false
+  }
+
+  let searchPartIndex = -1
+  let searchPartCount = 0
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+    if (part.kind === MessagePartKind.TOOL && isSearchWebFunctionName(part.toolName)) {
+      searchPartIndex = i
+      searchPartCount += 1
+    }
+  }
+
+  if (searchPartCount === 1 && searchPartIndex >= 0) {
+    const part = parts[searchPartIndex]
+    let changed = false
+    if (part.toolSearchReferences.length === 0) {
+      part.toolSearchReferences = message.searchReferences.slice()
+      changed = true
+    }
+    if (part.toolStatus === ToolPartStatus.PENDING && part.toolResult.trim() === '') {
+      part.toolStatus = ToolPartStatus.SUCCEEDED
+      changed = true
+    }
+    return changed
+  }
+
+  if (searchPartCount === 0 && message.toolCalls.length === 0) {
+    parts.splice(findSearchReferenceInsertIndex(parts), 0, createLegacySearchPart(message))
+    return true
+  }
+
+  return false
+}
+
 /**
  * 消息已经有 parts 时直接返回;否则用旧字段合成一个保守的顺序 parts,
- * 仅用于 UI 渲染,不写回到 message.parts(避免污染未完成消息)。
+ * 可用于 UI 渲染,也可用于历史消息迁移。
  */
 export function resolveMessageParts(message: ChatMessage): MessagePart[] {
   if (message.parts.length > 0) {
@@ -52,6 +130,32 @@ export function resolveMessageParts(message: ChatMessage): MessagePart[] {
     parts.push(MessagePart.text(message.content))
   }
   return parts
+}
+
+export function buildMessagePartsFromLegacy(message: ChatMessage, finishReasoning: boolean = true): MessagePart[] {
+  const parts = resolveMessageParts(message)
+  enrichLegacySearchReferences(message, parts)
+  if (finishReasoning) {
+    const now = Date.now()
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i].kind === MessagePartKind.REASONING && parts[i].reasoningFinishedAt === 0) {
+        parts[i].reasoningFinishedAt = now
+      }
+    }
+  }
+  return parts
+}
+
+export function ensureMessageParts(message: ChatMessage, finishReasoning: boolean = true): boolean {
+  let changed = false
+  if (message.parts.length === 0 && hasLegacyMessagePartSource(message)) {
+    message.parts = buildMessagePartsFromLegacy(message, finishReasoning)
+    changed = message.parts.length > 0
+  }
+  if (enrichLegacySearchReferences(message, message.parts)) {
+    changed = true
+  }
+  return changed
 }
 
 /**

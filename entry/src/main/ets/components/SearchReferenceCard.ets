@@ -1,6 +1,7 @@
 import { SearchReference } from '../models/ChatModels'
 import { webview } from '@kit.ArkWeb'
 import { getAppUiState } from '../state/AppUiState'
+import { withColorAlpha } from '../utils/ColorAlphaUtils'
 
 @ComponentV2
 export struct SearchReferenceCard {
@@ -19,6 +20,12 @@ export struct SearchReferenceCard {
   private sheetWebController: webview.WebviewController = new webview.WebviewController()
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
+  }
+  private get themePrimary(): string {
+    return getAppUiState().themePrimary
+  }
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
   }
 
   aboutToAppear(): void {
@@ -68,30 +75,30 @@ export struct SearchReferenceCard {
         // 联网搜索图标
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(13)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([this.themePrimary])
 
         // 标题文本
         Text($r('app.string.web_search'))
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(getAppUiState().themeTextSecondary)
           .margin({ left: 4 })
 
         // 来源标签（区分：Function Calling vs 手动搜索链路）
         if (this.sourceLabel.trim() !== '') {
           Text(this.sourceLabel.trim())
             .fontSize(11)
-            .fontColor($r('app.color.text_tertiary'))
+            .fontColor(getAppUiState().themeTextTertiary)
             .margin({ left: 6 })
         }
 
         if (this.searchEngine.trim() !== '') {
           Text(this.searchEngine.trim())
             .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.themePrimary)
             .padding({ left: 6, right: 6, top: 1, bottom: 1 })
             .borderRadius(8)
-            .backgroundColor($r('app.color.divider'))
+            .backgroundColor(this.themePrimarySubtleBackground)
             .margin({ left: 6 })
         }
 
@@ -99,7 +106,7 @@ export struct SearchReferenceCard {
         if (this.getDisplayQuery() !== '') {
           Text(this.getDisplayQuery())
             .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
+            .fontColor(getAppUiState().themeTextTertiary)
             .margin({ left: 8 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -113,18 +120,18 @@ export struct SearchReferenceCard {
         Row()
           .width(1)
           .height(10)
-          .backgroundColor($r('app.color.divider'))
+          .backgroundColor(getAppUiState().themeDivider)
           .margin({ left: 8, right: 8 })
 
         // 引用数量
         Text(this.getReferenceCountText())
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(getAppUiState().themeTextSecondary)
 
         // 展开/折叠箭头
         SymbolGlyph(this.isExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
           .fontSize(12)
-          .fontColor([$r('app.color.text_tertiary')])
+          .fontColor([getAppUiState().themeTextTertiary])
           .margin({ left: 6 })
           .width(12)
           .height(12)
@@ -141,10 +148,10 @@ export struct SearchReferenceCard {
       })
       .stateStyles({
         normal: {
-          .backgroundColor($r('app.color.surface'))
+          .backgroundColor(getAppUiState().themeSurface)
         },
         pressed: {
-          .backgroundColor($r('app.color.divider'))
+          .backgroundColor(getAppUiState().themeDivider)
         }
       })
       .onClick(() => {
@@ -192,7 +199,7 @@ export struct SearchReferenceCard {
         Column() {
           Text($r('app.string.common_invalid_link'))
             .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(getAppUiState().themeTextSecondary)
         }
         .width('100%')
         .layoutWeight(1)
@@ -201,7 +208,7 @@ export struct SearchReferenceCard {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background'))
+    .backgroundColor(getAppUiState().themeBackground)
   }
 
   @Builder
@@ -218,12 +225,12 @@ export struct SearchReferenceCard {
           .height(20)
           .textAlign(TextAlign.Center)
           .borderRadius(10)
-          .backgroundColor($r('app.color.text_secondary'))
+          .backgroundColor(this.themePrimary)
 
         // 标题
         Text(ref.title)
           .fontSize(14)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(getAppUiState().themeTextPrimary)
           .fontWeight(FontWeight.Medium)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -235,7 +242,7 @@ export struct SearchReferenceCard {
       if (ref.snippet !== '') {
         Text(ref.snippet)
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(getAppUiState().themeTextSecondary)
           .lineHeight(18)
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -245,7 +252,7 @@ export struct SearchReferenceCard {
       // URL
       Text(ref.url)
         .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
+        .fontColor(getAppUiState().themeTextTertiary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ left: 28 })
@@ -254,13 +261,13 @@ export struct SearchReferenceCard {
     .padding({ left: 12, right: 12, top: 12, bottom: 12 })
     .borderRadius(14)
     .margin({ bottom: 8 })
-    .border({ width: 0.5, color: $r('app.color.divider') })
+    .border({ width: 0.5, color: getAppUiState().themeDivider })
     .stateStyles({
       normal: {
-        .backgroundColor($r('app.color.surface'))
+        .backgroundColor(getAppUiState().themeSurface)
       },
       pressed: {
-        .backgroundColor($r('app.color.divider'))
+        .backgroundColor(getAppUiState().themeDivider)
       }
     })
     .onClick(() => {

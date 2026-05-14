@@ -5,8 +5,7 @@ import {
   AttachmentType,
   ToolCall,
   ToolResult,
-  SearchReference,
-  ToolPermissionLevel
+  SearchReference
 } from '../models/ChatModels'
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
@@ -34,6 +33,7 @@ import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { isSearchToolFunctionName, isSearchToolId, isAskUserFunctionName, isScrapeWebFunctionName, isSearchWebFunctionName } from '../utils/SearchToolIdentityUtils'
 import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
 import {
+  ensureMessageParts,
   groupMessageParts,
   MessagePartBlock,
   MessagePartBlockKind
@@ -157,6 +157,9 @@ export struct MessageBubble {
   }
   private get themePrimaryLight(): string {
     return getAppUiState().themePrimaryLight
+  }
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
   }
 
   // 聊天字体大小
@@ -1620,8 +1623,8 @@ export struct MessageBubble {
         // 内容区域 - 无气泡，全宽显示
         Column() {
           Column() {
-            if (this.shouldRenderPartsTimeline()) {
-              // 新版交错渲染: 按 parts 的真实生成顺序渲染 text / reasoning / tool,
+            if (this.shouldRenderParts()) {
+              // 新版统一渲染: 按 parts 的真实生成顺序渲染 text / reasoning / tool,
               // 跳过原本的聚合正文、ToolCallCard 列表和 ReasoningSection, 避免顺序错乱或重复渲染
               this.OrderedPartsTimeline()
               // ask_user 待答时保留独立交互卡片;提交后收缩到 timeline step 内。
@@ -1670,9 +1673,9 @@ export struct MessageBubble {
             }
 
             // ========== 搜索引用区域 ==========
-            // 走 timeline 时搜索结果由 timeline 里对应工具 step 统一展示,气泡上不再重复独立卡片;
-            // 旧 UI (非 timeline) 场景 (例如没有 parts 的历史会话) 保持原来的独立卡片
-            if (this.message.hasSearchReferences() && !this.shouldRenderPartsTimeline()) {
+            // 走 parts 时搜索结果由对应工具 step 统一展示,气泡上不再重复独立卡片;
+            // 仅无法迁移出 parts 的极端旧数据保持原来的独立卡片
+            if (this.message.hasSearchReferences() && !this.shouldRenderParts()) {
               SearchReferenceCard({
                 query: this.extractSearchQuery(),
                 searchEngine: this.message.searchEngine || 'Web',
@@ -1690,13 +1693,13 @@ export struct MessageBubble {
             }
 
             // ========== 推理内容区域(可折叠) ==========
-            // parts 时间线已经把 reasoning 串在一起渲染,这里就跳过,避免重复
-            if (this.message.hasReasoningContent() && !this.shouldRenderPartsTimeline()) {
+            // parts 已经把 reasoning 串在一起渲染,这里就跳过,避免重复
+            if (this.message.hasReasoningContent() && !this.shouldRenderParts()) {
               this.ReasoningSection()
             }
 
             // ========== 加载状态或主要内容区域 ==========
-            if (!this.shouldRenderPartsTimeline()) {
+            if (!this.shouldRenderParts()) {
               if (this.message.content.length === 0) {
                 if (this.message.reasoningContent.length === 0 &&
                     (this.message.isGenerating || this.message.isSearching)) {
@@ -1980,9 +1983,11 @@ export struct MessageBubble {
     .clip(true)
   }
 
-  // 交错 thinking 判定:只要消息里有任意 reasoning 或 tool part, 就走 timeline 统一展示。
-  // 这样搜索、MCP、工具调用、推理都汇总到一条黄色链路里, 气泡上不再有并列的独立卡片。
+  // assistant 消息统一优先走 parts 渲染;旧字段只作为迁移来源和极端空数据兜底。
 	  private shouldRenderPartsTimeline(): boolean {
+    if (this.message.role === MessageRole.ASSISTANT) {
+      ensureMessageParts(this.message)
+    }
 	    if (this.message.parts.length === 0) {
 	      return false
 	    }
@@ -1995,7 +2000,17 @@ export struct MessageBubble {
 	    return false
 	  }
 
+  private shouldRenderParts(): boolean {
+    if (this.message.role === MessageRole.ASSISTANT) {
+      ensureMessageParts(this.message)
+    }
+    return this.message.parts.length > 0
+  }
+
 	  private getOrderedMessagePartBlocks(): MessagePartBlock[] {
+    if (this.message.role === MessageRole.ASSISTANT) {
+      ensureMessageParts(this.message)
+    }
 	    return groupMessageParts(this.message.parts)
 	  }
 
@@ -2692,20 +2707,12 @@ export struct MessageBubble {
           .fontSize(13)
           .fontColor([$r('app.color.status_error')])
       } else if (step.toolStatus === 'pending') {
-        if (step.toolPermissionLevel === ToolPermissionLevel.WRITE) {
-          Text('待授权')
-            .fontSize(10)
-            .fontColor(Color.White)
-            .backgroundColor(this.themePrimary)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(6)
-        } else {
-          Column()
-            .width(8)
-            .height(8)
-            .borderRadius(4)
-            .backgroundColor(this.themePrimary)
-        }
+        Text('待确认')
+          .fontSize(10)
+          .fontColor(Color.White)
+          .backgroundColor(this.themePrimary)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderRadius(6)
       } else if (step.toolStatus === 'running') {
         Column()
           .width(8)
@@ -2830,7 +2837,7 @@ export struct MessageBubble {
         Text(this.toolDetailTitle)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(getAppUiState().themeTextPrimary)
           .layoutWeight(1)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2843,15 +2850,15 @@ export struct MessageBubble {
           if (this.toolDetailEngine !== '') {
             Text(this.toolDetailEngine)
               .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(this.themePrimary)
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
               .borderRadius(6)
-              .backgroundColor($r('app.color.divider'))
+              .backgroundColor(this.themePrimarySubtleBackground)
           }
           if (this.toolDetailQuery !== '') {
             Text(this.toolDetailQuery)
               .fontSize(12)
-              .fontColor($r('app.color.text_tertiary'))
+              .fontColor(getAppUiState().themeTextTertiary)
               .layoutWeight(1)
           }
         }
@@ -2874,7 +2881,7 @@ export struct MessageBubble {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background'))
+    .backgroundColor(getAppUiState().themeBackground)
   }
 
   @Builder
@@ -2889,10 +2896,10 @@ export struct MessageBubble {
           .height(20)
           .textAlign(TextAlign.Center)
           .borderRadius(10)
-          .backgroundColor($r('app.color.text_secondary'))
+          .backgroundColor(this.themePrimary)
         Text(ref.title)
           .fontSize(14)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(getAppUiState().themeTextPrimary)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
       }
@@ -2901,14 +2908,14 @@ export struct MessageBubble {
       if (ref.snippet !== '') {
         Text(ref.snippet)
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(getAppUiState().themeTextSecondary)
           .lineHeight(18)
           .margin({ left: 28 })
       }
 
       Text(ref.url)
         .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
+        .fontColor(getAppUiState().themeTextTertiary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ left: 28 })
@@ -2917,13 +2924,13 @@ export struct MessageBubble {
     .padding({ left: 12, right: 12, top: 12, bottom: 12 })
     .borderRadius(14)
     .margin({ bottom: 8 })
-    .border({ width: 0.5, color: $r('app.color.divider') })
+    .border({ width: 0.5, color: getAppUiState().themeDivider })
     .stateStyles({
       normal: {
-        .backgroundColor($r('app.color.surface'))
+        .backgroundColor(getAppUiState().themeSurface)
       },
       pressed: {
-        .backgroundColor($r('app.color.divider'))
+        .backgroundColor(getAppUiState().themeDivider)
       }
     })
     .onClick(() => {

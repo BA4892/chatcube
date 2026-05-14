@@ -33,7 +33,10 @@ function buildToolCallSignature(toolCall: ToolCall): string {
     encodeValue(toolCall.displayName),
     encodeValue(toolCall.sourceType),
     encodeValue(toolCall.sourceLabel),
-    encodeValue(toolCall.permissionLevel)
+    encodeValue(toolCall.permissionLevel),
+    encodeValue(toolCall.approvalPolicy),
+    encodeValue(toolCall.approvalState),
+    encodeValue(toolCall.approvalReason)
   ].join('')
 }
 

@@ -1,12 +1,20 @@
-import { ToolConfig, ToolPermissionLevel, ToolSourceType } from '../../models/ChatModels'
+import {
+  ToolApprovalPolicy,
+  ToolConfig,
+  ToolPermissionLevel,
+  ToolSourceType,
+  normalizeToolApprovalPolicy
+} from '../../models/ChatModels'
 import { getAppUiState } from '../../state/AppUiState'
 import { pickLocalizedText } from '../../utils/LocalizedTextUtils'
+import { withColorAlpha } from '../../utils/ColorAlphaUtils'
 
 class McpToolGroup {
   sourceId: string = ''
   displayName: string = ''
   toolIds: string[] = []
   hasWriteTool: boolean = false
+  approvalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
 
   constructor(sourceId: string, displayName: string) {
     this.sourceId = sourceId
@@ -20,7 +28,6 @@ export struct ChatToolPickerSheetContent {
   @Param selectedToolIds: string[] = []
   @Param isRefreshingMcpToolAvailability: boolean = false
   @Param themePrimary: ResourceColor = ''
-  @Param themePrimaryLight: ResourceColor = ''
   @Param isDarkMode: boolean = false
   @Event onClose: () => void = (): void => {}
   @Event onRefresh: () => void = (): void => {}
@@ -35,6 +42,22 @@ export struct ChatToolPickerSheetContent {
 
   private get themeSurface(): string {
     return getAppUiState().themeSurface
+  }
+
+  private get themePrimarySubtleBackground(): string {
+    return withColorAlpha(getAppUiState().themePrimary, this.isDarkMode ? '28' : '16')
+  }
+
+  private get neutralBadgeBackgroundColor(): string {
+    return withColorAlpha(getAppUiState().themeTextSecondary, this.isDarkMode ? '24' : '12')
+  }
+
+  private get writeBadgeColor(): string {
+    return '#D9485F'
+  }
+
+  private get writeBadgeBackgroundColor(): string {
+    return withColorAlpha(this.writeBadgeColor, this.isDarkMode ? '28' : '12')
   }
 
   private isMcpChatTool(tool: ToolConfig): boolean {
@@ -70,6 +93,7 @@ export struct ChatToolPickerSheetContent {
         const group = new McpToolGroup(tool.sourceId, displayName)
         group.toolIds.push(tool.id)
         group.hasWriteTool = tool.permissionLevel === ToolPermissionLevel.WRITE
+        group.approvalPolicy = normalizeToolApprovalPolicy(tool.approvalPolicy)
         groups.push(group)
         groupIndexes.set(tool.sourceId, groups.length - 1)
         continue
@@ -77,6 +101,10 @@ export struct ChatToolPickerSheetContent {
       groups[existingIndex].toolIds.push(tool.id)
       if (tool.permissionLevel === ToolPermissionLevel.WRITE) {
         groups[existingIndex].hasWriteTool = true
+      }
+      const normalizedPolicy = normalizeToolApprovalPolicy(tool.approvalPolicy)
+      if (normalizedPolicy !== ToolApprovalPolicy.UNCONFIGURED) {
+        groups[existingIndex].approvalPolicy = normalizedPolicy
       }
     }
     return groups
@@ -95,7 +123,7 @@ export struct ChatToolPickerSheetContent {
   }
 
   private getCardBackground(selected: boolean): ResourceColor {
-    return selected ? this.themePrimaryLight : this.themeSurface
+    return selected ? this.themePrimarySubtleBackground : this.themeSurface
   }
 
   private getCardBorderColor(selected: boolean): ResourceColor {
@@ -112,6 +140,30 @@ export struct ChatToolPickerSheetContent {
       '应用内原生能力，可在当前聊天中按需调用。',
       'Built-in app capability that can be exposed to the model in this chat.'
     )
+  }
+
+  private getMcpToolGroupPolicyLabel(group: McpToolGroup): string {
+    const normalized = normalizeToolApprovalPolicy(group.approvalPolicy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return pickLocalizedText('始终允许', 'Always allow')
+    }
+    return pickLocalizedText('待确认', 'Ask')
+  }
+
+  private getMcpToolGroupPolicyColor(group: McpToolGroup): string {
+    const normalized = normalizeToolApprovalPolicy(group.approvalPolicy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return getAppUiState().themePrimary
+    }
+    return getAppUiState().themeTextSecondary
+  }
+
+  private getMcpToolGroupPolicyBackground(group: McpToolGroup): string {
+    const normalized = normalizeToolApprovalPolicy(group.approvalPolicy)
+    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return this.themePrimarySubtleBackground
+    }
+    return this.neutralBadgeBackgroundColor
   }
 
   build() {
@@ -166,7 +218,7 @@ export struct ChatToolPickerSheetContent {
               .width(48)
               .height(48)
               .borderRadius(14)
-              .backgroundColor(this.themePrimaryLight)
+              .backgroundColor(this.themePrimarySubtleBackground)
               .justifyContent(FlexAlign.Center)
               .alignItems(HorizontalAlign.Center)
 
@@ -224,7 +276,7 @@ export struct ChatToolPickerSheetContent {
                     .width(40)
                     .height(40)
                     .borderRadius(12)
-                    .backgroundColor(this.isToolSelected(tool.id) ? this.themePrimary : this.themePrimaryLight)
+                    .backgroundColor(this.isToolSelected(tool.id) ? this.themePrimary : this.themePrimarySubtleBackground)
                     .justifyContent(FlexAlign.Center)
                     .alignItems(HorizontalAlign.Center)
 
@@ -249,12 +301,12 @@ export struct ChatToolPickerSheetContent {
                         }
 
                         if (tool.permissionLevel === ToolPermissionLevel.WRITE) {
-                          Text(pickLocalizedText('需确认', 'Approval'))
+                          Text(pickLocalizedText('写操作', 'Write'))
                             .fontSize(10)
-                            .fontColor(this.isDarkMode ? '#FFD6A6' : '#8A4B08')
+                            .fontColor(this.writeBadgeColor)
                             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                             .borderRadius(999)
-                            .backgroundColor(this.isDarkMode ? '#3B2413' : '#FFF3E8')
+                            .backgroundColor(this.writeBadgeBackgroundColor)
                         }
                       }
                       .width('100%')
@@ -312,7 +364,7 @@ export struct ChatToolPickerSheetContent {
                     .width(40)
                     .height(40)
                     .borderRadius(12)
-                    .backgroundColor(this.isMcpToolGroupSelected(group) ? this.themePrimary : this.themePrimaryLight)
+                    .backgroundColor(this.isMcpToolGroupSelected(group) ? this.themePrimary : this.themePrimarySubtleBackground)
                     .justifyContent(FlexAlign.Center)
                     .alignItems(HorizontalAlign.Center)
 
@@ -336,13 +388,13 @@ export struct ChatToolPickerSheetContent {
                             .backgroundColor(this.themePrimary)
                         }
 
-                        if (group.hasWriteTool) {
-                          Text(pickLocalizedText('需确认', 'Approval'))
+                        if (this.getMcpToolGroupPolicyLabel(group) !== '') {
+                          Text(this.getMcpToolGroupPolicyLabel(group))
                             .fontSize(10)
-                            .fontColor(this.isDarkMode ? '#FFD6A6' : '#8A4B08')
+                            .fontColor(this.getMcpToolGroupPolicyColor(group))
                             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                             .borderRadius(999)
-                            .backgroundColor(this.isDarkMode ? '#3B2413' : '#FFF3E8')
+                            .backgroundColor(this.getMcpToolGroupPolicyBackground(group))
                         }
                       }
                       .width('100%')
