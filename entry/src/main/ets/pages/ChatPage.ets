@@ -205,6 +205,7 @@ export struct ChatPage {
   @Local isRefreshingMcpToolAvailability: boolean = false
   @Local showToolPickerSheet: boolean = false
   @Local showToolExecutionApprovalSheet: boolean = false
+  @Local toolExecutionApprovalToolId: string = ''
   @Local toolExecutionApprovalSourceLabel: string = ''
   @Local toolExecutionApprovalName: string = ''
   @Local toolExecutionApprovalSourceId: string = ''
@@ -359,6 +360,7 @@ export struct ChatPage {
     registerBuiltinTools()
     ServiceRegistry.toolExecution().setApprovalCallback(async (toolCall, tool) => {
       return await this.requestToolExecutionApproval(
+        tool.config.id,
         tool.config.name,
         tool.config.sourceLabel,
         tool.config.sourceType,
@@ -3198,44 +3200,17 @@ export struct ChatPage {
     }
   }
 
-  private async persistMcpToolApprovalPolicy(serverId: string, policy: string): Promise<boolean> {
-    const normalizedPolicy = policy === ToolApprovalPolicy.ALWAYS_ALLOW
-      ? ToolApprovalPolicy.ALWAYS_ALLOW
-      : ToolApprovalPolicy.UNCONFIGURED
-    const configs = await this.mcpService.loadServerConfigs()
-    let found = false
-    for (let i = 0; i < configs.length; i++) {
-      if (configs[i].id === serverId) {
-        configs[i].toolApprovalPolicy = normalizedPolicy
-        found = true
-        break
-      }
-    }
-    if (!found) {
-      return false
-    }
-    await this.mcpService.saveServerConfigs(configs)
-    await this.mcpService.refreshServer(serverId, configs)
-    await this.refreshMcpToolAvailability(false)
-    return true
-  }
-
   private async approveCurrentMcpServerAlways(): Promise<void> {
-    const sourceId = this.toolExecutionApprovalSourceId.trim()
-    if (sourceId === '') {
+    const toolId = this.toolExecutionApprovalToolId.trim()
+    if (toolId === '') {
       this.resolveToolExecutionApproval(true)
       return
     }
     try {
-      const updated = await this.persistMcpToolApprovalPolicy(sourceId, ToolApprovalPolicy.ALWAYS_ALLOW)
-      if (updated) {
-        this.showChatSnack(pickLocalizedText('已设为始终允许', 'Always allow enabled'), 2000, SnackBarTone.SUCCESS)
-      } else {
-        this.showChatSnack(pickLocalizedText('未找到对应 MCP Server，本次继续执行', 'MCP server not found; continuing once'),
-          2500, SnackBarTone.ERROR)
-      }
+      await this.mcpService.updateToolApprovalPolicy(toolId, ToolApprovalPolicy.ALWAYS_ALLOW)
+      this.showChatSnack(pickLocalizedText('已设为始终允许', 'Always allow enabled'), 2000, SnackBarTone.SUCCESS)
     } catch (error) {
-      console.error('ChatPage', `Failed to persist MCP approval policy: ${JSON.stringify(error)}`)
+      console.error('ChatPage', `Failed to persist tool approval policy: ${JSON.stringify(error)}`)
       this.showChatSnack(
         pickLocalizedText('保存始终允许失败，本次继续执行', 'Failed to save always allow; continuing once'),
         2500,
@@ -3246,6 +3221,7 @@ export struct ChatPage {
   }
 
   private async requestToolExecutionApproval(
+    toolId: string,
     toolName: string,
     sourceLabel: string,
     sourceType: string,
@@ -3259,6 +3235,7 @@ export struct ChatPage {
         this.pendingToolExecutionApprovalResolver = null
         previousResolver(false)
       }
+      this.toolExecutionApprovalToolId = toolId.trim()
       this.toolExecutionApprovalSourceLabel = sourceLabel.trim()
       this.toolExecutionApprovalName = toolName.trim() !== ''
         ? toolName.trim()

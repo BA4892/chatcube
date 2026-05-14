@@ -10,7 +10,7 @@ export class McpToolEntry {
   @Trace name: string = ''
   @Trace description: string = ''
   @Trace enabled: boolean = true
-  @Trace needsApproval: boolean = false
+  @Trace toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Trace inputSchemaJson: string = ''
   @Trace permissionLevel: string = ToolPermissionLevel.READ
 
@@ -18,14 +18,14 @@ export class McpToolEntry {
     name: string = '',
     description: string = '',
     enabled: boolean = true,
-    needsApproval: boolean = false,
+    toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED,
     inputSchemaJson: string = '',
     permissionLevel: string = ToolPermissionLevel.READ
   ) {
     this.name = name
     this.description = description
     this.enabled = enabled
-    this.needsApproval = needsApproval
+    this.toolApprovalPolicy = normalizeToolApprovalPolicy(toolApprovalPolicy)
     this.inputSchemaJson = inputSchemaJson
     this.permissionLevel = permissionLevel
   }

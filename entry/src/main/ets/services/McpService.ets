@@ -96,7 +96,7 @@ class McpToolEntryJson {
   name: string = ''
   description: string = ''
   enabled: boolean = true
-  needsApproval: boolean = false
+  toolApprovalPolicy: string = ''
   inputSchemaJson: string = ''
   permissionLevel: string = ''
 }
@@ -347,6 +347,26 @@ export class McpService {
     return await this.callToolInternal(server, remoteToolName, args, true)
   }
 
+  async updateToolApprovalPolicy(toolId: string, policy: string): Promise<void> {
+    const parts = toolId.split(':')
+    if (parts.length < 3) {
+      return
+    }
+    const serverId = parts[1]
+    const remoteName = parts.slice(2).join(':')
+    const configs = await this.loadServerConfigs()
+    const server = this.findServerConfig(configs, serverId)
+    if (server === null) {
+      return
+    }
+    const entry = this.findToolEntry(server, remoteName)
+    if (entry === null) {
+      return
+    }
+    entry.toolApprovalPolicy = normalizeToolApprovalPolicy(policy)
+    await this.saveServerConfigs(configs)
+  }
+
   private async callToolInternal(
     server: McpServerConfig,
     remoteToolName: string,
@@ -447,8 +467,8 @@ export class McpService {
     )
     const definition = new ToolDefinition(func)
     const toolEntry = this.findToolEntry(server, discovered.remoteName)
-    const approvalPolicy = toolEntry !== null && toolEntry.needsApproval
-      ? ToolApprovalPolicy.UNCONFIGURED : server.toolApprovalPolicy
+    const toolPolicy = toolEntry !== null ? normalizeToolApprovalPolicy(toolEntry.toolApprovalPolicy) : ToolApprovalPolicy.UNCONFIGURED
+    const approvalPolicy = toolPolicy !== ToolApprovalPolicy.UNCONFIGURED ? toolPolicy : server.toolApprovalPolicy
     const config = new ToolConfig(
       discovered.toolId,
       discovered.displayName,
@@ -1060,7 +1080,7 @@ export class McpService {
           d.remoteName,
           d.description,
           true,
-          false,
+          ToolApprovalPolicy.UNCONFIGURED,
           JSON.stringify(d.inputSchema),
           d.permissionLevel
         ))
@@ -1097,7 +1117,7 @@ export class McpService {
         this.readString(item, 'name'),
         this.readString(item, 'description'),
         this.readBoolean(item, 'enabled', true),
-        this.readBoolean(item, 'needsApproval', false),
+        this.readString(item, 'toolApprovalPolicy', ToolApprovalPolicy.UNCONFIGURED),
         this.readString(item, 'inputSchemaJson'),
         this.readString(item, 'permissionLevel', ToolPermissionLevel.READ)
       ))
@@ -1112,7 +1132,7 @@ export class McpService {
       entry.name = tools[i].name
       entry.description = tools[i].description
       entry.enabled = tools[i].enabled
-      entry.needsApproval = tools[i].needsApproval
+      entry.toolApprovalPolicy = normalizeToolApprovalPolicy(tools[i].toolApprovalPolicy)
       entry.inputSchemaJson = tools[i].inputSchemaJson
       entry.permissionLevel = tools[i].permissionLevel
       result.push(entry)

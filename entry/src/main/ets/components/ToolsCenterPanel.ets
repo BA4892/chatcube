@@ -1044,14 +1044,14 @@ export struct ToolsCenterPanel {
     this.persistMcpServerTools(serverId)
   }
 
-  private handleToolNeedsApprovalChanged(serverId: string, toolName: string, needsApproval: boolean): void {
+  private handleToolPolicyChanged(serverId: string, toolName: string, policy: string): void {
     const server = this.findLocalMcpServerById(serverId)
     if (server === null) {
       return
     }
     for (let i = 0; i < server.tools.length; i++) {
       if (server.tools[i].name === toolName) {
-        server.tools[i].needsApproval = needsApproval
+        server.tools[i].toolApprovalPolicy = normalizeToolApprovalPolicy(policy)
         break
       }
     }
@@ -1192,8 +1192,8 @@ export struct ToolsCenterPanel {
               onEnabledChange: (enabled: boolean) => {
                 this.handleToolEnabledChanged(this.detailServerId, tool.name, enabled)
               },
-              onNeedsApprovalChange: (needsApproval: boolean) => {
-                this.handleToolNeedsApprovalChanged(this.detailServerId, tool.name, needsApproval)
+              onPolicyChange: (policy: string) => {
+                this.handleToolPolicyChanged(this.detailServerId, tool.name, policy)
               }
             })
           }, (tool: McpToolEntry) => tool.name)
@@ -2531,7 +2531,7 @@ struct McpToolEntryCard {
   @Param tool: McpToolEntry = new McpToolEntry()
   @Param serverApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Event onEnabledChange: (enabled: boolean) => void = (_enabled: boolean) => {}
-  @Event onNeedsApprovalChange: (needsApproval: boolean) => void = (_needsApproval: boolean) => {}
+  @Event onPolicyChange: (policy: string) => void = (_policy: string) => {}
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -2541,8 +2541,20 @@ struct McpToolEntryCard {
     return getAppUiState().isDarkMode
   }
 
-  private showNeedsApproval(): boolean {
-    return normalizeToolApprovalPolicy(this.serverApprovalPolicy) === ToolApprovalPolicy.UNCONFIGURED
+  private getEffectivePolicy(): string {
+    const toolPolicy = normalizeToolApprovalPolicy(this.tool.toolApprovalPolicy)
+    if (toolPolicy !== ToolApprovalPolicy.UNCONFIGURED) {
+      return toolPolicy
+    }
+    return normalizeToolApprovalPolicy(this.serverApprovalPolicy)
+  }
+
+  private getPolicyLabel(): string {
+    const effective = this.getEffectivePolicy()
+    if (effective === ToolApprovalPolicy.ALWAYS_ALLOW) {
+      return pickLocalizedText('始终允许', 'Always')
+    }
+    return ''
   }
 
   build() {
@@ -2566,13 +2578,13 @@ struct McpToolEntryCard {
               .backgroundColor(this.isDarkMode ? '#4B1D24' : '#FDECEF')
           }
 
-          if (this.showNeedsApproval() && this.tool.needsApproval) {
-            Text(pickLocalizedText('需确认', 'Ask'))
+          if (this.getPolicyLabel() !== '') {
+            Text(this.getPolicyLabel())
               .fontSize(9)
-              .fontColor($r('app.color.text_tertiary'))
+              .fontColor(this.themePrimary)
               .padding({ left: 5, right: 5, top: 2, bottom: 2 })
               .borderRadius(4)
-              .backgroundColor(this.isDarkMode ? '#2A2D35' : '#F3F4F6')
+              .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '20' : '10'))
           }
         }
         .width('100%')
@@ -2588,6 +2600,12 @@ struct McpToolEntryCard {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      .onClick(() => {
+        const current = normalizeToolApprovalPolicy(this.tool.toolApprovalPolicy)
+        const next = current === ToolApprovalPolicy.ALWAYS_ALLOW
+          ? ToolApprovalPolicy.UNCONFIGURED : ToolApprovalPolicy.ALWAYS_ALLOW
+        this.onPolicyChange(next)
+      })
 
       Toggle({ type: ToggleType.Switch, isOn: this.tool.enabled })
         .selectedColor(this.themePrimary)
