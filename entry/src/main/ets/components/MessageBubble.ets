@@ -2744,10 +2744,104 @@ export struct MessageBubble {
   ToolStepContent(step: MessagePart) {
     if (isAskUserFunctionName(step.toolName)) {
       this.AskUserStepContent(step)
+    } else if (isSearchWebFunctionName(step.toolName) && this.isToolStepClickable(step)) {
+      // 搜索类: 深度思考同款折叠/展开, 在下方直接展示搜索结果
+      Column() {
+        Row({ space: 6 }) {
+          if (step.toolStatus === 'succeeded') {
+            SymbolGlyph($r('sys.symbol.checkmark_circle'))
+              .fontSize(13)
+              .fontColor([$r('app.color.status_success')])
+          } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
+            SymbolGlyph($r('sys.symbol.xmark_circle'))
+              .fontSize(13)
+              .fontColor([$r('app.color.status_error')])
+          } else if (step.toolStatus === 'running') {
+            Column()
+              .width(8)
+              .height(8)
+              .borderRadius(4)
+              .backgroundColor(this.themePrimary)
+          }
+
+          Text(this.buildToolStepTitle(step))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(12)
+            .fontColor([$r('app.color.text_tertiary')])
+            .rotate({ angle: this.isToolStepExpanded(step) ? 0 : -90 })
+            .animation({ duration: 200, curve: Curve.EaseOut })
+        }
+        .width('100%')
+        .onClick(() => {
+          this.toggleToolStep(step)
+        })
+
+        if (this.isToolStepExpanded(step)) {
+          Column({ space: 6 }) {
+            ForEach(this.resolveToolStepSearchReferences(step), (ref: SearchReference, index: number) => {
+              Column({ space: 4 }) {
+                Row({ space: 6 }) {
+                  Text(`${index + 1}`)
+                    .fontSize(11)
+                    .fontColor(Color.White)
+                    .fontWeight(FontWeight.Medium)
+                    .width(18)
+                    .height(18)
+                    .textAlign(TextAlign.Center)
+                    .borderRadius(9)
+                    .backgroundColor(this.themePrimary)
+                  Text(ref.title)
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_primary'))
+                    .fontWeight(FontWeight.Medium)
+                    .layoutWeight(1)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .width('100%')
+
+                if (ref.snippet !== '') {
+                  Text(ref.snippet)
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_secondary'))
+                    .maxLines(3)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ left: 24 })
+                }
+
+                Text(ref.url)
+                  .fontSize(11)
+                  .fontColor($r('app.color.text_tertiary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .margin({ left: 24 })
+              }
+              .width('100%')
+              .padding(10)
+              .borderRadius(10)
+              .backgroundColor($r('app.color.divider'))
+              .onClick(() => {
+                this.onOpenLink(ref.title, ref.url)
+              })
+            }, (ref: SearchReference, index: number) => `${ref.id}_${index}`)
+          }
+          .width('100%')
+          .margin({ top: 8 })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     } else {
     Row({ space: 6 }) {
       if (step.toolStatus === 'succeeded') {
-        SymbolGlyph($r('sys.symbol.checkmark_circle'))
+        SymbolGlyph($r('sys.symbo' +
+          'l.checkmark_circle'))
           .fontSize(13)
           .fontColor([$r('app.color.status_success')])
       } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
