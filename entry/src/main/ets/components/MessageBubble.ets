@@ -41,6 +41,7 @@ import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { image } from '@kit.ImageKit'
 import { fileIo } from '@kit.CoreFileKit'
+import { fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 
 const DOMAIN = 0x0002
@@ -2857,7 +2858,7 @@ export struct MessageBubble {
         subtype: photoAccessHelper.PhotoSubtype.DEFAULT
       }
       const phHelper = photoAccessHelper.getPhotoAccessHelper(context)
-      const srcUri = `file://${tempPath}`
+      const srcUri = fileUri.getUriFromPath(tempPath)
       const destUris = await phHelper.showAssetsCreationDialog([srcUri], [config])
       if (destUris.length > 0) {
         const src = fileIo.openSync(tempPath, fileIo.OpenMode.READ_ONLY)
