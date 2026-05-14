@@ -8,8 +8,7 @@ export interface ChatStopFlowDependencies {
   messages: ChatMessage[]
   getCurrentTaskId: () => string
   onSetCurrentTaskId: (taskId: string) => void
-  onSetSearchCancelled: (value: boolean) => void
-  onCancelManualSearchRequests: () => void
+  onCancelWebSearchRequests: () => void
   onSyncMessages: () => void
   onSetSending: (value: boolean) => void
   onSetLoading: (value: boolean) => void
@@ -25,8 +24,7 @@ export class ChatStopFlow {
   }
 
   stopCurrentTask(): void {
-    this.deps.onSetSearchCancelled(true)
-    this.deps.onCancelManualSearchRequests()
+    this.deps.onCancelWebSearchRequests()
 
     const currentTaskId = this.deps.getCurrentTaskId()
     if (currentTaskId !== '') {

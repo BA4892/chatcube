@@ -214,7 +214,7 @@ function createSearchWebToolDefinition(): ToolDefinition {
 
   const func = new ToolFunction(
     SEARCH_WEB_TOOL_ID,
-    'Search the web for up-to-date, specific, or verifiable information. First decide whether web access is truly needed; use your own knowledge for common stable facts and pure generation tasks. Each search has real cost, so generate focused keywords and run multiple searches only when more evidence is needed. Cite results with [1], [2] style source numbers.',
+    'Search the web for up-to-date, specific, or verifiable information. First decide whether web access is truly needed; use your own knowledge for common stable facts and pure generation tasks. Each search has real cost, so generate focused keywords and run multiple searches only when more evidence is needed. Cite used sources as standard Markdown links like [title](url), not bare [1] or [2] numbers.',
     parameters
   )
 

@@ -68,7 +68,6 @@ import {
   shouldShowToolSelectionChipForChat
 } from './chat/ChatPageUiHelper'
 import { parseToolIdsFromRouteRaw } from './chat/ChatToolIdHelper'
-import { ChatManualSearchFlow, ChatManualSearchFlowDependencies } from './chat/ChatManualSearchFlow'
 import { ChatSendFlow, ChatSendFlowDependencies } from './chat/ChatSendFlow'
 import { ChatStopFlow, ChatStopFlowDependencies } from './chat/ChatStopFlow'
 import { ChatInlineEditFlow, ChatInlineEditFlowDependencies } from './chat/ChatInlineEditFlow'
@@ -190,8 +189,6 @@ export struct ChatPage {
   }
   // 是否为通过"新建对话"创建的空会话（返回时需要删除）
   private isNewEmptySession: boolean = false
-  // 搜索取消标志（用于取消正在进行的联网查询）
-  private isSearchCancelled: boolean = false
   private pendingToolExecutionApprovalResolver: ((approved: boolean) => void) | null = null
   // ask_user 待答复 resolver: key=toolCallId, value=resolve(answerJson | null)
   // 流程: ToolExecutionService.handleAskUser → answerCallback → 存入 Map → AskUserCard.onAnswer → resolve
@@ -320,7 +317,6 @@ export struct ChatPage {
   private isPageVisible: boolean = false
   // 兜底 watcher：页面切换时可能错过一次任务完成事件，这里只负责回收发送态，不碰消息内容同步
   private runtimeStateWatchdogTimerId: number = -1
-  private manualSearchFlow: ChatManualSearchFlow | null = null
   private sendFlow: ChatSendFlow | null = null
   private stopFlow: ChatStopFlow | null = null
   private inlineEditFlow: ChatInlineEditFlow | null = null
@@ -1468,10 +1464,6 @@ export struct ChatPage {
       getCurrentModelName: (): string => this.currentModel,
       getMessages: (): ChatMessage[] => this.messages,
       getReasoningLevel: (): ReasoningLevel => this.reasoningLevel,
-      executeManualSearch: async (messageContent: string, attachmentsToSend: MessageAttachment[]): Promise<void> => {
-        console.info('ChatPage', '[联网查询] 显式联网模式，使用手动搜索执行链路')
-        await this.getManualSearchFlow().startManualSearchFallback(messageContent, attachmentsToSend)
-      },
       onClearComposer: (): void => {
         this.clearDraftAutosaveTimer()
         this.inputText = ''
@@ -1530,14 +1522,7 @@ export struct ChatPage {
       onSetCurrentTaskId: (taskId: string): void => {
         this.currentTaskId = taskId
       },
-      onSetSearchCancelled: (value: boolean): void => {
-        this.isSearchCancelled = value
-      },
-      onCancelManualSearchRequests: (): void => {
-        if (this.manualSearchFlow !== null) {
-          this.manualSearchFlow.cancelCurrentSearchRequest()
-          return
-        }
+      onCancelWebSearchRequests: (): void => {
         this.webSearchService.cancelAllRequests()
       },
       onSyncMessages: (): void => {
@@ -1558,76 +1543,6 @@ export struct ChatPage {
     }
     this.stopFlow = new ChatStopFlow(deps)
     return this.stopFlow
-  }
-
-  private getManualSearchFlow(): ChatManualSearchFlow {
-    if (this.manualSearchFlow !== null) {
-      return this.manualSearchFlow
-    }
-    const deps: ChatManualSearchFlowDependencies = {
-      chatViewModel: this.chatViewModel,
-      chatTaskOrchestrator: this.chatTaskOrchestrator,
-      providerViewModel: this.providerViewModel,
-      webSearchService: this.webSearchService,
-      defaultModelService: this.defaultModelService,
-      preferencesService: this.preferencesService,
-      messages: this.messages,
-      getSessionId: (): string => this.sessionId,
-      getSessionTitle: (): string => this.sessionTitle,
-      getCurrentTaskId: (): string => this.currentTaskId,
-      onSetCurrentTaskId: (taskId: string): void => {
-        this.currentTaskId = taskId
-      },
-      getCurrentProvider: (): ModelProvider | null => this.currentProvider,
-      getCurrentModelId: (): string => this.currentModelId,
-      getCurrentModelName: (): string => this.currentModel,
-      getMessages: (): ChatMessage[] => this.messages,
-      getReasoningLevel: (): ReasoningLevel => this.reasoningLevel,
-      isSearchCancelled: (): boolean => this.isSearchCancelled,
-      onSyncMessages: (): void => {
-        this.markMessageListChanged()
-      },
-      onScrollBottom: (): void => {
-        this.getScrollUiFlow().alignToBottomIfPinned()
-      },
-      onSetSending: (value: boolean): void => {
-        this.isSending = value
-      },
-      onSetSearchCancelled: (value: boolean): void => {
-        this.isSearchCancelled = value
-      },
-      onClearComposer: (): void => {
-        this.clearDraftAutosaveTimer()
-        this.inputText = ''
-        this.pendingAttachments = []
-      },
-      onBeforeManualSearchStart: (): void => {
-        this.safeStopInputSession()
-        this.getScrollUiFlow().scrollToBottomWithAnimation()
-      },
-      onSetNewEmptySession: (value: boolean): void => {
-        this.isNewEmptySession = value
-      },
-      onDraftCommitted: (): void => {
-        this.persistCurrentDraftState('', []).catch((error: Error): void => {
-          console.error('ChatPage', `Failed to clear draft after manual search: ${JSON.stringify(error)}`)
-        })
-      },
-      onMarkAutoTaskFailed: (message: string): void => {
-        // no-op
-      },
-      onMarkAutoTaskCompleted: (): void => {
-        // no-op
-      },
-      onShowError: (message: string | Resource): void => {
-        this.showError(message)
-      },
-      onShowToast: (message: string | Resource): void => {
-        this.showChatSnack(message)
-      }
-    }
-    this.manualSearchFlow = new ChatManualSearchFlow(deps)
-    return this.manualSearchFlow
   }
 
   private getInlineEditFlow(): ChatInlineEditFlow {

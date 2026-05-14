@@ -31,7 +31,6 @@ export class ChatSendPrepareResult {
 enum ChatExecutionPlanKind {
   PLAIN_DIRECT = 'plain_direct',
   TOOLS = 'tools',
-  MANUAL_SEARCH = 'manual_search',
   UNSUPPORTED_TOOLS = 'unsupported_tools'
 }
 
@@ -58,7 +57,6 @@ export interface ChatSendFlowDependencies {
   getCurrentModelName: () => string
   getMessages: () => ChatMessage[]
   getReasoningLevel: () => ReasoningLevel
-  executeManualSearch: (messageContent: string, attachmentsToSend: MessageAttachment[]) => Promise<void>
   onClearComposer: () => void
   onBeforeSend: () => void
   onSetSending: (value: boolean) => void
@@ -155,7 +153,6 @@ export class ChatSendFlow {
     currentModelId: string
   ): Promise<void> {
     const plan = await this.buildExecutionPlan(
-      messageContent,
       currentProvider,
       webSearchConversationEnabled,
       selectedToolIds,
@@ -166,11 +163,6 @@ export class ChatSendFlow {
       'ChatSendFlow',
       `[executeSend] plan=${plan.kind}, search=${webSearchConversationEnabled}, selected=${selectedToolIds.join(',')}, forced=${forcedToolIds.join(',')}, tools=${plan.enabledToolIds.join(',')}`
     )
-
-    if (plan.kind === ChatExecutionPlanKind.MANUAL_SEARCH) {
-      await this.deps.executeManualSearch(messageContent, attachmentsToSend)
-      return
-    }
 
     if (plan.kind === ChatExecutionPlanKind.TOOLS) {
       await this.sendMessageWithTools(
@@ -184,7 +176,7 @@ export class ChatSendFlow {
     }
 
     if (plan.kind === ChatExecutionPlanKind.UNSUPPORTED_TOOLS) {
-      const message = '当前模型或接口不支持所选工具，请切换到支持 tools 的模型后重试'
+      const message = '当前模型或接口不支持工具调用，请切换到支持 tools 的模型后再使用联网搜索、MCP 等工具'
       this.deps.onShowError(message)
       this.deps.onMarkAutoTaskFailed(message)
       return
@@ -257,7 +249,6 @@ export class ChatSendFlow {
   }
 
   private async buildExecutionPlan(
-    messageContent: string,
     currentProvider: ModelProvider,
     webSearchConversationEnabled: boolean,
     selectedToolIds: string[],
@@ -292,45 +283,11 @@ export class ChatSendFlow {
       return new ChatExecutionPlan(ChatExecutionPlanKind.PLAIN_DIRECT)
     }
 
-    if (searchEnabled && this.allToolsAreWebSearch(enabledToolIds) && this.isPureUrlInput(messageContent) &&
-      !enabledToolIds.includes(SCRAPE_WEB_TOOL_ID)) {
-      return new ChatExecutionPlan(ChatExecutionPlanKind.MANUAL_SEARCH, enabledToolIds)
-    }
-
     if (this.isCurrentModelSupportsTools(currentProvider, currentModelId)) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds)
     }
 
-    if (searchEnabled && this.allToolsAreWebSearch(enabledToolIds)) {
-      return new ChatExecutionPlan(ChatExecutionPlanKind.MANUAL_SEARCH, enabledToolIds)
-    }
-
     return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds)
-  }
-
-  private isPureUrlInput(messageContent: string): boolean {
-    const trimmed = messageContent.trim()
-    if (trimmed === '' || /\s/.test(trimmed)) {
-      return false
-    }
-    const httpPattern = /^https?:\/\/[^\s]+$/i
-    if (httpPattern.test(trimmed)) {
-      return true
-    }
-    const domainPattern = /^[\w\-]+\.[\w\-]+(:\d+)?(\/[\w\-._~:/?#[\]@!$&'()*+,;=]*)?$/i
-    return domainPattern.test(trimmed)
-  }
-
-  private allToolsAreWebSearch(toolIds: string[]): boolean {
-    if (toolIds.length === 0) {
-      return false
-    }
-    for (let i = 0; i < toolIds.length; i++) {
-      if (!isSearchToolId(toolIds[i])) {
-        return false
-      }
-    }
-    return true
   }
 
   private startTaskOrFail(messageContent: string): string {
