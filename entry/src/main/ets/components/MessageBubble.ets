@@ -10,6 +10,7 @@ import {
 import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
+import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { getModelIconPath, buildIconResourcePath } from '../utils/ProviderIconUtils'
 import { shouldShowAssistantMessageToolbar } from '../utils/MessageBubbleDisplayUtils'
 import { SearchReferenceCard } from './SearchReferenceCard'
@@ -41,6 +42,8 @@ import {
 import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { image } from '@kit.ImageKit'
+import { fileIo } from '@kit.CoreFileKit'
+import { photoAccessHelper } from '@kit.MediaLibraryKit'
 
 const DOMAIN = 0x0002
 const TAG = 'MessageBubble'
@@ -141,6 +144,12 @@ export struct MessageBubble {
   @Local currentTranslateLang: string = ''  // 当前翻译的目标语言
   @Local showLatexPreview: boolean = false
   @Local latexPreviewPixelMap: image.PixelMap | null = null
+  @Local latexPreviewScale: number = 1
+  @Local latexPreviewLastScale: number = 1
+  @Local latexPreviewOffsetX: number = 0
+  @Local latexPreviewOffsetY: number = 0
+  @Local latexPreviewLastOffsetX: number = 0
+  @Local latexPreviewLastOffsetY: number = 0
   // 深色模式状态（用于主题适配）
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
@@ -1881,6 +1890,12 @@ export struct MessageBubble {
       title: { title: 'LaTeX' },
       onDisappear: () => {
         this.latexPreviewPixelMap = null
+        this.latexPreviewScale = 1
+        this.latexPreviewLastScale = 1
+        this.latexPreviewOffsetX = 0
+        this.latexPreviewOffsetY = 0
+        this.latexPreviewLastOffsetX = 0
+        this.latexPreviewLastOffsetY = 0
       }
     })
   }
@@ -2858,20 +2873,99 @@ export struct MessageBubble {
     .backgroundColor($r('app.color.surface'))
   }
 
-  @Builder
+  private async saveLatexPixelMap(): Promise<void> {
+    if (this.latexPreviewPixelMap === null) {
+      return
+    }
+    try {
+      const packer = image.createImagePacker()
+      const data = await packer.packing(this.latexPreviewPixelMap, { format: 'image/png', quality: 100 })
+      packer.release()
+      const context = this.getUIContext().getHostContext()!
+      const tempPath = `${context.tempDir}/latex_${Date.now()}.png`
+      const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
+      fileIo.writeSync(file.fd, data)
+      fileIo.closeSync(file)
+      const config: photoAccessHelper.PhotoCreationConfig = {
+        title: `LaTeX_${Date.now()}`,
+        fileNameExtension: 'png',
+        photoType: photoAccessHelper.PhotoType.IMAGE,
+        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+      }
+      const phHelper = photoAccessHelper.getPhotoAccessHelper(context)
+      const srcUri = `file://${tempPath}`
+      const destUris = await phHelper.showAssetsCreationDialog([srcUri], [config])
+      if (destUris.length > 0) {
+        const src = fileIo.openSync(tempPath, fileIo.OpenMode.READ_ONLY)
+        const dest = fileIo.openSync(destUris[0], fileIo.OpenMode.WRITE_ONLY)
+        fileIo.copyFileSync(src.fd, dest.fd)
+        fileIo.closeSync(src)
+        fileIo.closeSync(dest)
+        showToast(this.getUIContext(), pickLocalizedText('已保存', 'Saved'))
+      }
+      fileIo.unlinkSync(tempPath)
+    } catch (error) {
+      console.error('MessageBubble', `Failed to save LaTeX image: ${JSON.stringify(error)}`)
+      showToast(this.getUIContext(), pickLocalizedText('保存失败', 'Save failed'))
+    }
+  }
+
   @Builder
   LatexPreviewSheetBuilder() {
     Column() {
       if (this.latexPreviewPixelMap !== null) {
-        Scroll() {
+        Stack() {
           Image(this.latexPreviewPixelMap)
             .objectFit(ImageFit.Contain)
             .width('100%')
+            .height('100%')
         }
         .width('100%')
         .layoutWeight(1)
-        .scrollable(ScrollDirection.Both)
-        .scrollBar(BarState.Auto)
+        .clip(true)
+        .scale({ x: this.latexPreviewScale, y: this.latexPreviewScale })
+        .translate({ x: this.latexPreviewOffsetX, y: this.latexPreviewOffsetY })
+        .parallelGesture(
+          PinchGesture({ fingers: 2 })
+            .onActionUpdate((event: GestureEvent) => {
+              this.latexPreviewScale = this.latexPreviewLastScale * event.scale
+              if (this.latexPreviewScale < 0.5) {
+                this.latexPreviewScale = 0.5
+              }
+              if (this.latexPreviewScale > 5) {
+                this.latexPreviewScale = 5
+              }
+            })
+            .onActionEnd(() => {
+              this.latexPreviewLastScale = this.latexPreviewScale
+            })
+        )
+        .gesture(
+          PanGesture()
+            .onActionUpdate((event: GestureEvent) => {
+              this.latexPreviewOffsetX = this.latexPreviewLastOffsetX + event.offsetX
+              this.latexPreviewOffsetY = this.latexPreviewLastOffsetY + event.offsetY
+            })
+            .onActionEnd(() => {
+              this.latexPreviewLastOffsetX = this.latexPreviewOffsetX
+              this.latexPreviewLastOffsetY = this.latexPreviewOffsetY
+            })
+        )
+
+        Row({ space: 12 }) {
+          Button(pickLocalizedText('保存图片', 'Save'))
+            .height(36)
+            .fontSize(13)
+            .type(ButtonType.Capsule)
+            .backgroundColor(this.themePrimary)
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.saveLatexPixelMap()
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ top: 8, bottom: 8 })
       }
     }
     .width('100%')
