@@ -1,11 +1,9 @@
 import {
   ToolApprovalPolicy,
-  ToolConfig,
   SearchEngine,
-  ToolSourceType,
   normalizeToolApprovalPolicy
 } from '../models/ChatModels'
-import { McpAuthType, McpServerConfig } from '../models/McpModels'
+import { McpAuthType, McpServerConfig, McpToolEntry } from '../models/McpModels'
 import { ToolRegistry } from '../services/ToolRegistry'
 import { McpService } from '../services/McpService'
 import { ServiceRegistry } from '../services/ServiceRegistry'
@@ -79,6 +77,8 @@ export struct ToolsCenterPanel {
   @Local mcpFormToolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Local mcpToolApprovalPolicySelectedIndex: number = 0
   @Local isSavingMcpServer: boolean = false
+  @Local showMcpServerDetailSheet: boolean = false
+  @Local detailServerId: string = ''
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -171,6 +171,7 @@ export struct ToolsCenterPanel {
     target.authToken = source.authToken
     target.customHeadersJson = source.customHeadersJson
     target.toolApprovalPolicy = normalizeToolApprovalPolicy(source.toolApprovalPolicy)
+    target.tools = source.tools
   }
 
   private applyMcpServerConfigsToLocal(configs: McpServerConfig[]): void {
@@ -263,7 +264,7 @@ export struct ToolsCenterPanel {
   private getDiscoveredMcpToolCount(): number {
     let total = 0
     for (let i = 0; i < this.mcpServers.length; i++) {
-      total += this.getServerTools(this.mcpServers[i].id).length
+      total += this.mcpServers[i].tools.length
     }
     return total
   }
@@ -828,15 +829,6 @@ export struct ToolsCenterPanel {
     return null
   }
 
-  private getServerTools(serverId: string): ToolConfig[] {
-    const configs: ToolConfig[] = []
-    const tools = this.toolRegistry.getToolsBySource(ToolSourceType.MCP, serverId)
-    for (let i = 0; i < tools.length; i++) {
-      configs.push(tools[i].config)
-    }
-    return configs
-  }
-
   private async handleSaveMcpServer(): Promise<void> {
     if (this.isSavingMcpServer) {
       return
@@ -1026,6 +1018,226 @@ export struct ToolsCenterPanel {
     await this.mcpService.refreshServer(serverId)
     await this.loadMcpServers()
     this.showToolsSnack(pickLocalizedText('MCP 工具已刷新', 'MCP tools refreshed'), 2000, SnackBarTone.SUCCESS)
+  }
+
+  private openMcpServerDetail(serverId: string): void {
+    this.detailServerId = serverId
+    this.showMcpServerDetailSheet = true
+  }
+
+  private getDetailServer(): McpServerConfig | null {
+    return this.findLocalMcpServerById(this.detailServerId)
+  }
+
+  private handleToolEnabledChanged(serverId: string, toolName: string, enabled: boolean): void {
+    const server = this.findLocalMcpServerById(serverId)
+    if (server === null) {
+      return
+    }
+    for (let i = 0; i < server.tools.length; i++) {
+      if (server.tools[i].name === toolName) {
+        server.tools[i].enabled = enabled
+        break
+      }
+    }
+    server.tools = [...server.tools]
+    this.persistMcpServerTools(serverId)
+  }
+
+  private handleToolNeedsApprovalChanged(serverId: string, toolName: string, needsApproval: boolean): void {
+    const server = this.findLocalMcpServerById(serverId)
+    if (server === null) {
+      return
+    }
+    for (let i = 0; i < server.tools.length; i++) {
+      if (server.tools[i].name === toolName) {
+        server.tools[i].needsApproval = needsApproval
+        break
+      }
+    }
+    server.tools = [...server.tools]
+    this.persistMcpServerTools(serverId)
+  }
+
+  private persistMcpServerTools(serverId: string): void {
+    this.mcpService.loadServerConfigs().then((configs: McpServerConfig[]) => {
+      const localServer = this.findLocalMcpServerById(serverId)
+      if (localServer === null) {
+        return
+      }
+      for (let i = 0; i < configs.length; i++) {
+        if (configs[i].id === serverId) {
+          configs[i].tools = localServer.tools
+          break
+        }
+      }
+      this.mcpService.saveServerConfigs(configs)
+    })
+  }
+
+  @Builder
+  McpServerDetailSheetBuilder() {
+    Column() {
+      if (this.getDetailServer() !== null) {
+        this.McpServerDetailContentBuilder()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(getAppUiState().themeBackground)
+  }
+
+  @Builder
+  McpServerDetailContentBuilder() {
+    Column() {
+      Row() {
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+            .fontSize(18)
+            .fontColor([$r('app.color.text_secondary')])
+        }
+        .type(ButtonType.Circle)
+        .stateEffect(false)
+        .width(36)
+        .height(36)
+        .backgroundColor($r('app.color.divider'))
+        .onClick(() => {
+          this.showMcpServerDetailSheet = false
+        })
+
+        Text(this.getDetailServer()!.name)
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Button(pickLocalizedText('刷新', 'Refresh'))
+          .height(32)
+          .fontSize(12)
+          .type(ButtonType.Capsule)
+          .stateEffect(false)
+          .backgroundColor(this.themePrimary)
+          .fontColor(Color.White)
+          .onClick(() => {
+            this.refreshMcpServer(this.detailServerId)
+          })
+      }
+      .width('100%')
+      .height(56)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+
+      Scroll() {
+        Column({ space: 14 }) {
+          Column({ space: 8 }) {
+            Text(this.getDetailServer()!.baseUrl)
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Row({ space: 8 }) {
+              Text(this.getDetailServer()!.enabled
+                ? pickLocalizedText('已启用', 'Enabled') : pickLocalizedText('已停用', 'Disabled'))
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.getDetailServer()!.enabled ? this.themePrimary : $r('app.color.text_secondary'))
+                .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                .borderRadius(999)
+                .backgroundColor(this.getDetailServer()!.enabled
+                  ? withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
+                  : getAppUiState().themeBackground)
+
+              Text(formatLocalizedCount(this.getDetailServer()!.tools.length, '个工具', 'tool', 'tools'))
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                .borderRadius(999)
+                .backgroundColor(getAppUiState().themeBackground)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding(14)
+          .borderRadius(16)
+          .backgroundColor(getAppUiState().themeSurface)
+
+          Column({ space: 4 }) {
+            Text(pickLocalizedText('工具列表', 'Tools'))
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+
+            if (this.getDetailServer()!.tools.length === 0) {
+              Text(pickLocalizedText('暂未发现工具，请点击刷新。', 'No tools discovered yet. Tap Refresh.'))
+                .fontSize(12)
+                .fontColor($r('app.color.text_tertiary'))
+                .width('100%')
+                .margin({ top: 8 })
+            }
+          }
+          .width('100%')
+
+          ForEach(this.getDetailServer()!.tools, (tool: McpToolEntry) => {
+            McpToolEntryCard({
+              tool: tool,
+              serverApprovalPolicy: this.getDetailServer()!.toolApprovalPolicy,
+              onEnabledChange: (enabled: boolean) => {
+                this.handleToolEnabledChanged(this.detailServerId, tool.name, enabled)
+              },
+              onNeedsApprovalChange: (needsApproval: boolean) => {
+                this.handleToolNeedsApprovalChanged(this.detailServerId, tool.name, needsApproval)
+              }
+            })
+          }, (tool: McpToolEntry) => tool.name)
+
+          Row({ space: 8 }) {
+            Button(pickLocalizedText('编辑', 'Edit'))
+              .height(36)
+              .fontSize(13)
+              .type(ButtonType.Capsule)
+              .stateEffect(false)
+              .backgroundColor(getAppUiState().themeBackground)
+              .border({ width: 1, color: this.dividerHex })
+              .fontColor($r('app.color.text_primary'))
+              .onClick(() => {
+                this.showMcpServerDetailSheet = false
+                this.openEditMcpServer(this.getDetailServer()!)
+              })
+
+            Blank()
+
+            Button($r('app.string.delete'))
+              .height(36)
+              .fontSize(13)
+              .type(ButtonType.Capsule)
+              .stateEffect(false)
+              .backgroundColor(getAppUiState().themeBackground)
+              .border({ width: 1, color: this.isDarkMode ? '#6A3139' : '#F2CBD2' })
+              .fontColor('#D9485F')
+              .onClick(() => {
+                this.showMcpServerDetailSheet = false
+                this.handleDeleteMcpServer(this.detailServerId)
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 24 })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -1283,6 +1495,7 @@ export struct ToolsCenterPanel {
                 .layoutWeight(1)
 
                 Toggle({ type: ToggleType.Switch, isOn: this.searchQueryOptimizationEnabled })
+                  .selectedColor(this.themePrimary)
                   .onChange((value: boolean) => {
                     this.searchQueryOptimizationEnabled = value
                   })
@@ -1862,6 +2075,7 @@ export struct ToolsCenterPanel {
             .alignItems(HorizontalAlign.Start)
 
             Toggle({ type: ToggleType.Switch, isOn: this.mcpFormEnabled })
+              .selectedColor(this.themePrimary)
               .onChange((value: boolean) => {
                 this.mcpFormEnabled = value
               })
@@ -2038,22 +2252,12 @@ export struct ToolsCenterPanel {
                     serverName: server.name,
                     serverBaseUrl: server.baseUrl,
                     serverEnabled: server.enabled,
-                    tools: this.getServerTools(server.id),
-                    authLabel: this.getMcpServerAuthLabel(server),
-                    toolApprovalPolicyLabel: this.getMcpToolApprovalPolicyLabel(server.toolApprovalPolicy),
-                    toolApprovalPolicy: server.toolApprovalPolicy,
-                    customHeaderCount: this.getServerCustomHeaderCount(server),
+                    toolCount: server.tools.length,
                     onToggleEnabled: (value: boolean) => {
                       this.handleMcpServerEnabledChanged(server.id, value)
                     },
-                    onRefresh: () => {
-                      this.refreshMcpServer(server.id)
-                    },
-                    onEdit: () => {
-                      this.openEditMcpServer(server)
-                    },
-                    onDelete: () => {
-                      this.handleDeleteMcpServer(server.id)
+                    onTap: () => {
+                      this.openMcpServerDetail(server.id)
                     }
                   })
                 }, (server: McpServerConfig) => server.id)
@@ -2104,6 +2308,20 @@ export struct ToolsCenterPanel {
           blurStyle: BlurStyle.Regular,
           onDisappear: () => {
             this.showMcpServerSheet = false
+          }
+        })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showMcpServerDetailSheet, this.McpServerDetailSheetBuilder(), {
+          height: SheetSize.LARGE,
+          detents: [SheetSize.LARGE],
+          showClose: false,
+          dragBar: true,
+          blurStyle: BlurStyle.Regular,
+          onDisappear: () => {
+            this.showMcpServerDetailSheet = false
           }
         })
     }
@@ -2176,6 +2394,7 @@ struct SearchServiceCardItem {
         .alignItems(HorizontalAlign.Start)
 
         Toggle({ type: ToggleType.Switch, isOn: this.searchEnabled })
+          .selectedColor(this.themePrimary)
           .onChange((value: boolean) => {
             this.onToggle(value)
           })
@@ -2223,16 +2442,9 @@ struct McpServerCardItem {
   @Param serverName: string = ''
   @Param serverBaseUrl: string = ''
   @Param serverEnabled: boolean = false
-  @Param tools: ToolConfig[] = []
-  @Param authLabel: string = 'None'
-  @Param toolApprovalPolicyLabel: string = ''
-  @Param toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
-  @Param customHeaderCount: number = 0
+  @Param toolCount: number = 0
   @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean) => {}
-  @Event onRefresh: () => void = () => {}
-  @Event onEdit: () => void = () => {}
-  @Event onDelete: () => void = () => {}
-  @Local isToolsExpanded: boolean = false
+  @Event onTap: () => void = () => {}
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -2242,334 +2454,150 @@ struct McpServerCardItem {
     return getAppUiState().isDarkMode
   }
 
-  private get themePrimarySubtleBackground(): string {
-    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
-  }
-
-  private get neutralBadgeBackgroundColor(): string {
-    return withColorAlpha(getAppUiState().themeTextSecondary, this.isDarkMode ? '24' : '12')
-  }
-
-  private get secondaryTextHex(): string {
-    return this.isDarkMode ? '#999999' : '#666666'
-  }
-
-  private get backgroundHex(): string {
-    return getAppUiState().themeBackground
-  }
-
   private get dividerHex(): string {
     return getAppUiState().themeDivider
   }
 
-  private getWriteToolCount(): number {
-    let count = 0
-    for (let i = 0; i < this.tools.length; i++) {
-      if (this.tools[i].permissionLevel === 'write') {
-        count += 1
+  build() {
+    Row({ space: 12 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.cloud'))
+          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          .fontSize(20)
+          .fontColor([this.serverEnabled ? this.themePrimary : $r('app.color.text_secondary')])
       }
+      .width(42)
+      .height(42)
+      .borderRadius(14)
+      .backgroundColor(getAppUiState().themeBackground)
+      .border({ width: 1, color: this.serverEnabled ? this.themePrimary : this.dividerHex })
+      .justifyContent(FlexAlign.Center)
+
+      Column({ space: 4 }) {
+        Text(this.serverName)
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Text(this.serverBaseUrl)
+          .fontSize(11)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Text(formatLocalizedCount(this.toolCount, '个工具', 'tool', 'tools'))
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.serverEnabled })
+        .selectedColor(this.themePrimary)
+        .onChange((value: boolean) => {
+          this.onToggleEnabled(value)
+        })
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+        .fontSize(16)
+        .fontColor([$r('app.color.text_tertiary')])
     }
-    return count
+    .width('100%')
+    .padding(14)
+    .margin({ bottom: 8 })
+    .borderRadius(18)
+    .backgroundColor(getAppUiState().themeSurface)
+    .border({ width: 1, color: this.serverEnabled ? this.themePrimary : this.dividerHex })
+    .shadow({
+      radius: 12,
+      color: this.isDarkMode ? 'rgba(0, 0, 0, 0.18)' : 'rgba(15, 23, 42, 0.04)',
+      offsetX: 0,
+      offsetY: 4
+    })
+    .onClick(() => {
+      this.onTap()
+    })
+  }
+}
+
+@ComponentV2
+struct McpToolEntryCard {
+  @Param tool: McpToolEntry = new McpToolEntry()
+  @Param serverApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
+  @Event onEnabledChange: (enabled: boolean) => void = (_enabled: boolean) => {}
+  @Event onNeedsApprovalChange: (needsApproval: boolean) => void = (_needsApproval: boolean) => {}
+
+  private get themePrimary(): string {
+    return getAppUiState().themePrimary
   }
 
-  private getToolPreviewText(): string {
-    if (this.tools.length === 0) {
-      return pickLocalizedText('暂未发现工具。', 'No tools discovered yet.')
-    }
-    const names: string[] = []
-    const maxVisible = Math.min(this.tools.length, 5)
-    for (let i = 0; i < maxVisible; i++) {
-      names.push(this.tools[i].name)
-    }
-    const suffix = this.tools.length > maxVisible
-      ? pickLocalizedText(` 等 ${this.tools.length} 个`, ` and ${this.tools.length} total`)
-      : ''
-    return `${names.join(' · ')}${suffix}`
+  private get isDarkMode(): boolean {
+    return getAppUiState().isDarkMode
   }
 
-  private getStatusText(): string {
-    return this.serverEnabled ? pickLocalizedText('已启用', 'Enabled') : pickLocalizedText('已停用', 'Disabled')
-  }
-
-  private getStatusBackgroundColor(): string {
-    return this.serverEnabled ? this.themePrimarySubtleBackground : this.neutralBadgeBackgroundColor
-  }
-
-  private getStatusFontColor(): string {
-    return this.serverEnabled ? this.themePrimary : getAppUiState().themeTextSecondary
-  }
-
-  private getToolToggleText(): string {
-    return this.isToolsExpanded ? pickLocalizedText('收起工具', 'Collapse') : pickLocalizedText('展开工具', 'Expand')
-  }
-
-  private getToolCountText(): string {
-    return this.tools.length > 0
-      ? formatLocalizedCount(this.tools.length, '个工具', 'tool', 'tools')
-      : pickLocalizedText('尚未发现工具', 'No tools discovered')
-  }
-
-  private getCustomHeaderCountText(): string {
-    return formatLocalizedCount(this.customHeaderCount, '个请求头', 'header', 'headers')
-  }
-
-  private getWriteToolCountText(): string {
-    return formatLocalizedCount(this.getWriteToolCount(), '个写操作', 'write tool', 'write tools')
-  }
-
-  private getPolicyTagColor(): string {
-    const normalized = normalizeToolApprovalPolicy(this.toolApprovalPolicy)
-    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
-      return this.themePrimary
-    }
-    return getAppUiState().themeTextSecondary
-  }
-
-  private getPolicyTagBackgroundColor(): string {
-    const normalized = normalizeToolApprovalPolicy(this.toolApprovalPolicy)
-    if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
-      return this.themePrimarySubtleBackground
-    }
-    return this.neutralBadgeBackgroundColor
+  private showNeedsApproval(): boolean {
+    return normalizeToolApprovalPolicy(this.serverApprovalPolicy) === ToolApprovalPolicy.UNCONFIGURED
   }
 
   build() {
-    Column({ space: 14 }) {
-      Row({ space: 12 }) {
-        Column() {
-          SymbolGlyph($r('sys.symbol.cloud'))
-            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-            .fontSize(22)
-            .fontColor([this.serverEnabled ? this.themePrimary : this.secondaryTextHex])
-        }
-        .width(46)
-        .height(46)
-        .borderRadius(16)
-        .backgroundColor(this.backgroundHex)
-        .border({ width: 1, color: this.serverEnabled ? this.themePrimary : this.dividerHex })
-        .justifyContent(FlexAlign.Center)
-
-        Column({ space: 6 }) {
-          Row() {
-            Text(this.serverName)
-              .fontSize(17)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-            Text(this.getStatusText())
-              .fontSize(10)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.getStatusFontColor())
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .borderRadius(999)
-              .backgroundColor(this.getStatusBackgroundColor())
-              .margin({ left: 8 })
-          }
-          .width('100%')
-
-          Text(this.serverBaseUrl)
-            .fontSize(11)
-            .lineHeight(16)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(2)
+    Row({ space: 10 }) {
+      Column({ space: 2 }) {
+        Row({ space: 6 }) {
+          Text(this.tool.name)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-
-        Toggle({ type: ToggleType.Switch, isOn: this.serverEnabled })
-          .onChange((value: boolean) => {
-            this.onToggleEnabled(value)
-          })
-      }
-      .width('100%')
-
-      Row({ space: 8 }) {
-        Text(this.getToolCountText())
-          .fontSize(11)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .borderRadius(999)
-          .backgroundColor(getAppUiState().themeBackground)
-
-        if (this.authLabel !== 'None') {
-          Text(this.authLabel)
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.themePrimary)
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .borderRadius(999)
-            .backgroundColor(this.backgroundHex)
-            .border({ width: 1, color: this.themePrimary })
-        }
-
-        if (this.customHeaderCount > 0) {
-          Text(this.getCustomHeaderCountText())
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_secondary'))
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .borderRadius(999)
-            .backgroundColor(getAppUiState().themeBackground)
-        }
-
-        Text(this.toolApprovalPolicyLabel)
-          .fontSize(11)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.getPolicyTagColor())
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .borderRadius(999)
-          .backgroundColor(this.getPolicyTagBackgroundColor())
-
-        if (this.getWriteToolCount() > 0) {
-          Text(this.getWriteToolCountText())
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#D9485F')
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .borderRadius(999)
-            .backgroundColor(this.isDarkMode ? '#4B1D24' : '#FDECEF')
-        }
-      }
-      .width('100%')
-
-      Column({ space: 10 }) {
-        Row() {
-          Text(this.tools.length > 0 ? this.getToolPreviewText() : pickLocalizedText('暂未发现工具', 'No tools discovered'))
-            .fontSize(12)
-            .lineHeight(18)
-            .fontColor($r('app.color.text_secondary'))
             .layoutWeight(1)
-            .maxLines(this.isToolsExpanded ? 10 : 3)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          if (this.tools.length > 0) {
-            Row({ space: 4 }) {
-              Text(this.getToolToggleText())
-                .fontSize(11)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.themePrimary)
+          if (this.tool.permissionLevel === 'write') {
+            Text(pickLocalizedText('写', 'W'))
+              .fontSize(9)
+              .fontColor('#D9485F')
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+              .borderRadius(4)
+              .backgroundColor(this.isDarkMode ? '#4B1D24' : '#FDECEF')
+          }
 
-              SymbolGlyph($r('sys.symbol.chevron_down'))
-                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-                .fontSize(12)
-                .fontColor([this.themePrimary])
-                .rotate({ angle: this.isToolsExpanded ? 180 : 0 })
-                .animation({ duration: 180, curve: Curve.EaseOut })
-            }
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .borderRadius(999)
-            .backgroundColor(this.backgroundHex)
-            .border({ width: 1, color: this.themePrimary })
-            .onClick(() => {
-              this.isToolsExpanded = !this.isToolsExpanded
-            })
+          if (this.showNeedsApproval() && this.tool.needsApproval) {
+            Text(pickLocalizedText('需确认', 'Ask'))
+              .fontSize(9)
+              .fontColor($r('app.color.text_tertiary'))
+              .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+              .borderRadius(4)
+              .backgroundColor(this.isDarkMode ? '#2A2D35' : '#F3F4F6')
           }
         }
         .width('100%')
 
-        if (this.isToolsExpanded && this.tools.length > 0) {
-          Column({ space: 8 }) {
-            ForEach(this.tools, (tool: ToolConfig) => {
-              Row({ space: 8 }) {
-                Column({ space: 3 }) {
-                  Text(tool.name)
-                    .fontSize(12)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_primary'))
-
-                  Text(tool.description.length > 0 ? tool.description : tool.id)
-                    .fontSize(11)
-                    .lineHeight(16)
-                    .fontColor($r('app.color.text_secondary'))
-                    .maxLines(2)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Start)
-
-                if (tool.permissionLevel === 'write') {
-                  Text(pickLocalizedText('写操作', 'Write'))
-                    .fontSize(10)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor('#D9485F')
-                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                    .borderRadius(999)
-                    .backgroundColor(this.isDarkMode ? '#4B1D24' : '#FDECEF')
-                }
-              }
-              .width('100%')
-              .padding(12)
-              .borderRadius(14)
-              .backgroundColor(this.isDarkMode ? '#23262D' : Color.White)
-              .border({ width: 1, color: this.isDarkMode ? '#2E323A' : '#EEF2F6' })
-            }, (tool: ToolConfig) => tool.id)
-          }
-          .width('100%')
+        if (this.tool.description !== '') {
+          Text(this.tool.description)
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
         }
       }
-      .width('100%')
-      .padding(14)
-      .borderRadius(18)
-      .backgroundColor(this.backgroundHex)
-      .border({ width: 1, color: this.serverEnabled ? this.themePrimary : this.dividerHex })
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
 
-      Row({ space: 8 }) {
-        Button(pickLocalizedText('刷新', 'Refresh'))
-          .height(32)
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .stateEffect(false)
-          .backgroundColor(this.backgroundHex)
-          .border({ width: 1, color: this.themePrimary })
-          .fontColor(this.themePrimary)
-          .onClick(() => {
-            this.onRefresh()
-          })
-
-        Button(pickLocalizedText('编辑', 'Edit'))
-          .height(32)
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .stateEffect(false)
-          .backgroundColor(this.backgroundHex)
-          .border({ width: 1, color: this.dividerHex })
-          .fontColor($r('app.color.text_primary'))
-          .onClick(() => {
-            this.onEdit()
-          })
-
-        Blank()
-
-        Button($r('app.string.delete'))
-          .height(32)
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .stateEffect(false)
-          .backgroundColor(this.backgroundHex)
-          .border({ width: 1, color: this.isDarkMode ? '#6A3139' : '#F2CBD2' })
-          .fontColor('#D9485F')
-          .onClick(() => {
-            this.onDelete()
-          })
-      }
-      .width('100%')
+      Toggle({ type: ToggleType.Switch, isOn: this.tool.enabled })
+        .selectedColor(this.themePrimary)
+        .onChange((value: boolean) => {
+          this.onEnabledChange(value)
+        })
     }
     .width('100%')
-    .padding(16)
-    .margin({ bottom: 10 })
-    .borderRadius(20)
-    .backgroundColor(getAppUiState().themeSurface)
-    .border({ width: 1, color: this.serverEnabled ? this.themePrimary : this.dividerHex })
-    .shadow({
-      radius: 16,
-      color: this.isDarkMode ? 'rgba(0, 0, 0, 0.20)' : 'rgba(15, 23, 42, 0.05)',
-      offsetX: 0,
-      offsetY: 6
-    })
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .borderRadius(10)
+    .backgroundColor(this.isDarkMode ? '#23262D' : Color.White)
   }
 }

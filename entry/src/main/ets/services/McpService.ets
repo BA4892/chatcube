@@ -16,7 +16,8 @@ import {
   McpServerConfig,
   McpToolAnnotations,
   McpToolCallResponse,
-  McpToolDescriptor
+  McpToolDescriptor,
+  McpToolEntry
 } from '../models/McpModels'
 import { HttpService } from './HttpService'
 import { getPreferencesService, PreferenceKeys, PreferencesService } from './PreferencesService'
@@ -88,6 +89,16 @@ class McpServerConfigJson {
   authToken: string = ''
   customHeadersJson: string = ''
   toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
+  tools: McpToolEntryJson[] = []
+}
+
+class McpToolEntryJson {
+  name: string = ''
+  description: string = ''
+  enabled: boolean = true
+  needsApproval: boolean = false
+  inputSchemaJson: string = ''
+  permissionLevel: string = ''
 }
 
 class McpToolCallParams {
@@ -184,7 +195,8 @@ export class McpService {
           this.readString(item, 'authType', McpAuthType.NONE),
           this.readString(item, 'authToken'),
           this.readString(item, 'customHeadersJson'),
-          this.readMcpToolApprovalPolicy(item)
+          this.readMcpToolApprovalPolicy(item),
+          this.readToolEntries(item)
         ))
       }
       return result
@@ -206,6 +218,7 @@ export class McpService {
       item.authToken = configs[i].authToken
       item.customHeadersJson = configs[i].customHeadersJson
       item.toolApprovalPolicy = normalizeToolApprovalPolicy(configs[i].toolApprovalPolicy)
+      item.tools = this.serializeToolEntries(configs[i].tools)
       serialized.push(item)
     }
     await this.preferencesService.setString(
@@ -310,8 +323,14 @@ export class McpService {
 
     try {
       const discovered = await this.discoverTools(server)
+      this.mergeDiscoveredToolsToConfig(server, discovered)
+      await this.saveServerConfigs(configs)
       this.toolRegistry.unregisterToolsBySource(ToolSourceType.MCP, server.id)
       for (let i = 0; i < discovered.length; i++) {
+        const toolEntry = this.findToolEntry(server, discovered[i].remoteName)
+        if (toolEntry !== null && !toolEntry.enabled) {
+          continue
+        }
         const tool = this.buildRegisteredTool(server, discovered[i])
         this.toolRegistry.registerTool(tool)
       }
@@ -427,6 +446,9 @@ export class McpService {
       parameters
     )
     const definition = new ToolDefinition(func)
+    const toolEntry = this.findToolEntry(server, discovered.remoteName)
+    const approvalPolicy = toolEntry !== null && toolEntry.needsApproval
+      ? ToolApprovalPolicy.UNCONFIGURED : server.toolApprovalPolicy
     const config = new ToolConfig(
       discovered.toolId,
       discovered.displayName,
@@ -439,7 +461,7 @@ export class McpService {
       discovered.functionName,
       server.name,
       discovered.permissionLevel,
-      server.toolApprovalPolicy
+      approvalPolicy
     )
     return new RegisteredTool(
       discovered.toolId,
@@ -473,17 +495,7 @@ export class McpService {
     if (annotations?.destructiveHint === true) {
       return ToolPermissionLevel.WRITE
     }
-    if (annotations?.readOnlyHint === true) {
-      return ToolPermissionLevel.READ
-    }
-    const text = `${descriptor.name} ${descriptor.title || ''} ${descriptor.description || ''}`.toLowerCase()
-    if (/(^|[^a-z])(create|update|delete|write|edit|modify|save|append|commit|push|publish|upload|insert|remove|rename|move|patch|set|sync)([^a-z]|$)/.test(text)) {
-      return ToolPermissionLevel.WRITE
-    }
-    if (/(^|[^a-z])(get|list|read|search|find|query|fetch|lookup|open|show)([^a-z]|$)/.test(text)) {
-      return ToolPermissionLevel.READ
-    }
-    return ToolPermissionLevel.WRITE
+    return ToolPermissionLevel.READ
   }
 
   private buildFunctionName(serverId: string, remoteName: string): string {
@@ -1028,6 +1040,82 @@ export class McpService {
       if (value[i] !== null && typeof value[i] === 'object' && !Array.isArray(value[i])) {
         result.push(value[i] as Record<string, Object>)
       }
+    }
+    return result
+  }
+
+  private mergeDiscoveredToolsToConfig(server: McpServerConfig, discovered: McpDiscoveredTool[]): void {
+    const existingTools = server.tools
+    const merged: McpToolEntry[] = []
+    for (let i = 0; i < discovered.length; i++) {
+      const d = discovered[i]
+      const existing = this.findToolEntryInList(existingTools, d.remoteName)
+      if (existing !== null) {
+        existing.description = d.description
+        existing.inputSchemaJson = JSON.stringify(d.inputSchema)
+        existing.permissionLevel = d.permissionLevel
+        merged.push(existing)
+      } else {
+        merged.push(new McpToolEntry(
+          d.remoteName,
+          d.description,
+          true,
+          false,
+          JSON.stringify(d.inputSchema),
+          d.permissionLevel
+        ))
+      }
+    }
+    server.tools = merged
+  }
+
+  private findToolEntry(server: McpServerConfig, remoteName: string): McpToolEntry | null {
+    return this.findToolEntryInList(server.tools, remoteName)
+  }
+
+  private findToolEntryInList(tools: McpToolEntry[], remoteName: string): McpToolEntry | null {
+    for (let i = 0; i < tools.length; i++) {
+      if (tools[i].name === remoteName) {
+        return tools[i]
+      }
+    }
+    return null
+  }
+
+  private readToolEntries(data: Record<string, Object>): McpToolEntry[] {
+    const raw = data['tools']
+    if (!Array.isArray(raw)) {
+      return []
+    }
+    const result: McpToolEntry[] = []
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] === null || typeof raw[i] !== 'object' || Array.isArray(raw[i])) {
+        continue
+      }
+      const item = raw[i] as Record<string, Object>
+      result.push(new McpToolEntry(
+        this.readString(item, 'name'),
+        this.readString(item, 'description'),
+        this.readBoolean(item, 'enabled', true),
+        this.readBoolean(item, 'needsApproval', false),
+        this.readString(item, 'inputSchemaJson'),
+        this.readString(item, 'permissionLevel', ToolPermissionLevel.READ)
+      ))
+    }
+    return result
+  }
+
+  private serializeToolEntries(tools: McpToolEntry[]): McpToolEntryJson[] {
+    const result: McpToolEntryJson[] = []
+    for (let i = 0; i < tools.length; i++) {
+      const entry = new McpToolEntryJson()
+      entry.name = tools[i].name
+      entry.description = tools[i].description
+      entry.enabled = tools[i].enabled
+      entry.needsApproval = tools[i].needsApproval
+      entry.inputSchemaJson = tools[i].inputSchemaJson
+      entry.permissionLevel = tools[i].permissionLevel
+      result.push(entry)
     }
     return result
   }

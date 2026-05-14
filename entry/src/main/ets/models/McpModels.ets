@@ -6,6 +6,32 @@ export enum McpAuthType {
 }
 
 @ObservedV2
+export class McpToolEntry {
+  @Trace name: string = ''
+  @Trace description: string = ''
+  @Trace enabled: boolean = true
+  @Trace needsApproval: boolean = false
+  @Trace inputSchemaJson: string = ''
+  @Trace permissionLevel: string = ToolPermissionLevel.READ
+
+  constructor(
+    name: string = '',
+    description: string = '',
+    enabled: boolean = true,
+    needsApproval: boolean = false,
+    inputSchemaJson: string = '',
+    permissionLevel: string = ToolPermissionLevel.READ
+  ) {
+    this.name = name
+    this.description = description
+    this.enabled = enabled
+    this.needsApproval = needsApproval
+    this.inputSchemaJson = inputSchemaJson
+    this.permissionLevel = permissionLevel
+  }
+}
+
+@ObservedV2
 export class McpServerConfig {
   @Trace id: string = ''
   @Trace name: string = ''
@@ -15,6 +41,7 @@ export class McpServerConfig {
   @Trace authToken: string = ''
   @Trace customHeadersJson: string = ''
   @Trace toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
+  @Trace tools: McpToolEntry[] = []
 
   constructor(
     id: string = '',
@@ -24,7 +51,8 @@ export class McpServerConfig {
     authType: string = McpAuthType.NONE,
     authToken: string = '',
     customHeadersJson: string = '',
-    toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
+    toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED,
+    tools: McpToolEntry[] = []
   ) {
     this.id = id
     this.name = name
@@ -34,6 +62,7 @@ export class McpServerConfig {
     this.authToken = authToken
     this.customHeadersJson = customHeadersJson
     this.toolApprovalPolicy = normalizeToolApprovalPolicy(toolApprovalPolicy)
+    this.tools = tools
   }
 }
 

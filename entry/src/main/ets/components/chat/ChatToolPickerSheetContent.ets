@@ -147,7 +147,7 @@ export struct ChatToolPickerSheetContent {
     if (normalized === ToolApprovalPolicy.ALWAYS_ALLOW) {
       return pickLocalizedText('始终允许', 'Always allow')
     }
-    return pickLocalizedText('待确认', 'Ask')
+    return ''
   }
 
   private getMcpToolGroupPolicyColor(group: McpToolGroup): string {
@@ -267,80 +267,48 @@ export struct ChatToolPickerSheetContent {
                 .alignItems(HorizontalAlign.Start)
 
                 ForEach(this.getBuiltinChatTools(), (tool: ToolConfig) => {
-                  Row({ space: 12 }) {
-                    Column() {
-                      SymbolGlyph($r('sys.symbol.gearshape'))
-                        .fontSize(20)
-                        .fontColor([this.isToolSelected(tool.id) ? Color.White : this.themePrimary])
-                    }
-                    .width(40)
-                    .height(40)
-                    .borderRadius(12)
-                    .backgroundColor(this.isToolSelected(tool.id) ? this.themePrimary : this.themePrimarySubtleBackground)
-                    .justifyContent(FlexAlign.Center)
-                    .alignItems(HorizontalAlign.Center)
-
-                    Column({ space: 8 }) {
-                      Row({ space: 8 }) {
+                  Row({ space: 10 }) {
+                    Column({ space: 2 }) {
+                      Row({ space: 6 }) {
                         Text(tool.name)
-                          .fontSize(15)
+                          .fontSize(14)
                           .fontWeight(FontWeight.Medium)
                           .fontColor($r('app.color.text_primary'))
-                          .layoutWeight(1)
                           .maxLines(1)
                           .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                        if (this.isToolSelected(tool.id)) {
-                          Text(pickLocalizedText('已启用', 'Enabled'))
-                            .fontSize(10)
-                            .fontWeight(FontWeight.Medium)
-                            .fontColor(Color.White)
-                            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                            .borderRadius(999)
-                            .backgroundColor(this.themePrimary)
-                        }
+                          .layoutWeight(1)
 
                         if (tool.permissionLevel === ToolPermissionLevel.WRITE) {
-                          Text(pickLocalizedText('写操作', 'Write'))
-                            .fontSize(10)
+                          Text(pickLocalizedText('写', 'W'))
+                            .fontSize(9)
                             .fontColor(this.writeBadgeColor)
-                            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                            .borderRadius(999)
+                            .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+                            .borderRadius(4)
                             .backgroundColor(this.writeBadgeBackgroundColor)
                         }
                       }
                       .width('100%')
-                      .alignItems(VerticalAlign.Center)
 
                       Text(this.getBuiltinDescription(tool))
-                        .fontSize(12)
-                        .lineHeight(18)
-                        .fontColor($r('app.color.text_secondary'))
-                        .maxLines(2)
+                        .fontSize(11)
+                        .fontColor($r('app.color.text_tertiary'))
+                        .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        .width('100%')
                     }
                     .layoutWeight(1)
                     .alignItems(HorizontalAlign.Start)
 
                     Toggle({ type: ToggleType.Switch, isOn: this.isToolSelected(tool.id) })
+                      .selectedColor(this.themePrimary)
                       .onChange((value: boolean) => {
                         this.onToggleTool(tool.id, value)
                       })
                   }
                   .width('100%')
-                  .padding(14)
-                  .borderRadius(18)
-                  .backgroundColor(this.getCardBackground(this.isToolSelected(tool.id)))
-                  .border({
-                    width: this.isToolSelected(tool.id) ? 1.2 : 0.5,
-                    color: this.getCardBorderColor(this.isToolSelected(tool.id))
-                  })
-                  .shadow({
-                    radius: this.isToolSelected(tool.id) ? 14 : 10,
-                    color: this.getCardShadowColor(this.isToolSelected(tool.id)),
-                    offsetX: 0,
-                    offsetY: this.isToolSelected(tool.id) ? 6 : 4
-                  })
+                  .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                  .borderRadius(12)
+                  .backgroundColor(this.themeSurface)
                 }, (tool: ToolConfig) => tool.id)
               }
               .width('100%')
@@ -355,73 +323,48 @@ export struct ChatToolPickerSheetContent {
                   .width('100%')
 
                 ForEach(this.getMcpToolGroups(), (group: McpToolGroup) => {
-                  Row({ space: 12 }) {
-                    Column() {
-                      SymbolGlyph($r('sys.symbol.link'))
-                        .fontSize(20)
-                        .fontColor([this.isMcpToolGroupSelected(group) ? Color.White : this.themePrimary])
-                    }
-                    .width(40)
-                    .height(40)
-                    .borderRadius(12)
-                    .backgroundColor(this.isMcpToolGroupSelected(group) ? this.themePrimary : this.themePrimarySubtleBackground)
-                    .justifyContent(FlexAlign.Center)
-                    .alignItems(HorizontalAlign.Center)
-
-                    Column({ space: 8 }) {
-                      Row({ space: 8 }) {
+                  Row({ space: 10 }) {
+                    Column({ space: 2 }) {
+                      Row({ space: 6 }) {
                         Text(group.displayName)
-                          .fontSize(15)
+                          .fontSize(14)
                           .fontWeight(FontWeight.Medium)
                           .fontColor($r('app.color.text_primary'))
-                          .layoutWeight(1)
                           .maxLines(1)
                           .textOverflow({ overflow: TextOverflow.Ellipsis })
+                          .layoutWeight(1)
 
-                        if (this.isMcpToolGroupSelected(group)) {
-                          Text(pickLocalizedText('已启用', 'Enabled'))
-                            .fontSize(10)
-                            .fontWeight(FontWeight.Medium)
-                            .fontColor(Color.White)
-                            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                            .borderRadius(999)
-                            .backgroundColor(this.themePrimary)
-                        }
+                        Text(`${group.toolIds.length}`)
+                          .fontSize(10)
+                          .fontColor($r('app.color.text_tertiary'))
+                          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                          .borderRadius(4)
+                          .backgroundColor(this.isDarkMode ? '#2A2D35' : '#F3F4F6')
 
                         if (this.getMcpToolGroupPolicyLabel(group) !== '') {
                           Text(this.getMcpToolGroupPolicyLabel(group))
-                            .fontSize(10)
+                            .fontSize(9)
                             .fontColor(this.getMcpToolGroupPolicyColor(group))
-                            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                            .borderRadius(999)
+                            .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+                            .borderRadius(4)
                             .backgroundColor(this.getMcpToolGroupPolicyBackground(group))
                         }
                       }
                       .width('100%')
-                      .alignItems(VerticalAlign.Center)
                     }
                     .layoutWeight(1)
                     .alignItems(HorizontalAlign.Start)
 
                     Toggle({ type: ToggleType.Switch, isOn: this.isMcpToolGroupSelected(group) })
+                      .selectedColor(this.themePrimary)
                       .onChange((value: boolean) => {
                         this.onToggleMcpGroup(group.toolIds, value)
                       })
                   }
                   .width('100%')
-                  .padding(14)
-                  .borderRadius(18)
-                  .backgroundColor(this.getCardBackground(this.isMcpToolGroupSelected(group)))
-                  .border({
-                    width: this.isMcpToolGroupSelected(group) ? 1.2 : 0.5,
-                    color: this.getCardBorderColor(this.isMcpToolGroupSelected(group))
-                  })
-                  .shadow({
-                    radius: this.isMcpToolGroupSelected(group) ? 14 : 10,
-                    color: this.getCardShadowColor(this.isMcpToolGroupSelected(group)),
-                    offsetX: 0,
-                    offsetY: this.isMcpToolGroupSelected(group) ? 6 : 4
-                  })
+                  .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                  .borderRadius(12)
+                  .backgroundColor(this.themeSurface)
                 }, (group: McpToolGroup) => group.sourceId)
               }
               .width('100%')
