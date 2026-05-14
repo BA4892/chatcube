@@ -48,7 +48,6 @@ export struct ToolsCenterPanel {
   @Param contentBottomPadding: number = 24
   @Param contentTopPadding: number = 0
   @Param contentScroller: Scroller = new Scroller()
-  @Local builtinTools: ToolConfig[] = []
   @Local searchServiceEnabled: boolean = false
   @Local searchEngine: SearchEngine = SearchEngine.BING
   @Local searchEngineSelectedIndex: number = 0
@@ -145,27 +144,14 @@ export struct ToolsCenterPanel {
     this.loadData()
   }
 
-  private syncBuiltinToolsFromRegistry(): void {
-    const allTools = this.toolRegistry.getAllToolConfigs()
-    const builtin: ToolConfig[] = []
-    for (let i = 0; i < allTools.length; i++) {
-      if (allTools[i].sourceType === ToolSourceType.BUILTIN && !isSearchToolId(allTools[i].id)) {
-        builtin.push(allTools[i])
-      }
-    }
-    this.builtinTools = builtin
-  }
-
   private async loadData(): Promise<void> {
     this.isLoading = true
 
     registerBuiltinTools()
-    this.syncBuiltinToolsFromRegistry()
     try {
       await this.loadToolEnabledStates()
       await this.loadSearchSettings()
       await this.loadMcpServers()
-      this.syncBuiltinToolsFromRegistry()
     } finally {
       this.isLoading = false
     }
@@ -261,8 +247,6 @@ export struct ToolsCenterPanel {
       if (showErrorSnack) {
         this.showToolsSnack(this.getMcpRefreshFailedMessage(error), 2500, SnackBarTone.ERROR)
       }
-    } finally {
-      this.syncBuiltinToolsFromRegistry()
     }
   }
 
@@ -316,32 +300,6 @@ export struct ToolsCenterPanel {
   private async loadToolEnabledStates(): Promise<void> {
     const webSearchEnabled = await this.preferencesService.getBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, false)
     this.applySearchServiceEnabledState(webSearchEnabled)
-    // 逐个加载非搜索内置工具的开关: key = builtin_tool_enabled_${toolId}, 默认值取代码层 config.enabled
-    const allTools = this.toolRegistry.getAllRegisteredTools()
-    for (let i = 0; i < allTools.length; i++) {
-      const tool = allTools[i]
-      if (tool.config.sourceType !== ToolSourceType.BUILTIN) {
-        continue
-      }
-      if (isSearchToolId(tool.id)) {
-        continue
-      }
-      const enabled = await this.preferencesService.getBoolean(
-        PreferenceKeys.builtinToolEnabledKey(tool.id),
-        tool.config.enabled
-      )
-      tool.config.enabled = enabled
-    }
-  }
-
-  private async handleBuiltinToolEnabledChanged(toolId: string, enabled: boolean): Promise<void> {
-    const registeredTool = this.toolRegistry.getTool(toolId)
-    if (registeredTool !== undefined) {
-      registeredTool.config.enabled = enabled
-    }
-    await this.preferencesService.setBoolean(PreferenceKeys.builtinToolEnabledKey(toolId), enabled)
-    // 重新触发列表绑定, 让 Toggle 反映最新状态
-    this.syncBuiltinToolsFromRegistry()
   }
 
   private handleSearchServiceEnabledChanged(enabled: boolean): void {
@@ -1985,23 +1943,6 @@ export struct ToolsCenterPanel {
                 }
               })
 
-              if (this.builtinTools.length > 0) {
-                Text($r('app.string.tools_builtin_section'))
-                  .fontSize(15)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
-                  .width('100%')
-
-                ForEach(this.builtinTools, (tool: ToolConfig) => {
-                  BuiltinToolCardItem({
-                    tool: tool,
-                    onToggleEnabled: (enabled: boolean): void => {
-                      this.handleBuiltinToolEnabledChanged(tool.id, enabled)
-                    }
-                  })
-                }, (tool: ToolConfig) => tool.id)
-              }
-
               Column({ space: 10 }) {
                 Row() {
                   Text(pickLocalizedText('MCP 服务', 'MCP Services'))
@@ -2274,65 +2215,6 @@ struct SearchServiceCardItem {
     .onClick(() => {
       this.onOpenConfig()
     })
-  }
-}
-
-@ComponentV2
-struct BuiltinToolCardItem {
-  @Param tool: ToolConfig = new ToolConfig()
-  @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean): void => {}
-
-  @Builder
-  ToolCardText() {
-    Row() {
-      Column() {
-        Text(this.tool.name)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-
-        Text(this.tool.description)
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 2 })
-
-        Text(this.tool.id)
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-          .margin({ top: 6 })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Toggle({ type: ToggleType.Switch, isOn: this.tool.enabled })
-        .selectedColor(getAppUiState().themePrimary)
-        .margin({ left: 12 })
-        .onChange((isOn: boolean): void => {
-          this.onToggleEnabled(isOn)
-        })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
-  build() {
-    HdsListItemCard({
-      textItem: {
-        customBuilder: (): void => { this.ToolCardText() }
-      },
-      cardBackgroundColor: getAppUiState().themeSurface,
-      cardBorderRadius: 12,
-      accessibilityOptions: {
-        accessibilityText: this.tool.name,
-        accessibilityDescription: this.tool.description,
-        accessibilityGroup: {
-          isGroup: true
-        }
-      }
-    })
-    .margin({ bottom: 8 })
   }
 }
 

@@ -1085,21 +1085,6 @@ export struct ChatPage {
         searchTool.config.enabled = webSearchAvailable
       }
     }
-    // 非搜索内置工具开关同步: 设置页和聊天页共享同一份 pref, 保证任意一侧修改对方刷新都看得到
-    const allRegisteredTools = this.toolRegistry.getAllRegisteredTools()
-    for (let i = 0; i < allRegisteredTools.length; i++) {
-      const tool = allRegisteredTools[i]
-      if (tool.config.sourceType !== ToolSourceType.BUILTIN) {
-        continue
-      }
-      if (isSearchToolId(tool.id)) {
-        continue
-      }
-      tool.config.enabled = await this.preferencesService.getBoolean(
-        PreferenceKeys.builtinToolEnabledKey(tool.id),
-        tool.config.enabled
-      )
-    }
     this.rebuildAvailableChatTools()
     const enabledMcpServerIds = await this.loadEnabledMcpServerIds()
     const selectedToolIds = await this.mcpService.loadSelectedToolIds()
