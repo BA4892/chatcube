@@ -23,6 +23,9 @@ export class Assistant {
   // 助手偏好的推理强度,取值为 ReasoningLevel 的枚举字符串 ('off'/'auto'/'low'/'medium'/'high'/'xhigh')。
   // 空串表示未设置,由会话沿用全局默认或上一次选择;非空则新开会话/切助手时作为默认值。
   @Trace reasoningLevelPreference: string = ''
+  // 助手专属工具白名单。空数组 = 不设边界(继承全局所有工具);
+  // 非空 = 仅允许列出的 toolId。搜索工具不在此白名单内(走独立 webSearch 通道)。
+  @Trace enabledToolIds: string[] = []
   @Trace isDefault: boolean = false
   @Trace createdAt: number = 0
   @Trace updatedAt: number = 0
@@ -47,6 +50,7 @@ export class Assistant {
     this.frequencyPenaltyEnabled = false
     this.frequencyPenalty = 0
     this.reasoningLevelPreference = ''
+    this.enabledToolIds = []
     this.isDefault = id === DEFAULT_ASSISTANT_ID
     this.createdAt = now
     this.updatedAt = now

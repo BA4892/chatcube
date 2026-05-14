@@ -37,7 +37,4 @@ export function applyModelDraft(target: ModelInfo, draft: ModelInfoExtendedJson)
   if (draft.capabilities !== undefined) {
     target.capabilities = ModelCapabilities.fromJson(draft.capabilities)
   }
-  if (draft.reasoningStrategyOverride !== undefined) {
-    target.reasoningStrategyOverride = draft.reasoningStrategyOverride
-  }
 }

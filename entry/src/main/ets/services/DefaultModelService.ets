@@ -108,10 +108,6 @@ export class DefaultModelService {
     await this.store.setTranslatePromptTemplate(prompt)
   }
 
-  async setTranslateTargetLanguage(language: string): Promise<void> {
-    await this.store.setTranslateTargetLanguage(language)
-  }
-
   async resetTitlePrompt(): Promise<void> {
     await this.store.resetTitlePromptTemplate()
   }

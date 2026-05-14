@@ -16,6 +16,7 @@ import {
   ModelRole,
   ToolCall,
   ToolConfig,
+  ToolApprovalPolicy,
   ToolSourceType
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
@@ -202,6 +203,7 @@ export struct ChatPage {
   @Local showToolExecutionApprovalSheet: boolean = false
   @Local toolExecutionApprovalSourceLabel: string = ''
   @Local toolExecutionApprovalName: string = ''
+  @Local toolExecutionApprovalSourceId: string = ''
   @Local toolExecutionApprovalArgumentSummary: string = ''
   @Local toolExecutionApprovalArgumentEntries: ToolPreviewEntry[] = []
   @Local toolExecutionApprovalArgumentsPreview: string = '{}'
@@ -234,9 +236,6 @@ export struct ChatPage {
   // 主题颜色
   private get themePrimary(): string {
     return getAppUiState().themePrimary
-  }
-  private get themePrimaryLight(): string {
-    return getAppUiState().themePrimaryLight
   }
   private get themeBackground(): string {
     return getAppUiState().themeBackground
@@ -356,7 +355,13 @@ export struct ChatPage {
     // 注册内置工具
     registerBuiltinTools()
     ServiceRegistry.toolExecution().setApprovalCallback(async (toolCall, tool) => {
-      return await this.requestToolExecutionApproval(tool.config.name, tool.config.sourceLabel, toolCall.arguments)
+      return await this.requestToolExecutionApproval(
+        tool.config.name,
+        tool.config.sourceLabel,
+        tool.config.sourceType,
+        tool.config.sourceId,
+        toolCall.arguments
+      )
     })
     // ask_user 答复回调: 把 pending toolCall 注入到 Map, 由 AskUserCard.onAnswer → handleAskUserAnswer 恢复
     ServiceRegistry.toolExecution().setAnswerCallback(async (toolCall) => {
@@ -909,7 +914,7 @@ export struct ChatPage {
       },
       model.id,
       model.capabilities.supportsReasoning,
-      this.getCurrentReasoningStrategyOverride(model)
+      this.getCurrentReasoningStrategyOverride()
     )
   }
 
@@ -930,15 +935,12 @@ export struct ChatPage {
       },
       model.id,
       model.capabilities.supportsReasoning,
-      this.getCurrentReasoningStrategyOverride(model)
+      this.getCurrentReasoningStrategyOverride()
     )
   }
 
-  private getCurrentReasoningStrategyOverride(model: ModelInfo): string {
-    if (!model.capabilities.supportsReasoning) {
-      return ''
-    }
-    return model.reasoningStrategyOverride
+  private getCurrentReasoningStrategyOverride(): string {
+    return ''
   }
 
   private syncReasoningAvailabilityWithCurrentModel(): void {
@@ -997,7 +999,7 @@ export struct ChatPage {
       },
       model.id,
       model.capabilities.supportsReasoning,
-      this.getCurrentReasoningStrategyOverride(model)
+      this.getCurrentReasoningStrategyOverride()
     )) {
       return ReasoningLevel.HIGH
     }
@@ -2652,7 +2654,6 @@ export struct ChatPage {
       selectedToolIds: this.getActiveComposerSelectedToolIds(),
       isRefreshingMcpToolAvailability: this.isRefreshingMcpToolAvailability,
       themePrimary: this.themePrimary,
-      themePrimaryLight: this.themePrimaryLight,
       isDarkMode: this.isDarkMode,
       onClose: (): void => {
         this.showToolPickerSheet = false
@@ -2679,6 +2680,7 @@ export struct ChatPage {
       argumentsPreview: this.toolExecutionApprovalArgumentsPreview,
       argumentsTruncated: this.toolExecutionApprovalArgumentsTruncated,
       showRawArguments: this.showRawToolExecutionApprovalArguments,
+      alwaysAllowAvailable: this.toolExecutionApprovalSourceId.trim() !== '',
       themePrimary: this.themePrimary,
       isDarkMode: this.isDarkMode,
       onToggleShowRaw: (): void => {
@@ -2686,6 +2688,9 @@ export struct ChatPage {
       },
       onCancel: (): void => {
         this.resolveToolExecutionApproval(false)
+      },
+      onAlwaysAllow: (): void => {
+        this.approveCurrentMcpServerAlways()
       },
       onApprove: (): void => {
         this.resolveToolExecutionApproval(true)
@@ -3197,6 +3202,7 @@ export struct ChatPage {
   private resetToolExecutionApprovalState(): void {
     this.toolExecutionApprovalSourceLabel = ''
     this.toolExecutionApprovalName = ''
+    this.toolExecutionApprovalSourceId = ''
     this.toolExecutionApprovalArgumentSummary = this.getNoToolArgumentsText()
     this.toolExecutionApprovalArgumentEntries = []
     this.toolExecutionApprovalArgumentsPreview = '{}'
@@ -3235,9 +3241,58 @@ export struct ChatPage {
     }
   }
 
+  private async persistMcpToolApprovalPolicy(serverId: string, policy: string): Promise<boolean> {
+    const normalizedPolicy = policy === ToolApprovalPolicy.ALWAYS_ALLOW
+      ? ToolApprovalPolicy.ALWAYS_ALLOW
+      : ToolApprovalPolicy.UNCONFIGURED
+    const configs = await this.mcpService.loadServerConfigs()
+    let found = false
+    for (let i = 0; i < configs.length; i++) {
+      if (configs[i].id === serverId) {
+        configs[i].toolApprovalPolicy = normalizedPolicy
+        found = true
+        break
+      }
+    }
+    if (!found) {
+      return false
+    }
+    await this.mcpService.saveServerConfigs(configs)
+    await this.mcpService.refreshServer(serverId, configs)
+    await this.refreshMcpToolAvailability(false)
+    return true
+  }
+
+  private async approveCurrentMcpServerAlways(): Promise<void> {
+    const sourceId = this.toolExecutionApprovalSourceId.trim()
+    if (sourceId === '') {
+      this.resolveToolExecutionApproval(true)
+      return
+    }
+    try {
+      const updated = await this.persistMcpToolApprovalPolicy(sourceId, ToolApprovalPolicy.ALWAYS_ALLOW)
+      if (updated) {
+        this.showChatSnack(pickLocalizedText('已设为始终允许', 'Always allow enabled'), 2000, SnackBarTone.SUCCESS)
+      } else {
+        this.showChatSnack(pickLocalizedText('未找到对应 MCP Server，本次继续执行', 'MCP server not found; continuing once'),
+          2500, SnackBarTone.ERROR)
+      }
+    } catch (error) {
+      console.error('ChatPage', `Failed to persist MCP approval policy: ${JSON.stringify(error)}`)
+      this.showChatSnack(
+        pickLocalizedText('保存始终允许失败，本次继续执行', 'Failed to save always allow; continuing once'),
+        2500,
+        SnackBarTone.ERROR
+      )
+    }
+    this.resolveToolExecutionApproval(true)
+  }
+
   private async requestToolExecutionApproval(
     toolName: string,
     sourceLabel: string,
+    sourceType: string,
+    sourceId: string,
     argumentsJson: string
   ): Promise<boolean> {
     const preview = buildToolArgumentsPreview(argumentsJson, 4, 800)
@@ -3251,6 +3306,7 @@ export struct ChatPage {
       this.toolExecutionApprovalName = toolName.trim() !== ''
         ? toolName.trim()
         : pickLocalizedText('未知工具', 'Unknown tool')
+      this.toolExecutionApprovalSourceId = sourceType === ToolSourceType.MCP ? sourceId.trim() : ''
       this.toolExecutionApprovalArgumentSummary = preview.summary
       this.toolExecutionApprovalArgumentEntries = [...preview.entries]
       this.toolExecutionApprovalArgumentsPreview = preview.rawPreview

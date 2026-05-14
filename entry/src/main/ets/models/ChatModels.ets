@@ -132,6 +132,18 @@ export enum ToolPermissionLevel {
   WRITE = 'write'
 }
 
+export enum ToolApprovalPolicy {
+  UNCONFIGURED = 'unconfigured',
+  ALWAYS_ALLOW = 'always_allow'
+}
+
+export function normalizeToolApprovalPolicy(policy: string): string {
+  if (policy === ToolApprovalPolicy.ALWAYS_ALLOW) {
+    return policy
+  }
+  return ToolApprovalPolicy.UNCONFIGURED
+}
+
 // 工具调用（AI 返回）
 @ObservedV2
 export class ToolCall {
@@ -144,6 +156,7 @@ export class ToolCall {
   @Trace sourceType: string = ToolSourceType.BUILTIN
   @Trace sourceLabel: string = ''
   @Trace permissionLevel: string = ToolPermissionLevel.READ
+  @Trace approvalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   // 工具审批状态,取值: 'auto'(自动放行) / 'pending'(等待人工确认) / 'approved' / 'denied' / 'answered'
   // 由 ToolExecutionService.requestApprovalIfNeeded 驱动,UI 层根据状态展示审批提示
   @Trace approvalState: string = 'auto'
@@ -158,7 +171,8 @@ export class ToolCall {
     displayName: string = '',
     sourceType: string = ToolSourceType.BUILTIN,
     sourceLabel: string = '',
-    permissionLevel: string = ToolPermissionLevel.READ
+    permissionLevel: string = ToolPermissionLevel.READ,
+    approvalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   ) {
     this.id = id
     this.functionName = functionName
@@ -168,6 +182,7 @@ export class ToolCall {
     this.sourceType = sourceType !== '' ? sourceType : ToolSourceType.BUILTIN
     this.sourceLabel = sourceLabel
     this.permissionLevel = permissionLevel !== '' ? permissionLevel : ToolPermissionLevel.READ
+    this.approvalPolicy = normalizeToolApprovalPolicy(approvalPolicy)
   }
 }
 
@@ -208,6 +223,7 @@ export class ToolConfig {
   @Trace functionName: string = ''
   @Trace sourceLabel: string = ''
   @Trace permissionLevel: string = ToolPermissionLevel.READ
+  @Trace approvalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
 
   constructor(
     id: string = '',
@@ -220,7 +236,8 @@ export class ToolConfig {
     sourceId: string = '',
     functionName: string = '',
     sourceLabel: string = '',
-    permissionLevel: string = ToolPermissionLevel.READ
+    permissionLevel: string = ToolPermissionLevel.READ,
+    approvalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   ) {
     this.id = id
     this.name = name
@@ -233,6 +250,7 @@ export class ToolConfig {
     this.functionName = functionName !== '' ? functionName : id
     this.sourceLabel = sourceLabel
     this.permissionLevel = permissionLevel !== '' ? permissionLevel : ToolPermissionLevel.READ
+    this.approvalPolicy = normalizeToolApprovalPolicy(approvalPolicy)
   }
 }
 
@@ -545,9 +563,6 @@ export class ModelInfo {
   // 新增字段：能力配置
   @Trace capabilities: ModelCapabilities
 
-  // 推理请求策略覆盖（空字符串表示沿用自动推断）
-  @Trace reasoningStrategyOverride: string
-
   constructor(
     id: string,
     name: string,
@@ -566,7 +581,6 @@ export class ModelInfo {
     this.inputMode = InputMode.TEXT
     this.outputMode = OutputMode.TEXT
     this.capabilities = new ModelCapabilities()
-    this.reasoningStrategyOverride = ''
   }
 
   // 从扩展 JSON 对象创建
@@ -595,10 +609,6 @@ export class ModelInfo {
       model.capabilities = ModelCapabilities.fromJson(json.capabilities)
     }
 
-    if (json.reasoningStrategyOverride !== undefined) {
-      model.reasoningStrategyOverride = json.reasoningStrategyOverride
-    }
-
     return model
   }
 
@@ -613,8 +623,7 @@ export class ModelInfo {
       modelType: this.modelType,
       inputMode: this.inputMode,
       outputMode: this.outputMode,
-      capabilities: this.capabilities.toJson(),
-      reasoningStrategyOverride: this.reasoningStrategyOverride
+      capabilities: this.capabilities.toJson()
     }
     return json
   }
@@ -631,7 +640,6 @@ export interface ModelInfoExtendedJson {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
-  reasoningStrategyOverride?: string
 }
 
 // 模型提供商类型

@@ -11,6 +11,7 @@ import {
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID, createDefaultAssistant } from '../models/AssistantModels'
 import { deserializeMessageParts, serializeMessageParts } from '../models/MessageParts'
+import { ensureMessageParts } from '../utils/ChatMessagePartsHelper'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { generateDefaultTextIcon } from '../utils/IconGeneratorUtils'
 import { isPresetProvider, getPresetProviderById } from '../config/PresetProviders'
@@ -46,7 +47,6 @@ interface ModelJsonData {
   inputMode?: string
   outputMode?: string
   capabilities?: CapabilitiesJsonData
-  reasoningStrategyOverride?: string
 }
 
 // 能力配置 JSON 数据
@@ -204,6 +204,7 @@ export class DatabaseService {
 	        frequency_penalty_enabled INTEGER DEFAULT 0,
 	        frequency_penalty REAL DEFAULT 0,
 	        reasoning_level_preference TEXT DEFAULT '',
+	        enabled_tool_ids_json TEXT DEFAULT '',
 	        is_default INTEGER DEFAULT 0,
 	        created_at INTEGER,
 	        updated_at INTEGER,
@@ -643,6 +644,7 @@ export class DatabaseService {
 	      frequency_penalty_enabled: assistant.frequencyPenaltyEnabled ? 1 : 0,
 	      frequency_penalty: assistant.frequencyPenalty,
 	      reasoning_level_preference: assistant.reasoningLevelPreference || '',
+	      enabled_tool_ids_json: JSON.stringify(assistant.enabledToolIds || []),
 	      is_default: assistant.isDefault ? 1 : 0,
 	      created_at: assistant.createdAt,
 	      updated_at: assistant.updatedAt,
@@ -709,6 +711,17 @@ export class DatabaseService {
 	      assistant.reasoningLevelPreference = this.safeGetString(resultSet, 'reasoning_level_preference')
 	    } catch (error) {
 	      assistant.reasoningLevelPreference = ''
+	    }
+	    try {
+	      const raw = this.safeGetString(resultSet, 'enabled_tool_ids_json')
+	      if (raw.length > 0) {
+	        const parsed = JSON.parse(raw) as string[]
+	        assistant.enabledToolIds = Array.isArray(parsed) ? parsed : []
+	      } else {
+	        assistant.enabledToolIds = []
+	      }
+	    } catch (error) {
+	      assistant.enabledToolIds = []
 	    }
 	    try {
 	      assistant.isDefault = resultSet.getLong(resultSet.getColumnIndex('is_default')) === 1
@@ -813,7 +826,8 @@ export class DatabaseService {
       `presence_penalty REAL DEFAULT 0`,
       `frequency_penalty_enabled INTEGER DEFAULT 0`,
       `frequency_penalty REAL DEFAULT 0`,
-      `reasoning_level_preference TEXT DEFAULT ''`
+      `reasoning_level_preference TEXT DEFAULT ''`,
+      `enabled_tool_ids_json TEXT DEFAULT ''`
     ]
     for (const def of columns) {
       try {
@@ -1627,6 +1641,7 @@ export class DatabaseService {
     if (this.rdbStore === null) {
       return
     }
+    ensureMessageParts(message)
 
     // 将 searchReferences 数组序列化为 JSON 字符串
     let searchReferencesJson = ''
@@ -1679,6 +1694,23 @@ export class DatabaseService {
       }
     } catch (error) {
       console.error('DatabaseService', `Failed to add message: ${JSON.stringify(error)}`)
+    }
+  }
+
+  async updateMessageParts(messageId: string, partsJson: string): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null || partsJson.trim() === '') {
+      return
+    }
+    const valueBucket: relationalStore.ValuesBucket = {
+      parts_json: partsJson
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.MESSAGES)
+    predicates.equalTo('id', messageId)
+    try {
+      await this.rdbStore.update(valueBucket, predicates)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to update message parts: ${JSON.stringify(error)}`)
     }
   }
 
@@ -2025,8 +2057,7 @@ export class DatabaseService {
         modelType: model.modelType,
         inputMode: model.inputMode,
         outputMode: model.outputMode,
-        capabilities: capabilitiesData,
-        reasoningStrategyOverride: model.reasoningStrategyOverride
+        capabilities: capabilitiesData
       }
       modelsArray.push(modelObj)
     }

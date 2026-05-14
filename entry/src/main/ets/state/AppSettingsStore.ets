@@ -46,7 +46,6 @@ interface ModelJsonRow {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
-  reasoningStrategyOverride?: string
 }
 
 interface BalancePathTerm {
@@ -569,9 +568,6 @@ export class AppSettingsStore {
           if (modelObj.capabilities !== undefined) {
             modelInfo.capabilities = ModelCapabilities.fromJson(modelObj.capabilities)
           }
-          if (modelObj.reasoningStrategyOverride !== undefined) {
-            modelInfo.reasoningStrategyOverride = modelObj.reasoningStrategyOverride
-          }
           provider.models.push(modelInfo)
         }
       } catch (error) {
@@ -1023,13 +1019,6 @@ export class AppSettingsStore {
     await this.preferences.setString(PreferenceKeys.TRANSLATE_PROMPT_TEMPLATE, prompt)
     this.updatePromptField((s: AppSettingsState): void => {
       s.translatePromptTemplate = prompt
-    })
-  }
-
-  async setTranslateTargetLanguage(language: string): Promise<void> {
-    await this.preferences.setString(PreferenceKeys.TRANSLATE_TARGET_LANGUAGE, language)
-    this.updatePromptField((s: AppSettingsState): void => {
-      s.translateTargetLanguage = language
     })
   }
 

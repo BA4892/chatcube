@@ -1,6 +1,5 @@
 import { getPreferencesService, PreferencesService } from '../services/PreferencesService'
 import { getDatabaseService, DatabaseService } from '../services/DatabaseService'
-import { ModelProvider, ModelInfo, ProviderType } from '../models/ChatModels'
 
 // 全局应用状态管理器 - 单例模式
 export class AppStateManager {
@@ -12,10 +11,6 @@ export class AppStateManager {
   private currentModelId: string = ''
   private currentProviderId: string = ''
   private currentModelName: string = ''
-
-  // 默认参数
-  private defaultTemperature: number = 0.7
-  private defaultMaxTokens: number = 4096
 
   private constructor() {
     this.preferencesService = getPreferencesService()
@@ -34,8 +29,6 @@ export class AppStateManager {
     this.currentModelId = await this.preferencesService.getCurrentModelId()
     this.currentModelName = await this.preferencesService.getCurrentModelName()
     this.currentProviderId = await this.preferencesService.getCurrentProviderId()
-    this.defaultTemperature = await this.preferencesService.getDefaultTemperature()
-    this.defaultMaxTokens = await this.preferencesService.getDefaultMaxTokens()
   }
 
   // 获取当前模型ID
@@ -61,28 +54,6 @@ export class AppStateManager {
   // 获取当前服务商ID
   getCurrentProviderId(): string {
     return this.currentProviderId
-  }
-
-  // 获取默认温度
-  getDefaultTemperature(): number {
-    return this.defaultTemperature
-  }
-
-  // 设置默认温度
-  async setDefaultTemperature(temperature: number): Promise<void> {
-    this.defaultTemperature = temperature
-    await this.preferencesService.setDefaultTemperature(temperature)
-  }
-
-  // 获取默认最大Token数
-  getDefaultMaxTokens(): number {
-    return this.defaultMaxTokens
-  }
-
-  // 设置默认最大Token数
-  async setDefaultMaxTokens(maxTokens: number): Promise<void> {
-    this.defaultMaxTokens = maxTokens
-    await this.preferencesService.setDefaultMaxTokens(maxTokens)
   }
 }
 

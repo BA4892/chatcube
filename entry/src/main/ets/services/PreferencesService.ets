@@ -8,8 +8,6 @@ export class PreferenceKeys {
   static readonly CURRENT_MODEL_NAME: string = 'current_model_name'
   static readonly CURRENT_PROVIDER_ID: string = 'current_provider_id'
   static readonly CURRENT_ASSISTANT_ID: string = 'current_assistant_id'
-  static readonly DEFAULT_TEMPERATURE: string = 'default_temperature'
-  static readonly DEFAULT_MAX_TOKENS: string = 'default_max_tokens'
   static readonly THEME_MODE: string = 'theme_mode'
   static readonly SYSTEM_DARK_MODE: string = 'system_dark_mode'
   static readonly LANGUAGE: string = 'language'
@@ -46,8 +44,6 @@ export class PreferenceKeys {
   static readonly SEARCH_CONVERSATION_ENABLED: string = 'search_conversation_enabled'
   static readonly SEARCH_ENGINE: string = 'search_engine'
   static readonly SEARCH_MAX_RESULTS: string = 'search_max_results'
-  static readonly SEARCH_TIMEOUT: string = 'search_timeout'
-  static readonly SEARCH_AUTO_TEST: string = 'search_auto_test'
   static readonly SEARCH_QUERY_OPTIMIZATION_ENABLED: string = 'search_query_optimization_enabled'
   static readonly SEARCH_BRAVE_API_KEY: string = 'search_brave_api_key'
   static readonly SEARCH_TAVILY_API_KEY: string = 'search_tavily_api_key'
@@ -379,26 +375,6 @@ export class PreferencesService {
 
   async setCurrentAssistantId(assistantId: string): Promise<void> {
     await this.setString(PreferenceKeys.CURRENT_ASSISTANT_ID, assistantId !== '' ? assistantId : 'default')
-  }
-
-  // 获取默认温度
-  async getDefaultTemperature(): Promise<number> {
-    return await this.getNumber(PreferenceKeys.DEFAULT_TEMPERATURE, 0.7)
-  }
-
-  // 设置默认温度
-  async setDefaultTemperature(temperature: number): Promise<void> {
-    await this.setNumber(PreferenceKeys.DEFAULT_TEMPERATURE, temperature)
-  }
-
-  // 获取默认最大token数
-  async getDefaultMaxTokens(): Promise<number> {
-    return await this.getNumber(PreferenceKeys.DEFAULT_MAX_TOKENS, 4096)
-  }
-
-  // 设置默认最大token数
-  async setDefaultMaxTokens(maxTokens: number): Promise<void> {
-    await this.setNumber(PreferenceKeys.DEFAULT_MAX_TOKENS, maxTokens)
   }
 
   // 获取主题模式

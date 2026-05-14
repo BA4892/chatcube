@@ -312,14 +312,12 @@ export class WebSearchService {
     const enabled = await prefsService.getBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, false)
     const engine = await prefsService.getString(PreferenceKeys.SEARCH_ENGINE, 'bing')
     const maxResults = await prefsService.getNumber(PreferenceKeys.SEARCH_MAX_RESULTS, 10)
-    const timeout = await prefsService.getNumber(PreferenceKeys.SEARCH_TIMEOUT, 5000)
-    const autoTest = await prefsService.getBoolean(PreferenceKeys.SEARCH_AUTO_TEST, true)
 
     snapshot.enabled = enabled
     snapshot.searchEngine = this.parseSearchEngine(engine)
     snapshot.maxResults = this.normalizeResultCount(maxResults)
-    snapshot.timeout = this.normalizeTimeout(timeout)
-    snapshot.autoTestConnection = autoTest
+    snapshot.timeout = this.normalizeTimeout(5000)
+    snapshot.autoTestConnection = true
 
     // 动态加载所有引擎的配置字段
     const registry = getSearchEngineRegistry()

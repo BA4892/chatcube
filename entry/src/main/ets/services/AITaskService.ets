@@ -329,11 +329,7 @@ export class AITaskService {
     }
     for (let i = 0; i < provider.models.length; i++) {
       if (provider.models[i].id === translateModel.modelId) {
-        if (!provider.models[i].capabilities.supportsReasoning) {
-          apiConfig.modelReasoningStrategyOverride = ''
-        } else {
-          apiConfig.modelReasoningStrategyOverride = provider.models[i].reasoningStrategyOverride
-        }
+        apiConfig.modelReasoningStrategyOverride = ''
         apiConfig.modelSupportsReasoning = provider.models[i].capabilities.supportsReasoning
         break
       }

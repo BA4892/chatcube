@@ -1,9 +1,12 @@
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
-import { ModelProvider } from '../models/ChatModels'
+import { ModelProvider, ToolConfig } from '../models/ChatModels'
 import { ReasoningLevel } from '../models/ChatModels'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { AssistantService } from '../services/AssistantService'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
+import { getToolRegistry } from '../services/ToolRegistry'
+import { isSearchToolId } from '../utils/SearchToolIdentityUtils'
+import { ChatToolPickerSheetContent } from '../components/chat/ChatToolPickerSheetContent'
 import { ModelSelectorContent } from '../components/ModelSelector'
 import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
 import { SettingsCompactTitleBarContent } from '../components/settings/SettingsCompactPageHeader'
@@ -118,7 +121,11 @@ struct AssistantManagePage {
   @Local formFrequencyPenalty: number = 0
   // 助手推理强度偏好,取值为 ReasoningLevel 枚举字符串,空串代表未设置
   @Local formReasoningLevelPreference: string = ''
+  // 助手专属工具白名单。空数组 = 不设边界(全开),非空 = 仅这些 toolId 可用
+  @Local formEnabledToolIds: string[] = []
   @Local showModelSheet: boolean = false
+  @Local showToolsSheet: boolean = false
+  @Local availableChatTools: ToolConfig[] = []
   @Local showAvatarEditorSheet: boolean = false
   @Local assistantAvatarRenderTick: number = 0
   @Local consumedInitialAction: boolean = false
@@ -200,6 +207,7 @@ struct AssistantManagePage {
       return
     }
     this.assistants = assistants
+    this.rebuildAvailableChatTools()
     this.bumpAssistantAvatarRenderTick()
     if (!this.consumedInitialAction && this.initialAction === 'new') {
       this.consumedInitialAction = true
@@ -233,6 +241,7 @@ struct AssistantManagePage {
     this.formFrequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     this.formFrequencyPenalty = assistant.frequencyPenalty
     this.formReasoningLevelPreference = assistant.reasoningLevelPreference || ''
+    this.formEnabledToolIds = assistant.enabledToolIds.slice()
   }
 
   private startNewAssistant(): void {
@@ -257,6 +266,7 @@ struct AssistantManagePage {
     this.formFrequencyPenaltyEnabled = false
     this.formFrequencyPenalty = 0
     this.formReasoningLevelPreference = ''
+    this.formEnabledToolIds = []
   }
 
   private patchAssistantInMemory(assistant: Assistant): void {
@@ -287,6 +297,7 @@ struct AssistantManagePage {
       `${assistant.topPEnabled ? '1' : '0'}:${assistant.topP}:` +
       `${assistant.presencePenaltyEnabled ? '1' : '0'}:${assistant.presencePenalty}:` +
       `${assistant.frequencyPenaltyEnabled ? '1' : '0'}:${assistant.frequencyPenalty}:` +
+      `${assistant.enabledToolIds.length}:` +
       `${assistant.isDefault ? '1' : '0'}:${assistant.sortOrder}:${this.assistantAvatarRenderTick}`
   }
 
@@ -302,6 +313,69 @@ struct AssistantManagePage {
 
   private getDefaultModelText(): ResourceStr {
     return this.formDefaultModelName !== '' ? this.formDefaultModelName : $r('app.string.assistant_model_follow_global')
+  }
+
+  // 重建当前可选工具列表(builtin 非搜索 + MCP)。和 ChatPage 里的同名方法保持过滤逻辑一致。
+  private rebuildAvailableChatTools(): void {
+    const configs = getToolRegistry().getAllToolConfigs()
+    const tools: ToolConfig[] = []
+    for (let i = 0; i < configs.length; i++) {
+      if (configs[i].enabled && !isSearchToolId(configs[i].id)) {
+        tools.push(configs[i])
+      }
+    }
+    this.availableChatTools = tools
+  }
+
+  // 助手编辑卡上"可用工具"行的摘要文本。
+  // 空数组 -> 不设边界(全开);非空 -> "N 个工具" + 不可用提示(若有)
+  private getEnabledToolsSummaryText(): string {
+    if (this.formEnabledToolIds.length === 0) {
+      return '所有工具(未设置边界)'
+    }
+    const available = this.availableChatTools
+    let availableSelected = 0
+    for (let i = 0; i < this.formEnabledToolIds.length; i++) {
+      const id = this.formEnabledToolIds[i]
+      for (let j = 0; j < available.length; j++) {
+        if (available[j].id === id) {
+          availableSelected += 1
+          break
+        }
+      }
+    }
+    const unavailable = this.formEnabledToolIds.length - availableSelected
+    if (unavailable > 0) {
+      return `${availableSelected} 个工具(${unavailable} 个暂不可用)`
+    }
+    return `${availableSelected} 个工具`
+  }
+
+  private handleAssistantToolToggle(toolId: string, enabled: boolean): void {
+    const next: string[] = this.formEnabledToolIds.slice()
+    const index = next.indexOf(toolId)
+    if (enabled && index < 0) {
+      next.push(toolId)
+    }
+    if (!enabled && index >= 0) {
+      next.splice(index, 1)
+    }
+    this.formEnabledToolIds = next
+  }
+
+  private handleAssistantMcpGroupToggle(toolIds: string[], enabled: boolean): void {
+    const next: string[] = this.formEnabledToolIds.slice()
+    for (let i = 0; i < toolIds.length; i++) {
+      const id = toolIds[i]
+      const index = next.indexOf(id)
+      if (enabled && index < 0) {
+        next.push(id)
+      }
+      if (!enabled && index >= 0) {
+        next.splice(index, 1)
+      }
+    }
+    this.formEnabledToolIds = next
   }
 
   private getAssistantDefaultModelText(assistant: Assistant): ResourceStr {
@@ -392,6 +466,7 @@ struct AssistantManagePage {
     assistant.frequencyPenaltyEnabled = this.formFrequencyPenaltyEnabled
     assistant.frequencyPenalty = this.formFrequencyPenalty
     assistant.reasoningLevelPreference = this.formReasoningLevelPreference
+    assistant.enabledToolIds = this.formEnabledToolIds.slice()
     assistant.createdAt = this.editingCreatedAt
     assistant.sortOrder = this.editingSortOrder
     assistant.isDefault = this.editingIsDefault
@@ -713,6 +788,7 @@ struct AssistantManagePage {
         })
 
       this.DefaultModelRow()
+      this.EnabledToolsRow()
       this.TemperatureRow()
       this.TopPRow()
       this.PresencePenaltyRow()
@@ -1009,6 +1085,37 @@ struct AssistantManagePage {
   }
 
   @Builder
+  private EnabledToolsRow() {
+    Row({ space: 12 }) {
+      Column({ space: 2 }) {
+        Text('可用工具')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text(this.getEnabledToolsSummaryText())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_tertiary')])
+    }
+    .width('100%')
+    .padding({ left: 14, right: 12, top: 12, bottom: 12 })
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+    .onClick(() => {
+      this.rebuildAvailableChatTools()
+      this.showToolsSheet = true
+    })
+  }
+
+  @Builder
   private TemperatureRow() {
     Column({ space: 10 }) {
       Row() {
@@ -1257,6 +1364,29 @@ struct AssistantManagePage {
   }
 
   @Builder
+  private AssistantToolPickerSheetBuilder() {
+    ChatToolPickerSheetContent({
+      availableChatTools: this.availableChatTools,
+      selectedToolIds: this.formEnabledToolIds,
+      isRefreshingMcpToolAvailability: false,
+      themePrimary: this.themePrimary,
+      isDarkMode: getAppUiState().isDarkMode,
+      onClose: (): void => {
+        this.showToolsSheet = false
+      },
+      onRefresh: (): void => {
+        this.rebuildAvailableChatTools()
+      },
+      onToggleTool: (toolId: string, enabled: boolean): void => {
+        this.handleAssistantToolToggle(toolId, enabled)
+      },
+      onToggleMcpGroup: (toolIds: string[], enabled: boolean): void => {
+        this.handleAssistantMcpGroupToggle(toolIds, enabled)
+      }
+    })
+  }
+
+  @Builder
   private ModelSheetBuilder() {
     Column() {
       ModelSelectorContent({
@@ -1316,6 +1446,21 @@ struct AssistantManagePage {
           dragBar: true,
           showClose: true,
           title: { title: $r('app.string.assistant_default_model') }
+        })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showToolsSheet, this.AssistantToolPickerSheetBuilder(), {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          showClose: false,
+          backgroundColor: getAppUiState().themeBackground,
+          blurStyle: BlurStyle.Thick,
+          preferType: SheetType.BOTTOM,
+          onDisappear: (): void => {
+            this.showToolsSheet = false
+          }
         })
 
       Column()

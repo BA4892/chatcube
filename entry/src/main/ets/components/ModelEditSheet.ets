@@ -27,7 +27,6 @@ export struct ModelEditSheet {
   @Local capSupportsVision: boolean = false
   @Local capSupportsStreaming: boolean = false
   @Local capOutputImage: boolean = false
-  @Local reasoningStrategyOverride: string = ''
   // 回调函数
   @Event onSave: (draft: ModelInfoExtendedJson) => Promise<void> = async (_draft: ModelInfoExtendedJson): Promise<void> => {
   }
@@ -46,7 +45,6 @@ export struct ModelEditSheet {
     this.capSupportsVision = this.model.capabilities.supportsVision
     this.capSupportsStreaming = this.model.capabilities.supportsStreaming
     this.capOutputImage = this.model.outputMode === OutputMode.IMAGE
-    this.reasoningStrategyOverride = this.model.reasoningStrategyOverride
   }
 
   private resetCapabilities(): void {
@@ -75,8 +73,7 @@ export struct ModelEditSheet {
         supportsWebSearch: this.capSupportsWebSearch,
         supportsVision: this.capSupportsVision,
         supportsStreaming: this.capSupportsStreaming
-      },
-      reasoningStrategyOverride: this.reasoningStrategyOverride
+      }
     }
   }
 

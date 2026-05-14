@@ -269,6 +269,15 @@ export class ChatSendFlow {
       this.filterNonSearchToolIds(selectedToolIds),
       this.filterNonSearchToolIds(forcedToolIds)
     )
+    // 助手工具白名单收窄(只过滤非搜索工具;搜索走 shouldEnableWebSearch 独立通道)
+    const assistantWhitelist = await this.deps.chatViewModel.getCurrentAssistantEnabledToolIds()
+    if (assistantWhitelist.length > 0) {
+      for (let i = enabledToolIds.length - 1; i >= 0; i--) {
+        if (!assistantWhitelist.includes(enabledToolIds[i])) {
+          enabledToolIds.splice(i, 1)
+        }
+      }
+    }
     if (searchEnabled && this.deps.toolRegistry.isToolRegistered(SEARCH_WEB_TOOL_ID)) {
       appendUniqueToolId(enabledToolIds, SEARCH_WEB_TOOL_ID)
     } else if (searchEnabled && this.deps.toolRegistry.isToolRegistered(LEGACY_WEB_SEARCH_TOOL_ID)) {

@@ -1,6 +1,6 @@
 import { getDatabaseService, DatabaseService } from '../services/DatabaseService'
 import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
-import { createToolPart, resolveMessageParts } from '../utils/ChatMessagePartsHelper'
+import { createToolPart, ensureMessageParts } from '../utils/ChatMessagePartsHelper'
 import {
   getAIApiService,
   AIApiService,
@@ -101,6 +101,11 @@ interface ImageDownloadResult {
   mimeType: string
 }
 
+// 助手未启用 temperature 时的全局回退值
+const DEFAULT_FALLBACK_TEMPERATURE: number = 0.7
+// 请求体默认 max_tokens 回退值
+const DEFAULT_FALLBACK_MAX_TOKENS: number = 4096
+
 // 聊天状态管理
 export class ChatViewModel {
   private databaseService: DatabaseService
@@ -173,6 +178,13 @@ export class ChatViewModel {
 	    return await this.assistantService.getRuntimeConfig(this.getCurrentAssistantIdForRequest())
 	  }
 
+	  // 当前助手的工具白名单。空数组 = 不设边界(继承全局);非空 = 仅这些 toolId 可用。
+	  // 用于运行时收窄 enabledToolIds(搜索工具走独立通道,不受此影响)。
+	  async getCurrentAssistantEnabledToolIds(): Promise<string[]> {
+	    const config = await this.getAssistantRuntimeConfig()
+	    return config.enabledToolIds.slice()
+	  }
+
 	  private async buildRequestSystemPrompt(extraPrompt: string = ''): Promise<string> {
 	    const globalPrompt = await this.getRenderedSystemPrompt()
 	    const assistantConfig = await this.getAssistantRuntimeConfig()
@@ -185,7 +197,7 @@ export class ChatViewModel {
 	    if (assistantConfig.temperatureEnabled) {
 	      return assistantConfig.temperature
 	    }
-	    return this.appStateManager.getDefaultTemperature()
+	    return DEFAULT_FALLBACK_TEMPERATURE
 	  }
 
 	  // 助手未启用相应开关时返回 undefined,让 AIApiService 走"非默认值才下发"逻辑(等价于不发字段)。
@@ -556,7 +568,7 @@ export class ChatViewModel {
         aiMessage.toolCalls.length === 0 && aiMessage.toolResults.length === 0) {
         return
       }
-      aiMessage.parts = resolveMessageParts(aiMessage)
+      ensureMessageParts(aiMessage, false)
     }
     const now = Date.now()
     for (let i = 0; i < aiMessage.parts.length; i++) {
@@ -1072,7 +1084,7 @@ export class ChatViewModel {
     if (overrideFrequencyPenalty !== undefined) {
       apiConfig.frequencyPenalty = overrideFrequencyPenalty
     }
-    apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
+    apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
     if (this.isCancelled(cancelSnapshot)) {
@@ -1232,7 +1244,7 @@ export class ChatViewModel {
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      this.appStateManager.getDefaultMaxTokens(),
+      DEFAULT_FALLBACK_MAX_TOKENS,
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -1380,7 +1392,7 @@ ${webContext.content}
       openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
-    apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
+    apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
     if (this.isCancelled(cancelSnapshot)) {
@@ -1535,7 +1547,7 @@ ${webContext.content}
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      this.appStateManager.getDefaultMaxTokens(),
+      DEFAULT_FALLBACK_MAX_TOKENS,
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -1714,7 +1726,7 @@ ${limitedSearchContext}
       openaiTransport: openaiTransport,
       customHeadersJson: customHeadersJson
     }
-    apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
+    apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
     if (this.isCancelled(cancelSnapshot)) {
@@ -1869,7 +1881,7 @@ ${limitedSearchContext}
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      this.appStateManager.getDefaultMaxTokens(),
+      DEFAULT_FALLBACK_MAX_TOKENS,
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -2079,7 +2091,7 @@ ${limitedSearchContext}
     if (overrideFrequencyPenalty !== undefined) {
       apiConfig.frequencyPenalty = overrideFrequencyPenalty
     }
-    apiConfig.modelReasoningStrategyOverride = this.getCurrentModelReasoningStrategyOverride(providerId, modelId)
+    apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
     if (this.isCancelled(cancelSnapshot)) {
@@ -2441,7 +2453,7 @@ ${limitedSearchContext}
             })
           },
           requestTemperature,
-          this.appStateManager.getDefaultMaxTokens(),
+          DEFAULT_FALLBACK_MAX_TOKENS,
           (reasoningContent: string) => {
             if (isCancelledFn()) {
               return
@@ -3363,24 +3375,6 @@ ${context !== '' ? context : '(无历史对话)'}
   // 获取当前会话标题
   getCurrentSessionTitle(): string {
     return this.sessionStore.getCurrentSessionTitle()
-  }
-
-  private getCurrentModelReasoningStrategyOverride(providerId: string, modelId: string): string {
-    const provider = this.providerViewModel.getProviderById(providerId)
-    if (provider === null) {
-      return ''
-    }
-
-    for (let i = 0; i < provider.models.length; i++) {
-      if (provider.models[i].id === modelId) {
-        if (!provider.models[i].capabilities.supportsReasoning) {
-          return ''
-        }
-        return provider.models[i].reasoningStrategyOverride
-      }
-    }
-
-    return ''
   }
 
   private getCurrentModelSupportsReasoning(providerId: string, modelId: string): boolean {
