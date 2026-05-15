@@ -16,6 +16,8 @@ export class AssistantRuntimeConfig {
   presencePenalty: number = 0
   frequencyPenaltyEnabled: boolean = false
   frequencyPenalty: number = 0
+  contextMessageCount: number = 0
+  maxOutputTokens: number = 0
   enabledToolIds: string[] = []
 }
 
@@ -275,6 +277,8 @@ export class AssistantService {
     config.presencePenalty = assistant.presencePenalty
     config.frequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     config.frequencyPenalty = assistant.frequencyPenalty
+    config.contextMessageCount = assistant.contextMessageCount
+    config.maxOutputTokens = assistant.maxOutputTokens
     config.enabledToolIds = assistant.enabledToolIds.slice()
     return config
   }

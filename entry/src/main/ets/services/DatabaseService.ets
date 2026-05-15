@@ -687,6 +687,8 @@ export class DatabaseService {
 	      frequency_penalty: assistant.frequencyPenalty,
 	      reasoning_level_preference: assistant.reasoningLevelPreference || '',
 	      enabled_tool_ids_json: JSON.stringify(assistant.enabledToolIds || []),
+	      context_message_count: assistant.contextMessageCount || 0,
+	      max_output_tokens: assistant.maxOutputTokens || 0,
 	      is_default: assistant.isDefault ? 1 : 0,
 	      created_at: assistant.createdAt,
 	      updated_at: assistant.updatedAt,
@@ -764,6 +766,16 @@ export class DatabaseService {
 	      }
 	    } catch (error) {
 	      assistant.enabledToolIds = []
+	    }
+	    try {
+	      assistant.contextMessageCount = resultSet.getLong(resultSet.getColumnIndex('context_message_count'))
+	    } catch (error) {
+	      assistant.contextMessageCount = 0
+	    }
+	    try {
+	      assistant.maxOutputTokens = resultSet.getLong(resultSet.getColumnIndex('max_output_tokens'))
+	    } catch (error) {
+	      assistant.maxOutputTokens = 0
 	    }
 	    try {
 	      assistant.isDefault = resultSet.getLong(resultSet.getColumnIndex('is_default')) === 1
@@ -869,7 +881,9 @@ export class DatabaseService {
       `frequency_penalty_enabled INTEGER DEFAULT 0`,
       `frequency_penalty REAL DEFAULT 0`,
       `reasoning_level_preference TEXT DEFAULT ''`,
-      `enabled_tool_ids_json TEXT DEFAULT ''`
+      `enabled_tool_ids_json TEXT DEFAULT ''`,
+      `context_message_count INTEGER DEFAULT 0`,
+      `max_output_tokens INTEGER DEFAULT 0`
     ]
     for (const def of columns) {
       try {

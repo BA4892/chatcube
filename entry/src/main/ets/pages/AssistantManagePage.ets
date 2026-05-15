@@ -35,19 +35,31 @@ let assistantManagePathStack: NavPathStack | null = null
 
 class AssistantManageRouteParams {
   action: string = ''
+  editAssistantId: string = ''
 }
 
 function resolveAssistantManageRouteParams(param: Object | null | undefined): AssistantManageRouteParams {
   if (param === null || param === undefined) {
     return new AssistantManageRouteParams()
   }
-  return param as AssistantManageRouteParams
+  const result = new AssistantManageRouteParams()
+  if (param instanceof Map) {
+    const map = param as Map<string, string>
+    result.action = map.get('action') ?? ''
+    result.editAssistantId = map.get('editAssistantId') ?? ''
+  } else {
+    const obj = param as AssistantManageRouteParams
+    result.action = obj.action ?? ''
+    result.editAssistantId = obj.editAssistantId ?? ''
+  }
+  return result
 }
 
 @Entry
 @ComponentV2
 struct AssistantManagePage {
   @Param initialAction: string = ''
+  @Param initialEditAssistantId: string = ''
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
   }
@@ -119,6 +131,8 @@ struct AssistantManagePage {
   @Local formPresencePenalty: number = 0
   @Local formFrequencyPenaltyEnabled: boolean = false
   @Local formFrequencyPenalty: number = 0
+  @Local formContextMessageCount: number = 0
+  @Local formMaxOutputTokens: number = 0
   // 助手推理强度偏好,取值为 ReasoningLevel 枚举字符串,空串代表未设置
   @Local formReasoningLevelPreference: string = ''
   // 助手专属工具白名单。空数组 = 不设边界(全开),非空 = 仅这些 toolId 可用
@@ -214,6 +228,14 @@ struct AssistantManagePage {
       this.startNewAssistant()
       return
     }
+    if (!this.consumedInitialAction && this.initialEditAssistantId !== '') {
+      this.consumedInitialAction = true
+      const target = this.assistants.find((a: Assistant) => a.id === this.initialEditAssistantId)
+      if (target !== undefined) {
+        this.selectAssistant(target)
+        return
+      }
+    }
     if (!this.editorVisible && this.assistants.length > 0) {
       this.selectAssistant(this.assistants[0])
     }
@@ -240,6 +262,8 @@ struct AssistantManagePage {
     this.formPresencePenalty = assistant.presencePenalty
     this.formFrequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     this.formFrequencyPenalty = assistant.frequencyPenalty
+    this.formContextMessageCount = assistant.contextMessageCount
+    this.formMaxOutputTokens = assistant.maxOutputTokens
     this.formReasoningLevelPreference = assistant.reasoningLevelPreference || ''
     this.formEnabledToolIds = assistant.enabledToolIds.slice()
   }
@@ -265,6 +289,8 @@ struct AssistantManagePage {
     this.formPresencePenalty = 0
     this.formFrequencyPenaltyEnabled = false
     this.formFrequencyPenalty = 0
+    this.formContextMessageCount = 0
+    this.formMaxOutputTokens = 0
     this.formReasoningLevelPreference = ''
     this.formEnabledToolIds = []
   }
@@ -465,6 +491,8 @@ struct AssistantManagePage {
     assistant.presencePenalty = this.formPresencePenalty
     assistant.frequencyPenaltyEnabled = this.formFrequencyPenaltyEnabled
     assistant.frequencyPenalty = this.formFrequencyPenalty
+    assistant.contextMessageCount = this.formContextMessageCount
+    assistant.maxOutputTokens = this.formMaxOutputTokens
     assistant.reasoningLevelPreference = this.formReasoningLevelPreference
     assistant.enabledToolIds = this.formEnabledToolIds.slice()
     assistant.createdAt = this.editingCreatedAt
@@ -794,6 +822,8 @@ struct AssistantManagePage {
       this.PresencePenaltyRow()
       this.FrequencyPenaltyRow()
       this.ReasoningLevelRow()
+      this.ContextMessageCountRow()
+      this.MaxOutputTokensRow()
 
       Row({ space: 12 }) {
         Button($r('app.string.save'))
@@ -1275,6 +1305,72 @@ struct AssistantManagePage {
     .borderRadius(16)
   }
 
+  @Builder
+  private ContextMessageCountRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('上下文消息数')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text(this.formContextMessageCount > 0 ? `${this.formContextMessageCount} 条` : '不限制')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Slider({ value: this.formContextMessageCount, min: 0, max: 128, step: 2, style: SliderStyle.InSet })
+        .width('100%')
+        .selectedColor(this.themePrimary)
+        .onChange((value: number, _mode: SliderChangeMode) => {
+          this.formContextMessageCount = Math.round(value)
+        })
+
+      Text('限制发送给模型的历史消息数量，0 为不限制。减少上下文可节省 token 用量。')
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private MaxOutputTokensRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('最大输出长度')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text(this.formMaxOutputTokens > 0 ? `${this.formMaxOutputTokens}` : '默认')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Slider({ value: this.formMaxOutputTokens, min: 0, max: 65536, step: 256, style: SliderStyle.InSet })
+        .width('100%')
+        .selectedColor(this.themePrimary)
+        .onChange((value: number, _mode: SliderChangeMode) => {
+          this.formMaxOutputTokens = Math.round(value)
+        })
+
+      Text('限制模型单次回复的最大 token 数，0 为使用默认值。')
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(getAppUiState().themeBackground)
+    .borderRadius(16)
+  }
+
   // 助手级推理强度偏好,空串表示跟随全局/会话;否则按助手打开新会话时会使用此档位
   @Builder
   private ReasoningLevelRow() {
@@ -1487,7 +1583,8 @@ struct AssistantManagePage {
 export function AssistantManagePageBuilder(_name: string, param: Object) {
   NavDestination() {
     AssistantManagePage({
-      initialAction: resolveAssistantManageRouteParams(param).action ?? ''
+      initialAction: resolveAssistantManageRouteParams(param).action ?? '',
+      initialEditAssistantId: resolveAssistantManageRouteParams(param).editAssistantId ?? ''
     })
   }
   .hideTitleBar(true)

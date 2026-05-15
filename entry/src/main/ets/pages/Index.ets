@@ -162,6 +162,8 @@ struct Index {
   @Local assistantFormDefaultModelName: string = ''
   @Local assistantFormTemperatureEnabled: boolean = false
   @Local assistantFormTemperature: number = 0.7
+  @Local assistantFormContextMessageCount: number = 0
+  @Local assistantFormMaxOutputTokens: number = 0
   @Local currentChatRouteName: string = ''
   @Local chatTabTopSessionId: string = ''
   private get activeChatSessionId(): string {
@@ -2224,15 +2226,13 @@ struct Index {
   }
 
   private async openAssistantEditorForNew(): Promise<void> {
-    this.resetAssistantEditorForm()
-    this.showAssistantEditorSheet = true
-    await this.loadAssistantProvidersIfNeeded()
+    const param = new Map<string, string>(); param.set("action", "new")
+    this.openSettingsDestination(SettingsRouteName.ASSISTANTS, param)
   }
 
   private async openAssistantEditor(assistant: Assistant): Promise<void> {
-    this.fillAssistantEditorForm(assistant)
-    this.showAssistantEditorSheet = true
-    await this.loadAssistantProvidersIfNeeded()
+    const param = new Map<string, string>(); param.set("editAssistantId", assistant.id)
+    this.openSettingsDestination(SettingsRouteName.ASSISTANTS, param)
   }
 
   private getAssistantEditorTitle(): Resource {

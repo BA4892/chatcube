@@ -393,6 +393,10 @@ export class ChatSendFlow {
     this.prepareSendState(taskId)
     const senderSessionId = this.deps.getSessionId()
     const modelId = this.deps.getCurrentModelId()
+    const contextMessageCount = await this.deps.chatViewModel.getContextMessageCount()
+    const maxOutputTokens = await this.deps.chatViewModel.getMaxOutputTokens()
+    const messages = this.deps.getMessages()
+    const contextStartIndex = contextMessageCount > 0 ? Math.max(0, messages.length - contextMessageCount) : 0
 
     try {
       await this.deps.chatViewModel.sendMessage(
@@ -404,7 +408,7 @@ export class ChatSendFlow {
         currentProvider.baseUrl,
         modelId,
         this.deps.getCurrentModelName(),
-        this.deps.getMessages(),
+        messages,
         (userMessage: ChatMessage): void => {
           this.handleUserMessageAdded(userMessage, senderSessionId)
         },
@@ -421,11 +425,12 @@ export class ChatSendFlow {
           this.handleTaskFailed(taskId, error, true, senderSessionId)
         },
         attachmentsToSend,
-        0,
+        contextStartIndex,
         this.deps.getReasoningLevel(),
         currentProvider.apiPath || undefined,
         currentProvider.customHeadersJson || undefined,
-        currentProvider.openaiTransport
+        currentProvider.openaiTransport,
+        maxOutputTokens > 0 ? maxOutputTokens : undefined
       )
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`

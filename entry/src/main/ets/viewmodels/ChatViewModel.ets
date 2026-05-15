@@ -217,6 +217,16 @@ export class ChatViewModel {
 	    return assistantConfig.frequencyPenaltyEnabled ? assistantConfig.frequencyPenalty : undefined
 	  }
 
+  async getContextMessageCount(): Promise<number> {
+    const config = await this.getAssistantRuntimeConfig()
+    return config.contextMessageCount
+  }
+
+  async getMaxOutputTokens(): Promise<number> {
+    const config = await this.getAssistantRuntimeConfig()
+    return config.maxOutputTokens
+  }
+
   private notifySessionListChanged(): void {
     setAppUiStateValue(AppStorageKeys.SESSION_LIST_REFRESH_AT, Date.now())
   }
@@ -971,7 +981,8 @@ export class ChatViewModel {
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     apiPath?: string,  // 可选的自定义 API 路径
     customHeadersJson?: string,
-    openaiTransport?: OpenAITransport
+    openaiTransport?: OpenAITransport,
+    maxOutputTokens?: number
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -1244,7 +1255,7 @@ export class ChatViewModel {
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      DEFAULT_FALLBACK_MAX_TOKENS,
+      maxOutputTokens !== undefined && maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_FALLBACK_MAX_TOKENS,
       (reasoningContent: string) => {
         if (cancelled) {
           return
