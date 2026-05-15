@@ -2194,6 +2194,8 @@ struct Index {
     this.assistantFormDefaultModelName = ''
     this.assistantFormTemperatureEnabled = false
     this.assistantFormTemperature = 0.7
+    this.assistantFormContextMessageCount = 0
+    this.assistantFormMaxOutputTokens = 0
     this.editingAssistantReasoningLevelPreference = ''
   }
 
@@ -2211,6 +2213,8 @@ struct Index {
     this.assistantFormDefaultModelName = assistant.defaultModelName
     this.assistantFormTemperatureEnabled = assistant.temperatureEnabled
     this.assistantFormTemperature = assistant.temperature
+    this.assistantFormContextMessageCount = assistant.contextMessageCount
+    this.assistantFormMaxOutputTokens = assistant.maxOutputTokens
     this.editingAssistantReasoningLevelPreference = assistant.reasoningLevelPreference || ''
   }
 
@@ -2283,6 +2287,8 @@ struct Index {
     assistant.defaultModelName = this.assistantFormDefaultModelName
     assistant.temperatureEnabled = this.assistantFormTemperatureEnabled
     assistant.temperature = this.assistantFormTemperature
+    assistant.contextMessageCount = this.assistantFormContextMessageCount
+    assistant.maxOutputTokens = this.assistantFormMaxOutputTokens
     assistant.reasoningLevelPreference = this.editingAssistantReasoningLevelPreference
     assistant.createdAt = this.editingAssistantCreatedAt
     assistant.sortOrder = this.editingAssistantSortOrder
@@ -2893,6 +2899,8 @@ struct Index {
             this.AssistantPromptEditor()
             this.AssistantDefaultModelRow()
             this.AssistantTemperatureRow()
+            this.AssistantContextMessageCountRow()
+            this.AssistantMaxOutputTokensRow()
           }
           .width('100%')
           .constraintSize({ maxWidth: 640 })
@@ -3165,6 +3173,72 @@ struct Index {
         }
         .width('100%')
       }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.themeSurface)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private AssistantContextMessageCountRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('上下文消息数')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text(this.assistantFormContextMessageCount > 0 ? `${this.assistantFormContextMessageCount} 条` : '不限制')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Slider({ value: this.assistantFormContextMessageCount, min: 0, max: 128, step: 2, style: SliderStyle.InSet })
+        .width('100%')
+        .selectedColor(this.themePrimary)
+        .onChange((value: number, _mode: SliderChangeMode) => {
+          this.assistantFormContextMessageCount = Math.round(value)
+        })
+
+      Text('限制发送给模型的历史消息数量，0 为不限制')
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.themeSurface)
+    .borderRadius(16)
+  }
+
+  @Builder
+  private AssistantMaxOutputTokensRow() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('最大输出长度')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text(this.assistantFormMaxOutputTokens > 0 ? `${this.assistantFormMaxOutputTokens}` : '默认')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Slider({ value: this.assistantFormMaxOutputTokens, min: 0, max: 65536, step: 256, style: SliderStyle.InSet })
+        .width('100%')
+        .selectedColor(this.themePrimary)
+        .onChange((value: number, _mode: SliderChangeMode) => {
+          this.assistantFormMaxOutputTokens = Math.round(value)
+        })
+
+      Text('限制模型单次回复的最大 token 数，0 为使用默认值')
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
     }
     .width('100%')
     .padding(14)
