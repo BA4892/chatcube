@@ -52,7 +52,6 @@ struct DefaultModelPage {
   @Local chatModel: DefaultModelConfig = new DefaultModelConfig()
   @Local titleModel: DefaultModelConfig = new DefaultModelConfig()
   @Local translateModel: DefaultModelConfig = new DefaultModelConfig()
-  @Local searchOptimizationModel: DefaultModelConfig = new DefaultModelConfig()
 
   @Local providers: ModelProvider[] = []
   @Local isProvidersLoaded: boolean = false
@@ -109,7 +108,6 @@ struct DefaultModelPage {
     this.chatModel = this.defaultModelService.getModel(ModelRole.CHAT)
     this.titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
     this.translateModel = this.defaultModelService.getModel(ModelRole.TRANSLATE)
-    this.searchOptimizationModel = this.defaultModelService.getModel(ModelRole.SEARCH_OPTIMIZATION)
   }
 
   async loadProviders(): Promise<void> {
@@ -239,7 +237,6 @@ struct DefaultModelPage {
       this.ChatModelSection()
       this.TitleModelSection()
       this.TranslateModelSection()
-      this.SearchOptimizationModelSection()
       Column().height(40)
     }
     .width('100%')
@@ -265,11 +262,6 @@ struct DefaultModelPage {
       Row({ space: 16 }) {
         Column() {
           this.TranslateModelSection()
-        }
-        .layoutWeight(1)
-
-        Column() {
-          this.SearchOptimizationModelSection()
         }
         .layoutWeight(1)
       }
@@ -352,28 +344,6 @@ struct DefaultModelPage {
           this.currentPrompt = this.defaultModelService.getTranslatePromptTemplate()
           this.showPromptSheet = true
         }
-      })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  SearchOptimizationModelSection() {
-    Column() {
-      this.SectionTitle($r('app.string.search_optimization_model'))
-      ModelConfigCard({
-        roleName: $r('app.string.search_optimization_model'),
-        description: $r('app.string.search_optimization_desc'),
-        showPromptEdit: false,
-        isConfigured: this.searchOptimizationModel.isConfigured(),
-        displayName: this.searchOptimizationModel.getDisplayName(),
-        isDefaultPrompt: true,
-        onCardClick: () => {
-          this.showPromptSheet = false
-          this.currentEditRole = ModelRole.SEARCH_OPTIMIZATION
-          this.showModelSheet = true
-        },
-        onPromptClick: () => {}
       })
     }
     .width('100%')
@@ -512,8 +482,6 @@ struct DefaultModelPage {
       return $r('app.string.default_model_select_chat_model')
     } else if (this.currentEditRole === ModelRole.TITLE) {
       return $r('app.string.default_model_select_title_model')
-    } else if (this.currentEditRole === ModelRole.SEARCH_OPTIMIZATION) {
-      return $r('app.string.default_model_select_search_model')
     }
     return $r('app.string.default_model_select_translate_model')
   }
@@ -525,8 +493,6 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
-    } else if (this.currentEditRole === ModelRole.SEARCH_OPTIMIZATION) {
-      config = this.searchOptimizationModel
     } else {
       config = this.translateModel
     }
@@ -543,8 +509,6 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
-    } else if (this.currentEditRole === ModelRole.SEARCH_OPTIMIZATION) {
-      config = this.searchOptimizationModel
     } else {
       config = this.translateModel
     }
@@ -573,8 +537,6 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
-    } else if (this.currentEditRole === ModelRole.SEARCH_OPTIMIZATION) {
-      this.searchOptimizationModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else {
       this.translateModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     }
@@ -594,8 +556,6 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig()
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig()
-    } else if (this.currentEditRole === ModelRole.SEARCH_OPTIMIZATION) {
-      this.searchOptimizationModel = new DefaultModelConfig()
     } else {
       this.translateModel = new DefaultModelConfig()
     }

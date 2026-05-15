@@ -102,7 +102,7 @@ export struct SearchReferenceCard {
             .margin({ left: 6 })
         }
 
-        // 实际搜索关键词（占据剩余空间，便于排查“关键词优化”是否跑偏）
+        // 实际搜索关键词（占据剩余空间，便于排查工具入参）
         if (this.getDisplayQuery() !== '') {
           Text(this.getDisplayQuery())
             .fontSize(12)

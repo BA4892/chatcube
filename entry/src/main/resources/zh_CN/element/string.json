@@ -697,14 +697,6 @@
       "value": "保存后，聊天中的联网查询会使用这里选择的搜索服务。"
     },
     {
-      "name": "search_query_optimization",
-      "value": "搜索词优化"
-    },
-    {
-      "name": "search_query_optimization_hint",
-      "value": "仅对 Bing（本地）生效。用于把口语输入改写为更可检索的关键词。"
-    },
-    {
       "name": "search_tavily_base_url",
       "value": "Tavily 服务地址"
     },
@@ -747,14 +739,6 @@
     {
       "name": "search_continue_editing",
       "value": "继续编辑"
-    },
-    {
-      "name": "search_optimization_model",
-      "value": "搜索优化模型"
-    },
-    {
-      "name": "search_optimization_desc",
-      "value": "联网搜索时优化查询关键词（默认使用硅基流动）"
     },
     {
       "name": "system_service",
@@ -1599,10 +1583,6 @@
     {
       "name": "default_model_select_title_model",
       "value": "选择标题生成模型"
-    },
-    {
-      "name": "default_model_select_search_model",
-      "value": "选择搜索优化模型"
     },
     {
       "name": "default_model_select_translate_model",

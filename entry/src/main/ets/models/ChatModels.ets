@@ -265,8 +265,7 @@ export enum ProviderIconType {
 export enum ModelRole {
   CHAT = 'chat',
   TITLE = 'title',
-  TRANSLATE = 'translate',
-  SEARCH_OPTIMIZATION = 'search_optimization'
+  TRANSLATE = 'translate'
 }
 
 // 推理级别枚举

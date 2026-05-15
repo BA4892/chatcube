@@ -697,14 +697,6 @@
       "value": "After saving, chat web search uses the selected search service."
     },
     {
-      "name": "search_query_optimization",
-      "value": "Search Query Optimization"
-    },
-    {
-      "name": "search_query_optimization_hint",
-      "value": "Only applies to Bing (Local). Rewrites conversational input into searchable keywords."
-    },
-    {
       "name": "search_tavily_base_url",
       "value": "Tavily Base URL"
     },
@@ -747,14 +739,6 @@
     {
       "name": "search_continue_editing",
       "value": "Keep editing"
-    },
-    {
-      "name": "search_optimization_model",
-      "value": "Search Optimization Model"
-    },
-    {
-      "name": "search_optimization_desc",
-      "value": "Optimize search queries (uses SiliconFlow by default)"
     },
     {
       "name": "system_service",
@@ -1599,10 +1583,6 @@
     {
       "name": "default_model_select_title_model",
       "value": "Select title generation model"
-    },
-    {
-      "name": "default_model_select_search_model",
-      "value": "Select search optimization model"
     },
     {
       "name": "default_model_select_translate_model",

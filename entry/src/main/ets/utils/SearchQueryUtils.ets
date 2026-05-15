@@ -1,4 +1,4 @@
-// 搜索查询通用工具：用于统一查询清洗、时间归一和优化触发判断
+// 搜索查询通用工具：用于统一查询清洗和时间归一。
 
 function hasExplicitDateInQuery(text: string): boolean {
   return /(\d{4})[年\/\-.](\d{1,2})[月\/\-.]?(\d{1,2})日?/.test(text)
@@ -119,39 +119,4 @@ export function normalizeRelativeTimeForSearchQuery(userQuery: string, candidate
 
   const targetDateText = getDateTextByOffset(dayOffset)
   return `${targetDateText} ${normalizedCandidate}`.trim()
-}
-
-// 是否值得做 LLM 关键词优化：避免简单关键词也额外走一轮模型
-export function shouldApplyLlmOptimizationByQuery(rawQuery: string, cleanedQuery: string): boolean {
-  const raw = rawQuery.trim()
-  const cleaned = cleanedQuery.trim()
-  if (cleaned === '') {
-    return false
-  }
-
-  if (raw !== cleaned) {
-    return true
-  }
-
-  if (cleaned.length >= 24) {
-    return true
-  }
-
-  if (/(今天|今日|昨天|昨日|明天|后天|现在|当前|最新|近期|最近|今年|本年|目前)/.test(cleaned)) {
-    return true
-  }
-
-  if (/\b(today|yesterday|tomorrow|now|latest|recent|current)\b/i.test(cleaned)) {
-    return true
-  }
-
-  if (/(那里|这边|那边|这个|那个|它|他|她)/.test(cleaned)) {
-    return true
-  }
-
-  if (/\b(there|this|that|it|them)\b/i.test(cleaned)) {
-    return true
-  }
-
-  return false
 }

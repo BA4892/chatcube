@@ -52,6 +52,7 @@ import { ChatToolPickerSheetContent } from '../components/chat/ChatToolPickerShe
 import { ChatToolExecutionApprovalSheetContent } from '../components/chat/ChatToolExecutionApprovalSheetContent'
 import { SearchEngineMenuOption } from '../components/ChatToolbar'
 import { getSearchEngineRegistry, registerAllSearchEngines, SearchEngineDescriptor } from '../services/search/Index'
+import { parseSearchEngineIdListJson } from '../utils/SearchEnginePreferenceUtils'
 import {
   ChatNavigationTitleContent,
   CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT
@@ -597,7 +598,8 @@ export struct ChatPage {
     this.initialPromptAutoSent = loadResult.initialPromptAutoSent
     this.sessionId = loadResult.sessionId
     this.sessionTitle = loadResult.sessionTitle
-    this.webSearchConversationEnabled = loadResult.webSearchEnabled && loadResult.webSearchConversationEnabled
+    this.webSearchConversationEnabled =
+      loadResult.webSearchEnabled && this.availableSearchEngines.length > 0 && loadResult.webSearchConversationEnabled
     this.reasoningLevel = loadResult.reasoningLevel
     this.inputText = loadResult.draftText
     this.pendingAttachments = [...loadResult.draftAttachments]
@@ -1025,8 +1027,12 @@ export struct ChatPage {
     this.applySelectedToolIdsInMemory(savedToolIds, enabledMcpServerIds)
   }
 
+  private isWebSearchReady(): boolean {
+    return this.webSearchAvailable && this.availableSearchEngines.length > 0
+  }
+
   private async setWebSearchConversationEnabled(enabled: boolean): Promise<void> {
-    const normalized = this.webSearchAvailable && enabled
+    const normalized = this.isWebSearchReady() && enabled
     await this.preferencesService.setBoolean(PreferenceKeys.SEARCH_CONVERSATION_ENABLED, normalized)
     this.webSearchConversationEnabled = normalized
   }
@@ -1095,28 +1101,74 @@ export struct ChatPage {
     }
     this.rebuildAvailableChatTools()
     await this.refreshAvailableSearchEngines()
+    if (this.availableSearchEngines.length === 0 && this.webSearchConversationEnabled) {
+      this.webSearchConversationEnabled = false
+      await this.preferencesService.setBoolean(PreferenceKeys.SEARCH_CONVERSATION_ENABLED, false)
+    }
     const enabledMcpServerIds = await this.loadEnabledMcpServerIds()
     const selectedToolIds = await this.mcpService.loadSelectedToolIds()
     this.applySelectedToolIdsInMemory(selectedToolIds, enabledMcpServerIds)
   }
 
   // 重建联网菜单的引擎列表 + 当前活跃引擎。
-  // 已配置 = 引擎没有需要密码的配置项(Bing) 或 至少一个密码字段非空。
-  // ToolsCenterPanel 没有"启用/禁用"单引擎的概念, 这里以"配置完整"代表"可用"。
+  // 可用 = 在工具中心启用，并且引擎没有需要密码的配置项(Bing) 或至少一个密码字段非空。
   private async refreshAvailableSearchEngines(): Promise<void> {
     registerAllSearchEngines()
     const registry = getSearchEngineRegistry()
     const descriptors = registry.getAll()
+    const storedEngineRaw = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENGINE, SearchEngine.BING)
+    const storedEngine = registry.parseEngine(storedEngineRaw)
+    const enabledEngineIds = await this.loadEnabledSearchEngineIds(storedEngine)
     const next: SearchEngineMenuOption[] = []
     for (let i = 0; i < descriptors.length; i++) {
-      if (await this.isSearchEngineConfigured(descriptors[i])) {
+      if (enabledEngineIds.includes(descriptors[i].id) && await this.isSearchEngineConfigured(descriptors[i])) {
         next.push({ id: descriptors[i].id as string, label: descriptors[i].label })
       }
     }
     this.availableSearchEngines = next
 
-    const storedEngine = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENGINE, SearchEngine.BING)
-    this.activeSearchEngineId = storedEngine !== '' ? storedEngine : SearchEngine.BING
+    if (this.isSearchEngineMenuOptionAvailable(storedEngine)) {
+      this.activeSearchEngineId = storedEngine
+      return
+    }
+    if (next.length > 0) {
+      this.activeSearchEngineId = next[0].id
+      await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, next[0].id)
+      return
+    }
+    this.activeSearchEngineId = storedEngine
+  }
+
+  private async loadEnabledSearchEngineIds(storedEngine: SearchEngine): Promise<string[]> {
+    const raw = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENABLED_ENGINE_IDS_JSON, '')
+    if (raw.trim() !== '') {
+      return parseSearchEngineIdListJson(raw)
+    }
+
+    const defaults: string[] = [SearchEngine.BING]
+    const descriptors = getSearchEngineRegistry().getAll()
+    for (let i = 0; i < descriptors.length; i++) {
+      const engineId = descriptors[i].id
+      if (engineId !== SearchEngine.BING && await this.isSearchEngineConfigured(descriptors[i]) &&
+        !defaults.includes(engineId)) {
+        defaults.push(engineId)
+      }
+    }
+    const storedDesc = getSearchEngineRegistry().getById(storedEngine)
+    if (storedEngine !== SearchEngine.BING && storedDesc !== undefined &&
+      await this.isSearchEngineConfigured(storedDesc) && !defaults.includes(storedEngine)) {
+      defaults.push(storedEngine)
+    }
+    return defaults
+  }
+
+  private isSearchEngineMenuOptionAvailable(engineId: string): boolean {
+    for (let i = 0; i < this.availableSearchEngines.length; i++) {
+      if (this.availableSearchEngines[i].id === engineId) {
+        return true
+      }
+    }
+    return false
   }
 
   private async isSearchEngineConfigured(desc: SearchEngineDescriptor): Promise<boolean> {
@@ -1298,7 +1350,7 @@ export struct ChatPage {
       }
     }
     const context = new EditedMessageToolContext()
-    context.webSearchEnabled = this.webSearchAvailable && webSearchEnabled
+    context.webSearchEnabled = this.isWebSearchReady() && webSearchEnabled
     context.selectedToolIds = this.normalizeSelectedToolIdsForPicker(selectedToolIds)
     return context
   }
@@ -1354,12 +1406,17 @@ export struct ChatPage {
     // engineId 非空 = 选择某个引擎并启用联网; 空串 = "禁用联网"项。
     // 引擎选择全局持久化(SEARCH_ENGINE), 即便在编辑模式下也跟随; 启用/禁用在编辑模式下只改本地状态。
     if (engineId !== '') {
+      if (!this.isSearchEngineMenuOptionAvailable(engineId)) {
+        this.showError(pickLocalizedText('该搜索服务不可用，请先在工具中心启用并完成配置',
+          'This search service is unavailable. Enable and configure it in Tools first.'))
+        return
+      }
       this.activeSearchEngineId = engineId
       this.persistSearchEnginePreference(engineId)
     }
     const enableSearch = engineId !== ''
     if (this.isEditingMessage) {
-      this.editingWebSearchEnabled = this.webSearchAvailable && enableSearch
+      this.editingWebSearchEnabled = this.isWebSearchReady() && enableSearch
       return
     }
     this.setWebSearchConversationEnabled(enableSearch).catch((error: Object) => {
@@ -1595,7 +1652,7 @@ export struct ChatPage {
       ): void => {
         this.inputText = content
         this.pendingAttachments = [...attachments]
-        this.webSearchConversationEnabled = this.webSearchAvailable && webSearchEnabled
+        this.webSearchConversationEnabled = this.isWebSearchReady() && webSearchEnabled
         this.applySelectedToolIdsInMemory(selectedToolIds)
         this.reasoningLevel = this.normalizeReasoningLevelForCurrentModel(reasoningLevel)
       },
@@ -1608,7 +1665,7 @@ export struct ChatPage {
       ): Promise<void> => {
         this.inputText = content
         this.pendingAttachments = [...attachments]
-        this.webSearchConversationEnabled = this.webSearchAvailable && webSearchEnabled
+        this.webSearchConversationEnabled = this.isWebSearchReady() && webSearchEnabled
         this.applySelectedToolIdsInMemory(selectedToolIds)
         this.reasoningLevel = this.normalizeReasoningLevelForCurrentModel(reasoningLevel)
         await this.sendMessage()
@@ -3110,7 +3167,7 @@ export struct ChatPage {
       }
 
       const attachmentsToSend = [...this.pendingAttachments]
-      const searchEnabled = this.webSearchAvailable && this.webSearchConversationEnabled
+      const searchEnabled = this.isWebSearchReady() && this.webSearchConversationEnabled
       const selectedToolIds = [...this.selectedToolIds]
       const forcedToolIds = [...this.forcedToolIdsOnce]
       await this.getSendFlow().executeSend(

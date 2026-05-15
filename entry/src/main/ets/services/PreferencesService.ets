@@ -27,10 +27,6 @@ export class PreferenceKeys {
   static readonly DEFAULT_TRANSLATE_PROVIDER_ID: string = 'default_translate_provider_id'
   static readonly DEFAULT_TRANSLATE_MODEL_NAME: string = 'default_translate_model_name'
   static readonly DEFAULT_TRANSLATE_PROVIDER_NAME: string = 'default_translate_provider_name'
-  static readonly DEFAULT_SEARCH_OPTIMIZATION_MODEL_ID: string = 'default_search_optimization_model_id'
-  static readonly DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_ID: string = 'default_search_optimization_provider_id'
-  static readonly DEFAULT_SEARCH_OPTIMIZATION_MODEL_NAME: string = 'default_search_optimization_model_name'
-  static readonly DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_NAME: string = 'default_search_optimization_provider_name'
 
   // Prompt 配置
   static readonly TITLE_PROMPT_TEMPLATE: string = 'title_prompt_template'
@@ -43,8 +39,8 @@ export class PreferenceKeys {
   static readonly SEARCH_SERVICE_ENABLED: string = 'search_service_enabled'
   static readonly SEARCH_CONVERSATION_ENABLED: string = 'search_conversation_enabled'
   static readonly SEARCH_ENGINE: string = 'search_engine'
+  static readonly SEARCH_ENABLED_ENGINE_IDS_JSON: string = 'search_enabled_engine_ids_json'
   static readonly SEARCH_MAX_RESULTS: string = 'search_max_results'
-  static readonly SEARCH_QUERY_OPTIMIZATION_ENABLED: string = 'search_query_optimization_enabled'
   static readonly SEARCH_BRAVE_API_KEY: string = 'search_brave_api_key'
   static readonly SEARCH_TAVILY_API_KEY: string = 'search_tavily_api_key'
   static readonly SEARCH_TAVILY_BASE_URL: string = 'search_tavily_base_url'

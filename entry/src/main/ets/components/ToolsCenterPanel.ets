@@ -24,8 +24,14 @@ import {
 } from '../utils/CustomHeaderUtils'
 import {
   getSearchEngineRegistry,
-  registerAllSearchEngines
+  registerAllSearchEngines,
+  SearchEngineDescriptor
 } from '../services/search/Index'
+import {
+  asSearchEngine,
+  parseSearchEngineIdListJson,
+  stringifySearchEngineIdList
+} from '../utils/SearchEnginePreferenceUtils'
 
 @ObservedV2
 class McpHeaderEntry {
@@ -48,8 +54,8 @@ export struct ToolsCenterPanel {
   @Param contentScroller: Scroller = new Scroller()
   @Local searchServiceEnabled: boolean = false
   @Local searchEngine: SearchEngine = SearchEngine.BING
-  @Local searchEngineSelectedIndex: number = 0
   @Local searchEngineDisplayValue: string = 'Bing(local)'
+  @Local searchEnabledEngineIds: string[] = []
   @Local searchBraveApiKey: string = ''
   @Local searchTavilyApiKey: string = ''
   @Local searchTavilyBaseUrl: string = 'https://api.tavily.com'
@@ -58,7 +64,6 @@ export struct ToolsCenterPanel {
   @Local searchMetasoApiKey: string = ''
   @Local searchFirecrawlApiKey: string = ''
   @Local searchFirecrawlBaseUrl: string = 'https://api.firecrawl.dev'
-  @Local searchQueryOptimizationEnabled: boolean = false
   @Local isLoading: boolean = false
   @Local isRefreshingMcpServers: boolean = false
   @Local showSearchConfigSheet: boolean = false
@@ -111,9 +116,9 @@ export struct ToolsCenterPanel {
   private toolRegistry: ToolRegistry = ServiceRegistry.toolRegistry()
   private mcpService: McpService = ServiceRegistry.mcp()
   private preferencesService: PreferencesService = getPreferencesService()
-  private get searchEngineOptions(): Array<SelectOption> {
+  private get searchEngineDescriptors(): SearchEngineDescriptor[] {
     registerAllSearchEngines()
-    return getSearchEngineRegistry().getSelectOptions()
+    return getSearchEngineRegistry().getAll()
   }
   private readonly mcpAuthTypeOptions: Array<SelectOption> = [
     { value: 'None' },
@@ -270,21 +275,163 @@ export struct ToolsCenterPanel {
   }
 
   private parseSearchEngine(raw: string): SearchEngine {
-    registerAllSearchEngines()
-    return getSearchEngineRegistry().parseEngine(raw)
+    return asSearchEngine(raw)
   }
 
   private getSearchEngineLabel(engine: SearchEngine): string {
     return getSearchEngineRegistry().getLabel(engine)
   }
 
-  private getSearchEngineByIndex(index: number): SearchEngine {
-    const desc = getSearchEngineRegistry().getByIndex(index)
-    return desc !== undefined ? desc.id : SearchEngine.BING
+  private setCurrentSearchEngine(engine: SearchEngine): void {
+    this.searchEngine = engine
+    this.searchEngineDisplayValue = this.getSearchEngineLabel(engine)
   }
 
-  private getSearchEngineSelectedIndex(engine: SearchEngine): number {
-    return getSearchEngineRegistry().indexOf(engine)
+  private isSearchEngineEnabled(engineId: string): boolean {
+    return this.searchEnabledEngineIds.includes(engineId)
+  }
+
+  private getEnabledSearchEngineCount(): number {
+    return this.searchEnabledEngineIds.length
+  }
+
+  private isSearchEngineConfiguredLocal(engineId: SearchEngine): boolean {
+    const desc = getSearchEngineRegistry().getById(engineId)
+    if (desc === undefined) {
+      return false
+    }
+    let hasPasswordField = false
+    for (let i = 0; i < desc.configFields.length; i++) {
+      const field = desc.configFields[i]
+      if (field.isPassword) {
+        hasPasswordField = true
+        if (this.getConfigFieldValue(field.key).trim() !== '') {
+          return true
+        }
+      }
+    }
+    return !hasPasswordField
+  }
+
+  private getAvailableEnabledSearchEngineCount(): number {
+    let count = 0
+    const engines = this.searchEngineDescriptors
+    for (let i = 0; i < engines.length; i++) {
+      if (this.isSearchEngineEnabled(engines[i].id) && this.isSearchEngineConfiguredLocal(engines[i].id)) {
+        count += 1
+      }
+    }
+    return count
+  }
+
+  private resolveSearchEnabledEngineIds(raw: string, storedEngine: SearchEngine): string[] {
+    if (raw.trim() !== '') {
+      return parseSearchEngineIdListJson(raw)
+    }
+
+    const defaults: string[] = [SearchEngine.BING]
+    const engines = this.searchEngineDescriptors
+    for (let i = 0; i < engines.length; i++) {
+      const engineId = engines[i].id
+      if (engineId !== SearchEngine.BING && this.isSearchEngineConfiguredLocal(engineId) &&
+        !defaults.includes(engineId)) {
+        defaults.push(engineId)
+      }
+    }
+    if (storedEngine !== SearchEngine.BING && this.isSearchEngineConfiguredLocal(storedEngine) &&
+      !defaults.includes(storedEngine)) {
+      defaults.push(storedEngine)
+    }
+    return defaults
+  }
+
+  private findFirstAvailableSearchEngine(): SearchEngine | null {
+    const engines = this.searchEngineDescriptors
+    for (let i = 0; i < engines.length; i++) {
+      if (this.isSearchEngineEnabled(engines[i].id) && this.isSearchEngineConfiguredLocal(engines[i].id)) {
+        return engines[i].id
+      }
+    }
+    return null
+  }
+
+  private async persistEnabledSearchEngineIds(): Promise<void> {
+    this.searchEnabledEngineIds = parseSearchEngineIdListJson(stringifySearchEngineIdList(this.searchEnabledEngineIds))
+    await this.preferencesService.setString(
+      PreferenceKeys.SEARCH_ENABLED_ENGINE_IDS_JSON,
+      stringifySearchEngineIdList(this.searchEnabledEngineIds)
+    )
+  }
+
+  private async ensureDefaultSearchEngineAvailable(): Promise<void> {
+    if (this.isSearchEngineEnabled(this.searchEngine) && this.isSearchEngineConfiguredLocal(this.searchEngine)) {
+      return
+    }
+
+    const fallback = this.findFirstAvailableSearchEngine()
+    if (fallback === null) {
+      return
+    }
+
+    this.setCurrentSearchEngine(fallback)
+    await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, fallback)
+  }
+
+  private async ensureAtLeastOneSearchEngineEnabled(): Promise<void> {
+    if (this.getAvailableEnabledSearchEngineCount() > 0) {
+      return
+    }
+    if (!this.isSearchEngineEnabled(SearchEngine.BING)) {
+      this.searchEnabledEngineIds = [...this.searchEnabledEngineIds, SearchEngine.BING]
+      await this.persistEnabledSearchEngineIds()
+    }
+    await this.ensureDefaultSearchEngineAvailable()
+  }
+
+  private handleSearchEngineEnabledChanged(engineId: SearchEngine, enabled: boolean): void {
+    this.updateSearchEngineEnabledState(engineId, enabled).catch((error: Object) => {
+      console.error('ToolsCenterPanel', `Failed to update search engine enabled state: ${JSON.stringify(error)}`)
+      this.showToolsSnack(pickLocalizedText('搜索服务状态保存失败', 'Failed to save search service state'),
+        2000, SnackBarTone.ERROR)
+    })
+  }
+
+  private async updateSearchEngineEnabledState(engineId: SearchEngine, enabled: boolean): Promise<void> {
+    if (enabled && !this.isSearchEngineConfiguredLocal(engineId)) {
+      this.showToolsSnack(pickLocalizedText('请先完成该搜索服务配置', 'Configure this search service first'),
+        2000, SnackBarTone.ERROR)
+      this.openSearchEngineConfig(engineId)
+      return
+    }
+
+    const next = [...this.searchEnabledEngineIds]
+    const index = next.indexOf(engineId)
+    if (enabled && index < 0) {
+      next.push(engineId)
+    }
+    if (!enabled && index >= 0) {
+      next.splice(index, 1)
+    }
+    this.searchEnabledEngineIds = next
+    await this.persistEnabledSearchEngineIds()
+    await this.ensureDefaultSearchEngineAvailable()
+  }
+
+  private openSearchEngineConfig(engineId: SearchEngine): void {
+    this.setCurrentSearchEngine(engineId)
+    this.syncOriginalSearchSettings()
+    this.showSearchConfigSheet = true
+  }
+
+  private getSearchServiceSummaryText(): string {
+    if (!this.searchServiceEnabled) {
+      return pickLocalizedText('联网搜索已关闭', 'Web search is off')
+    }
+    const availableCount = this.getAvailableEnabledSearchEngineCount()
+    if (availableCount === 0) {
+      return pickLocalizedText('未启用可用搜索服务', 'No available search service enabled')
+    }
+    return `${formatLocalizedCount(availableCount, '个可用服务', 'available service', 'available services')} · ${pickLocalizedText('默认', 'Default')} ${this.searchEngineDisplayValue}`
   }
 
   private applySearchServiceEnabledState(enabled: boolean): void {
@@ -308,23 +455,24 @@ export struct ToolsCenterPanel {
     this.preferencesService.setBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, enabled)
     if (!enabled) {
       this.preferencesService.setBoolean(PreferenceKeys.SEARCH_CONVERSATION_ENABLED, false)
+      return
     }
+    this.ensureAtLeastOneSearchEngineEnabled().catch((error: Object) => {
+      console.error('ToolsCenterPanel', `Failed to prepare search engines: ${JSON.stringify(error)}`)
+    })
   }
 
   private async loadSearchSettings(): Promise<void> {
     registerAllSearchEngines()
     const searchServiceEnabled = await this.preferencesService.getBoolean(PreferenceKeys.SEARCH_SERVICE_ENABLED, false)
     const engineRaw = await this.preferencesService.getString(PreferenceKeys.SEARCH_ENGINE, SearchEngine.BING)
-    const optimizationEnabled = await this.preferencesService.getBoolean(
-      PreferenceKeys.SEARCH_QUERY_OPTIMIZATION_ENABLED,
-      false
+    const enabledEngineIdsRaw = await this.preferencesService.getString(
+      PreferenceKeys.SEARCH_ENABLED_ENGINE_IDS_JSON,
+      ''
     )
-
     this.searchServiceEnabled = searchServiceEnabled
     this.searchEngine = this.parseSearchEngine(engineRaw)
-    this.searchEngineSelectedIndex = this.getSearchEngineSelectedIndex(this.searchEngine)
     this.searchEngineDisplayValue = this.getSearchEngineLabel(this.searchEngine)
-    this.searchQueryOptimizationEnabled = optimizationEnabled
 
     // 动态加载所有引擎的配置字段
     const allEngines = getSearchEngineRegistry().getAll()
@@ -337,6 +485,9 @@ export struct ToolsCenterPanel {
       }
     }
 
+    this.searchEnabledEngineIds = this.resolveSearchEnabledEngineIds(enabledEngineIdsRaw, this.searchEngine)
+    await this.persistEnabledSearchEngineIds()
+    await this.ensureDefaultSearchEngineAvailable()
     this.syncOriginalSearchSettings()
   }
 
@@ -363,8 +514,7 @@ export struct ToolsCenterPanel {
       exaUrl: this.normalizeSearchBaseUrl(this.searchExaBaseUrl, 'https://api.exa.ai'),
       metaso: this.searchMetasoApiKey.trim(),
       firecrawl: this.searchFirecrawlApiKey.trim(),
-      firecrawlUrl: this.normalizeSearchBaseUrl(this.searchFirecrawlBaseUrl, 'https://api.firecrawl.dev'),
-      optimization: this.searchQueryOptimizationEnabled
+      firecrawlUrl: this.normalizeSearchBaseUrl(this.searchFirecrawlBaseUrl, 'https://api.firecrawl.dev')
     })
   }
 
@@ -449,12 +599,11 @@ export struct ToolsCenterPanel {
       }
     }
 
-    // 保存查询优化开关
-    await this.preferencesService.setBoolean(
-      PreferenceKeys.SEARCH_QUERY_OPTIMIZATION_ENABLED,
-      this.searchQueryOptimizationEnabled
-    )
-
+    if (!this.isSearchEngineEnabled(this.searchEngine)) {
+      this.searchEnabledEngineIds = [...this.searchEnabledEngineIds, this.searchEngine]
+      await this.persistEnabledSearchEngineIds()
+    }
+    this.setCurrentSearchEngine(this.searchEngine)
     this.syncOriginalSearchSettings()
     this.showToolsSnack($r('app.string.search_config_saved'), 2000, SnackBarTone.SUCCESS)
     return true
@@ -485,25 +634,12 @@ export struct ToolsCenterPanel {
     else if (key === PreferenceKeys.SEARCH_FIRECRAWL_BASE_URL) this.searchFirecrawlBaseUrl = value
   }
 
-  private currentEngineSupportsQueryOptimization(): boolean {
-    const desc = getSearchEngineRegistry().getById(this.searchEngine)
-    return desc !== undefined && desc.supportsQueryOptimization
-  }
-
   private handleSaveAndCloseSearchSettings(): void {
     this.handleSaveSearchSettings().then((saved: boolean) => {
       if (saved) {
         this.showSearchConfigSheet = false
       }
     })
-  }
-
-  private handleSearchEngineSelect(index: number, value: string): void {
-    this.searchEngineSelectedIndex = index
-    const nextEngine = this.getSearchEngineByIndex(index)
-    const displayValue = value.trim() === '' ? this.getSearchEngineLabel(nextEngine) : value
-    this.searchEngineDisplayValue = displayValue
-    this.searchEngine = nextEngine
   }
 
   private resetMcpServerForm(): void {
@@ -1288,7 +1424,7 @@ export struct ToolsCenterPanel {
 
       Scroll() {
         Column({ space: 16 }) {
-          // 引擎选择卡片
+          // 引擎信息卡片
           Column({ space: 10 }) {
             Text(pickLocalizedText('搜索引擎', 'Search Engine'))
               .fontSize(13)
@@ -1296,18 +1432,11 @@ export struct ToolsCenterPanel {
               .fontColor($r('app.color.text_primary'))
               .width('100%')
 
-            Select(this.searchEngineOptions)
-              .selected(this.searchEngineSelectedIndex)
-              .value(this.searchEngineDisplayValue)
-              .onSelect((index: number, value: string) => {
-                this.handleSearchEngineSelect(index, value)
-              })
+            Text(this.searchEngineDisplayValue)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
               .width('100%')
-              .height(40)
-              .backgroundColor(getAppUiState().themeBackground)
-              .borderRadius(10)
-              .padding({ left: 8, right: 8 })
 
             // 能力标签
             Row({ space: 8 }) {
@@ -1460,47 +1589,6 @@ export struct ToolsCenterPanel {
                 .fontColor($r('app.color.text_tertiary'))
                 .width('100%')
                 .margin({ top: 2 })
-            }
-            .width('100%')
-            .padding(14)
-            .borderRadius(14)
-            .backgroundColor(getAppUiState().themeSurface)
-          }
-
-          // 高级选项
-          if (this.currentEngineSupportsQueryOptimization()) {
-            Column({ space: 8 }) {
-              Text(pickLocalizedText('高级选项', 'Advanced'))
-                .fontSize(13)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-                .width('100%')
-
-              Row() {
-                Column() {
-                  Text(pickLocalizedText('搜索词优化', 'Query Optimization'))
-                    .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
-                    .width('100%')
-
-                  Text(pickLocalizedText(
-                    '使用 AI 优化搜索关键词，提升结果相关性',
-                    'Use AI to optimize search keywords for better relevance'
-                  ))
-                    .fontSize(11)
-                    .fontColor($r('app.color.text_tertiary'))
-                    .width('100%')
-                    .margin({ top: 2, right: 8 })
-                }
-                .layoutWeight(1)
-
-                Toggle({ type: ToggleType.Switch, isOn: this.searchQueryOptimizationEnabled })
-                  .selectedColor(this.themePrimary)
-                  .onChange((value: boolean) => {
-                    this.searchQueryOptimizationEnabled = value
-                  })
-              }
-              .width('100%')
             }
             .width('100%')
             .padding(14)
@@ -2148,14 +2236,59 @@ export struct ToolsCenterPanel {
 
               SearchServiceCardItem({
                 searchEnabled: this.searchServiceEnabled,
-                searchEngineDisplayValue: this.searchEngineDisplayValue,
+                summaryText: this.getSearchServiceSummaryText(),
+                enabledEngineCount: this.getEnabledSearchEngineCount(),
                 onToggle: (enabled: boolean) => {
                   this.handleSearchServiceEnabledChanged(enabled)
                 },
                 onOpenConfig: () => {
-                  this.showSearchConfigSheet = true
+                  this.openSearchEngineConfig(this.searchEngine)
                 }
               })
+
+              Column({ space: 10 }) {
+                Row() {
+                  Text(pickLocalizedText('搜索服务', 'Search Services'))
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+
+                  Text(formatLocalizedCount(this.getAvailableEnabledSearchEngineCount(), '个可用',
+                    'available service', 'available services'))
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_secondary'))
+                }
+                .width('100%')
+
+                Text(pickLocalizedText(
+                  '启用后会出现在聊天输入栏的联网菜单中。',
+                  'Enabled services appear in the chat web search menu.'
+                ))
+                  .fontSize(12)
+                  .lineHeight(18)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+              }
+              .width('100%')
+
+              ForEach(this.searchEngineDescriptors, (engine: SearchEngineDescriptor) => {
+                SearchEngineCardItem({
+                  engineName: engine.label,
+                  engineEnabled: this.isSearchEngineEnabled(engine.id),
+                  engineConfigured: this.isSearchEngineConfiguredLocal(engine.id),
+                  engineIsDefault: this.searchEngine === engine.id && this.isSearchEngineEnabled(engine.id) &&
+                    this.isSearchEngineConfiguredLocal(engine.id),
+                  supportsScrape: engine.supportsScrape,
+                  zeroConfig: engine.configFields.length === 0,
+                  onToggleEnabled: (enabled: boolean) => {
+                    this.handleSearchEngineEnabledChanged(engine.id, enabled)
+                  },
+                  onTap: () => {
+                    this.openSearchEngineConfig(engine.id)
+                  }
+                })
+              }, (engine: SearchEngineDescriptor) => engine.id)
 
               Column({ space: 10 }) {
                 Row() {
@@ -2285,9 +2418,6 @@ export struct ToolsCenterPanel {
           showClose: false,
           dragBar: true,
           blurStyle: BlurStyle.Regular,
-          onWillAppear: () => {
-            this.loadSearchSettings()
-          },
           shouldDismiss: (dismissAction: SheetDismiss) => {
             this.requestCloseSearchConfigSheet(dismissAction)
           },
@@ -2334,7 +2464,8 @@ export struct ToolsCenterPanel {
 @ComponentV2
 struct SearchServiceCardItem {
   @Param searchEnabled: boolean = false
-  @Param searchEngineDisplayValue: string = ''
+  @Param summaryText: string = ''
+  @Param enabledEngineCount: number = 0
   @Event onToggle: (enabled: boolean) => void = (enabled: boolean) => {}
   @Event onOpenConfig: () => void = () => {}
 
@@ -2354,12 +2485,8 @@ struct SearchServiceCardItem {
     return getAppUiState().themeDivider
   }
 
-  private getDisabledText(): string {
-    return pickLocalizedText('未启用', 'Disabled')
-  }
-
-  private getConfigureText(): string {
-    return pickLocalizedText('配置', 'Configure')
+  private getManageText(): string {
+    return pickLocalizedText('管理服务', 'Manage services')
   }
 
   build() {
@@ -2385,7 +2512,7 @@ struct SearchServiceCardItem {
             .fontColor($r('app.color.text_primary'))
             .width('100%')
 
-          Text(this.searchEnabled ? this.searchEngineDisplayValue : this.getDisabledText())
+          Text(this.summaryText)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
@@ -2402,9 +2529,18 @@ struct SearchServiceCardItem {
       .width('100%')
 
       Row({ space: 4 }) {
+        Text(formatLocalizedCount(this.enabledEngineCount, '个已启用', 'enabled service', 'enabled services'))
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.searchEnabled ? this.themePrimary : $r('app.color.text_secondary'))
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius(999)
+          .backgroundColor(this.searchEnabled ? withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16') :
+            this.backgroundHex)
+
         Blank()
 
-        Text(this.getConfigureText())
+        Text(this.getManageText())
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.themePrimary)
@@ -2433,6 +2569,157 @@ struct SearchServiceCardItem {
     })
     .onClick(() => {
       this.onOpenConfig()
+    })
+  }
+}
+
+@ComponentV2
+struct SearchEngineCardItem {
+  @Param engineName: string = ''
+  @Param engineEnabled: boolean = false
+  @Param engineConfigured: boolean = false
+  @Param engineIsDefault: boolean = false
+  @Param supportsScrape: boolean = false
+  @Param zeroConfig: boolean = false
+  @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean) => {}
+  @Event onTap: () => void = () => {}
+
+  private get themePrimary(): string {
+    return getAppUiState().themePrimary
+  }
+
+  private get dividerHex(): string {
+    return getAppUiState().themeDivider
+  }
+
+  private get isDarkMode(): boolean {
+    return getAppUiState().isDarkMode
+  }
+
+  private getStatusText(): string {
+    if (!this.engineConfigured) {
+      return pickLocalizedText('缺少配置', 'Needs config')
+    }
+    if (this.engineIsDefault) {
+      return pickLocalizedText('默认服务', 'Default')
+    }
+    if (this.engineEnabled) {
+      return pickLocalizedText('已启用', 'Enabled')
+    }
+    return pickLocalizedText('未启用', 'Disabled')
+  }
+
+  private getSubtitleText(): string {
+    if (!this.engineConfigured) {
+      return pickLocalizedText('填写 API Key 后可启用', 'Add an API key to enable it')
+    }
+    if (this.engineIsDefault) {
+      return pickLocalizedText('聊天默认使用此搜索服务', 'Used by default in chat')
+    }
+    if (this.engineEnabled) {
+      return pickLocalizedText('可在聊天联网菜单中切换', 'Available in the chat search menu')
+    }
+    return pickLocalizedText('启用后可在聊天中选择', 'Enable it to use from chat')
+  }
+
+  private getStatusColor(): ResourceColor {
+    if (!this.engineConfigured) {
+      return '#D9485F'
+    }
+    if (this.engineEnabled || this.engineIsDefault) {
+      return this.themePrimary
+    }
+    return $r('app.color.text_secondary')
+  }
+
+  private getStatusBackgroundColor(): ResourceColor {
+    if (!this.engineConfigured) {
+      return this.isDarkMode ? '#3A1D23' : '#FBECEF'
+    }
+    if (this.engineEnabled || this.engineIsDefault) {
+      return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
+    }
+    return getAppUiState().themeBackground
+  }
+
+  @Builder
+  private AbilityTag(label: string, active: boolean) {
+    Text(label)
+      .fontSize(10)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(active ? this.themePrimary : $r('app.color.text_tertiary'))
+      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+      .borderRadius(999)
+      .backgroundColor(active ? withColorAlpha(this.themePrimary, this.isDarkMode ? '24' : '12') :
+        getAppUiState().themeBackground)
+      .border({ width: 1, color: active ? withColorAlpha(this.themePrimary, '40') : this.dividerHex })
+  }
+
+  build() {
+    Row({ space: 12 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          .fontSize(19)
+          .fontColor([this.engineEnabled ? this.themePrimary : $r('app.color.text_secondary')])
+      }
+      .width(42)
+      .height(42)
+      .borderRadius(14)
+      .backgroundColor(getAppUiState().themeBackground)
+      .border({ width: 1, color: this.engineEnabled ? this.themePrimary : this.dividerHex })
+      .justifyContent(FlexAlign.Center)
+
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          Text(this.engineName)
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.getStatusText())
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.getStatusColor())
+            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+            .borderRadius(999)
+            .backgroundColor(this.getStatusBackgroundColor())
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text(this.getSubtitleText())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+
+        Row({ space: 6 }) {
+          if (this.zeroConfig) {
+            this.AbilityTag(pickLocalizedText('零配置', 'No setup'), true)
+          }
+          this.AbilityTag(pickLocalizedText('网页抓取', 'Scrape'), this.supportsScrape)
+        }
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.engineEnabled })
+        .selectedColor(this.themePrimary)
+        .onChange((value: boolean) => {
+          this.onToggleEnabled(value)
+        })
+    }
+    .width('100%')
+    .padding(14)
+    .borderRadius(16)
+    .backgroundColor(getAppUiState().themeSurface)
+    .border({ width: 1, color: this.engineEnabled ? this.themePrimary : this.dividerHex })
+    .onClick(() => {
+      this.onTap()
     })
   }
 }

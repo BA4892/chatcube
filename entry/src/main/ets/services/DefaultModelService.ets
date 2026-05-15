@@ -7,7 +7,7 @@ import { getAppSettingsStore, AppSettingsStore } from '../state/AppSettingsStore
 // 默认模型服务 - 单例模式
 //
 // 已迁移到 AppSettingsStore：
-// - 4 个 role 的 DefaultModelConfig（chat / title / translate / search opt）
+// - 3 个 role 的 DefaultModelConfig（chat / title / translate）
 // - 3 个 Prompt 模板字段（title / translate 模板 + translateTargetLanguage）
 //
 // 本服务目前只剩纯派生（System/User Prompt 格式化）+ facade 委托，

@@ -15,9 +15,7 @@ export function registerAllSearchEngines(): void {
     id: SearchEngine.BING,
     label: 'Bing(local)',
     configFields: [],
-    supportsScrape: false,
-    supportsQueryOptimization: true,
-    isSelfOptimized: false
+    supportsScrape: false
   })
 
   registry.register({
@@ -31,9 +29,7 @@ export function registerAllSearchEngines(): void {
         defaultValue: ''
       }
     ],
-    supportsScrape: false,
-    supportsQueryOptimization: false,
-    isSelfOptimized: false
+    supportsScrape: false
   })
 
   registry.register({
@@ -53,9 +49,7 @@ export function registerAllSearchEngines(): void {
         defaultValue: 'https://api.tavily.com'
       }
     ],
-    supportsScrape: true,
-    supportsQueryOptimization: false,
-    isSelfOptimized: false
+    supportsScrape: true
   })
 
   registry.register({
@@ -75,9 +69,7 @@ export function registerAllSearchEngines(): void {
         defaultValue: 'https://api.exa.ai'
       }
     ],
-    supportsScrape: true,
-    supportsQueryOptimization: false,
-    isSelfOptimized: true
+    supportsScrape: true
   })
 
   registry.register({
@@ -91,9 +83,7 @@ export function registerAllSearchEngines(): void {
         defaultValue: ''
       }
     ],
-    supportsScrape: true,
-    supportsQueryOptimization: false,
-    isSelfOptimized: false
+    supportsScrape: true
   })
 
   registry.register({
@@ -113,8 +103,6 @@ export function registerAllSearchEngines(): void {
         defaultValue: 'https://api.firecrawl.dev'
       }
     ],
-    supportsScrape: true,
-    supportsQueryOptimization: false,
-    isSelfOptimized: false
+    supportsScrape: true
   })
 }

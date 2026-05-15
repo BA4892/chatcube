@@ -814,13 +814,11 @@ export class AppSettingsStore {
       return s.defaultTitleModel
     } else if (role === ModelRole.TRANSLATE) {
       return s.defaultTranslateModel
-    } else if (role === ModelRole.SEARCH_OPTIMIZATION) {
-      return s.defaultSearchOptimizationModel
     }
     return new DefaultModelConfig()
   }
 
-  /** 启动时加载四个 role 的 default model（幂等，多次调用合并为一个 promise） */
+  /** 启动时加载三个 role 的 default model（幂等，多次调用合并为一个 promise） */
   async ensureDefaultModelsInitialized(): Promise<void> {
     if (getAppSettingsState().defaultModelsInitialized) {
       return
@@ -871,22 +869,11 @@ export class AppSettingsStore {
       DefaultPrompts.SILICONFLOW_TRANSLATE_MODEL,
       '硅基流动'
     )
-    const searchOpt = await this.loadDefaultModelFromPreferences(
-      PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_MODEL_ID,
-      PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_ID,
-      PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_MODEL_NAME,
-      PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_NAME,
-      DefaultPrompts.SILICONFLOW_SEARCH_OPTIMIZATION_MODEL,
-      DefaultPrompts.SILICONFLOW_PROVIDER_ID,
-      DefaultPrompts.SILICONFLOW_SEARCH_OPTIMIZATION_MODEL,
-      '硅基流动'
-    )
 
     const s = getAppSettingsState()
     s.defaultChatModel = chat
     s.defaultTitleModel = title
     s.defaultTranslateModel = translate
-    s.defaultSearchOptimizationModel = searchOpt
     s.defaultModelsVersion = s.defaultModelsVersion + 1
     s.defaultModelsInitialized = true
   }
@@ -920,8 +907,6 @@ export class AppSettingsStore {
       s.defaultTitleModel = config
     } else if (role === ModelRole.TRANSLATE) {
       s.defaultTranslateModel = config
-    } else if (role === ModelRole.SEARCH_OPTIMIZATION) {
-      s.defaultSearchOptimizationModel = config
     }
     s.defaultModelsVersion = s.defaultModelsVersion + 1
   }
@@ -947,13 +932,6 @@ export class AppSettingsStore {
         providerIdKey: PreferenceKeys.DEFAULT_TRANSLATE_PROVIDER_ID,
         modelNameKey: PreferenceKeys.DEFAULT_TRANSLATE_MODEL_NAME,
         providerNameKey: PreferenceKeys.DEFAULT_TRANSLATE_PROVIDER_NAME
-      }
-    } else if (role === ModelRole.SEARCH_OPTIMIZATION) {
-      return {
-        modelIdKey: PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_MODEL_ID,
-        providerIdKey: PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_ID,
-        modelNameKey: PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_MODEL_NAME,
-        providerNameKey: PreferenceKeys.DEFAULT_SEARCH_OPTIMIZATION_PROVIDER_NAME
       }
     }
     return null

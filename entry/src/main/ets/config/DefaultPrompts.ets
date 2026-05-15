@@ -57,5 +57,4 @@ Please translate the <source_text> section:
   static readonly SILICONFLOW_PROVIDER_ID: string = 'siliconflow'
   static readonly SILICONFLOW_TITLE_MODEL: string = 'Qwen/Qwen3-8B'
   static readonly SILICONFLOW_TRANSLATE_MODEL: string = 'THUDM/GLM-4-9B-0414'
-  static readonly SILICONFLOW_SEARCH_OPTIMIZATION_MODEL: string = 'Qwen/Qwen3-8B'
 }

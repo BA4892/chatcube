@@ -1,6 +1,4 @@
 import { SearchEngine } from '../../models/ChatModels'
-import { SearchRuntimeConfigSnapshot } from '../WebSearchService'
-import { HttpRequestController } from '../HttpService'
 
 // 搜索引擎配置字段描述
 export interface SearchEngineConfigField {
@@ -16,8 +14,6 @@ export interface SearchEngineDescriptor {
   label: string
   configFields: SearchEngineConfigField[]  // 需要用户配置的字段（apiKey、baseUrl 等）
   supportsScrape: boolean                  // 是否支持网页抓取
-  supportsQueryOptimization: boolean       // 是否支持 LLM 查询优化（本地 HTML 解析类引擎）
-  isSelfOptimized: boolean                 // 引擎自身已优化查询（如 Exa）
 }
 
 // 搜索引擎注册表
