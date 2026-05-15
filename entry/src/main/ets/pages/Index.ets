@@ -25,6 +25,7 @@ import { MultiSelectToolbar } from '../components/MultiSelectToolbar'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
 import { ColorTheme, ThemeColorConfig } from '../models/ThemeColors'
 import { ServiceRegistry } from '../services/ServiceRegistry'
+import { PendingToolInteractionKind, PendingToolInteractionSnapshot } from '../services/ToolExecutionService'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { SettingsRouteName } from '../config/SettingsRouteName'
 import {
@@ -172,6 +173,15 @@ struct Index {
   @Local assistantFormMaxOutputTokens: number = 0
   @Local currentChatRouteName: string = ''
   @Local chatTabTopSessionId: string = ''
+  // 已经提示过的 pending 工具交互 id → 上次提示的时间戳。
+  // 同一个 toolCall 在 cooldown 内不再重复提示, 避免用户切 Tab / tick 触发反复打扰。
+  private recentlyPromptedToolInteractions: Map<string, number> = new Map()
+  // 单条 SnackBar 队列: showSnackBar 是单实例(新调用直接 dismiss 旧的),
+  // 多条提示 (in-app task alert + pending tool interaction) 会互相覆盖。
+  // 这里把 SnackBar 串行化, 上一条播完再播下一条。
+  private snackBarQueue: SnackBarDisplayOptions[] = []
+  private snackBarQueueTimerId: number = -1
+  private static readonly PENDING_TOOL_INTERACTION_PROMPT_COOLDOWN_MS: number = 60_000
   private get activeChatSessionId(): string {
     return getAppUiState().activeChatSessionId
   }
@@ -224,6 +234,9 @@ struct Index {
   }
   private get taskEventTick(): number {
     return getAppUiState().taskEventTick
+  }
+  private get pendingToolInteractionTick(): number {
+    return getAppUiState().pendingToolInteractionTick
   }
   @Computed
   get inAppTaskAlertPayload(): string {
@@ -558,6 +571,13 @@ struct Index {
     }
   }
 
+  onPendingToolInteractionTickChanged(): void {
+    if (this.pendingToolInteractionTick <= 0) {
+      return
+    }
+    this.processPendingToolInteractionAlert(false)
+  }
+
   onSessionListRefresh(): void {
     if (this.sessionListRefreshAt > 0) {
       this.loadAssistants()
@@ -585,6 +605,8 @@ struct Index {
       observeAppUiState(AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT,
         (): void => this.onAssistantAvatarRefreshMonitor()),
       observeAppUiState(AppStorageKeys.TASK_EVENT_TICK, (): void => this.onTaskEventTickChanged()),
+      observeAppUiState(AppStorageKeys.PENDING_TOOL_INTERACTION_TICK,
+        (): void => this.onPendingToolInteractionTickChanged()),
       observeAppUiState(AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT,
         (): void => this.onHandAdaptiveSettingsTickChanged())
     ]
@@ -609,6 +631,8 @@ struct Index {
           this.refreshSessionListProjection()
           this.loadSessions()
           this.processInAppTaskAlertPayload(this.inAppTaskAlertPayload)
+          // 切回聊天列表时尊重 cooldown, 避免同一个 pending 工具调用每次切 Tab 都打扰用户。
+          this.processPendingToolInteractionAlert(false)
           return
         }
         const names = this.chatTabNavStack.getAllPathName()
@@ -622,6 +646,7 @@ struct Index {
         }
         this.refreshSessionListProjection()
         this.processInAppTaskAlertPayload(this.inAppTaskAlertPayload)
+        this.processPendingToolInteractionAlert(false)
       }
     })
     this.settingsNavPathStack.setInterception({
@@ -645,6 +670,7 @@ struct Index {
     this.registerSettingsCallback()
     this.handleOpenSessionPayload(this.openSessionPayload)
     this.handleInAppTaskAlertPayload(this.inAppTaskAlertPayload)
+    this.processPendingToolInteractionAlert(false)
   }
 
   onPageShow(): void {
@@ -653,6 +679,7 @@ struct Index {
     this.refreshSettingsState()
     this.loadHandAdaptiveSettings()
     this.processInAppTaskAlertPayload(this.inAppTaskAlertPayload)
+    this.processPendingToolInteractionAlert(false)
   }
 
   aboutToDisappear(): void {
@@ -662,6 +689,11 @@ struct Index {
       this.settingsManager.unregisterCallback(this.settingsCallback)
       this.settingsCallback = null
     }
+    if (this.snackBarQueueTimerId !== -1) {
+      clearTimeout(this.snackBarQueueTimerId)
+      this.snackBarQueueTimerId = -1
+    }
+    this.snackBarQueue = []
   }
 
   // 处理返回键/返回手势
@@ -1191,8 +1223,109 @@ struct Index {
     opts.onAction = (): void => {
       this.openChatRoute({ sessionId: payload.sessionId } as ChatPageRouteParams)
     }
-    showSnackBar(this.getUIContext(), opts)
+    this.enqueueSnackBar(opts)
     setAppUiStateValue(AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD, '')
+  }
+
+  private buildPendingToolInteractionMessage(interaction: PendingToolInteractionSnapshot): string {
+    const title = interaction.sessionTitle.trim() !== '' ? interaction.sessionTitle.trim() : '新对话'
+    if (interaction.kind === PendingToolInteractionKind.ASK_USER) {
+      return `会话「${title}」需要你回答一个问题`
+    }
+    return `会话「${title}」需要确认工具调用`
+  }
+
+  private shouldPromptPendingToolInteraction(interaction: PendingToolInteractionSnapshot,
+    forcePrompt: boolean): boolean {
+    if (interaction.sessionId === '') {
+      return false
+    }
+    if (this.isChatDetailRouteActive() && this.chatTabTopSessionId === interaction.sessionId) {
+      return false
+    }
+    if (forcePrompt) {
+      return true
+    }
+    const lastPromptedAt = this.recentlyPromptedToolInteractions.get(interaction.id) ?? 0
+    if (lastPromptedAt === 0) {
+      return true
+    }
+    return Date.now() - lastPromptedAt >= Index.PENDING_TOOL_INTERACTION_PROMPT_COOLDOWN_MS
+  }
+
+  private prunePromptedToolInteractionsAgainst(currentIds: Set<string>): void {
+    const stale: string[] = []
+    this.recentlyPromptedToolInteractions.forEach((_value: number, key: string) => {
+      if (!currentIds.has(key)) {
+        stale.push(key)
+      }
+    })
+    for (let i = 0; i < stale.length; i++) {
+      this.recentlyPromptedToolInteractions.delete(stale[i])
+    }
+  }
+
+  private processPendingToolInteractionAlert(forcePrompt: boolean): void {
+    const interactions = ServiceRegistry.toolExecution().getPendingInteractions()
+    const currentIds: Set<string> = new Set<string>()
+    for (let i = 0; i < interactions.length; i++) {
+      currentIds.add(interactions[i].id)
+    }
+    this.prunePromptedToolInteractionsAgainst(currentIds)
+    if (interactions.length === 0) {
+      return
+    }
+    let interaction: PendingToolInteractionSnapshot | null = null
+    for (let i = 0; i < interactions.length; i++) {
+      if (this.shouldPromptPendingToolInteraction(interactions[i], forcePrompt)) {
+        interaction = interactions[i]
+        break
+      }
+    }
+    if (interaction === null) {
+      return
+    }
+    const targetSessionId = interaction.sessionId
+    this.recentlyPromptedToolInteractions.set(interaction.id, Date.now())
+    const opts = new SnackBarDisplayOptions()
+    opts.message = this.buildPendingToolInteractionMessage(interaction)
+    opts.duration = 6000
+    opts.tone = SnackBarTone.DEFAULT
+    opts.actionText = $r('app.string.task_alert_view')
+    opts.onAction = (): void => {
+      this.openChatRoute({ sessionId: targetSessionId } as ChatPageRouteParams)
+    }
+    this.enqueueSnackBar(opts)
+  }
+
+  // 把 SnackBar 串行化:
+  // - 队列空闲 → 立即播第一条, 并按 duration 调度 shift 队列;
+  // - 队列在播 → 入队, 等当前一条播完再播下一条。
+  // 由此 task alert 与 pending tool interaction 不再互相覆盖。
+  private enqueueSnackBar(opts: SnackBarDisplayOptions): void {
+    this.snackBarQueue.push(opts)
+    if (this.snackBarQueueTimerId !== -1) {
+      return
+    }
+    this.playNextSnackBar()
+  }
+
+  private playNextSnackBar(): void {
+    if (this.snackBarQueue.length === 0) {
+      this.snackBarQueueTimerId = -1
+      return
+    }
+    const next = this.snackBarQueue.shift()
+    if (next === undefined) {
+      this.snackBarQueueTimerId = -1
+      return
+    }
+    showSnackBar(this.getUIContext(), next)
+    const dwell = next.duration > 0 ? next.duration + 200 : 2200
+    this.snackBarQueueTimerId = setTimeout((): void => {
+      this.snackBarQueueTimerId = -1
+      this.playNextSnackBar()
+    }, dwell)
   }
 
   private shouldHandleInAppTaskAlert(): boolean {

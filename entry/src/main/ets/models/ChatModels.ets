@@ -333,7 +333,7 @@ export enum OutputMode {
 export class ModelCapabilities {
   @Trace supportsTools: boolean      // 支持工具调用/Function Calling
   @Trace supportsReasoning: boolean  // 支持推理/思维链（如 o1, DeepSeek R1）
-  @Trace supportsWebSearch: boolean  // 支持联网搜索
+  @Trace supportsWebSearch: boolean  // 支持模型原生/内置联网搜索
   @Trace supportsVision: boolean     // 支持图片输入
   @Trace supportsStreaming: boolean  // 支持流式输出
 

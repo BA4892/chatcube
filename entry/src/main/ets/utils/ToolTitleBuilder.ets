@@ -22,6 +22,7 @@ interface ToolArgumentDict {
 }
 
 const MAX_SNIPPET = 24
+const MCP_FUNCTION_PREFIX = 'mcp__'
 
 function safeParseArguments(raw: string): ToolArgumentDict {
   const trimmed = raw.trim()
@@ -77,6 +78,36 @@ function firstNonEmpty(candidates: string[]): string {
   return ''
 }
 
+function isInternalMcpFunctionName(value: string): boolean {
+  return value.startsWith(MCP_FUNCTION_PREFIX)
+}
+
+function extractMcpToolSegment(functionName: string): string {
+  const parts = functionName.split('__')
+  if (parts.length >= 4) {
+    return parts.slice(2, parts.length - 1).join('__')
+  }
+  if (parts.length >= 3) {
+    return parts[2]
+  }
+  return ''
+}
+
+function buildFallbackToolTitle(functionName: string, displayName: string): string {
+  const display = displayName.trim()
+  const fn = functionName.trim()
+  if (display !== '' && display !== fn && !isInternalMcpFunctionName(display)) {
+    return display
+  }
+  if (isInternalMcpFunctionName(fn)) {
+    const mcpToolName = extractMcpToolSegment(fn)
+    if (mcpToolName !== '') {
+      return mcpToolName
+    }
+  }
+  return fn !== '' ? fn : '工具调用'
+}
+
 /**
  * 根据 functionName + arguments 构造标题文本。返回值用于直接塞进 Text(title)。
  * 未命中任何定制分支时回退到 toolCall.displayName 或 functionName。
@@ -84,9 +115,7 @@ function firstNonEmpty(candidates: string[]): string {
 export function buildToolTitle(toolCall: ToolCall): string {
   const fn = normalizeToolFunctionName(toolCall.functionName)
   const args = safeParseArguments(toolCall.arguments)
-  const fallback = toolCall.displayName.trim() !== ''
-    ? toolCall.displayName.trim()
-    : (toolCall.functionName.trim() !== '' ? toolCall.functionName.trim() : '工具调用')
+  const fallback = buildFallbackToolTitle(toolCall.functionName, toolCall.displayName)
 
   if (isSearchWebFunctionName(fn)) {
     const q = firstNonEmpty([coerceString(args.query), coerceString(args.q), coerceString(args.keyword)])

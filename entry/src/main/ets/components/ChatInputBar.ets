@@ -315,7 +315,7 @@ export struct ChatInputBar {
           }
         })
         .onClick(() => {
-          if (this.isSending) {
+          if (this.isSending && !this.isEditing) {
             this.onStop()
           } else {
             if (!this.computeHasContent()) {
@@ -481,7 +481,7 @@ export struct ChatInputBar {
   }
 
   private getSendButtonSymbol(): Resource {
-    if (this.isSending) {
+    if (this.isSending && !this.isEditing) {
       return $r('sys.symbol.pause')
     }
 

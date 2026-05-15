@@ -37,6 +37,7 @@ import { PreferenceKeys, PreferencesService } from '../services/PreferencesServi
 import { TTSService } from '../services/TTSService'
 import { McpService } from '../services/McpService'
 import { ToolRegistry } from '../services/ToolRegistry'
+import { PendingToolInteractionKind, PendingToolInteractionSnapshot } from '../services/ToolExecutionService'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { registerBuiltinTools } from '../config/BuiltinTools'
 import { AppStorageKeys } from '../config/AppStorageKeys'
@@ -147,6 +148,9 @@ export struct ChatPage {
   private get openSessionPayload(): string {
     return getAppUiState().openSessionPayload
   }
+  private get pendingToolInteractionTick(): number {
+    return getAppUiState().pendingToolInteractionTick
+  }
   @Local providers: ModelProvider[] = []
   // 附件相关状态
   @Local pendingAttachments: MessageAttachment[] = []
@@ -191,10 +195,6 @@ export struct ChatPage {
   }
   // 是否为通过"新建对话"创建的空会话（返回时需要删除）
   private isNewEmptySession: boolean = false
-  private pendingToolExecutionApprovalResolver: ((approved: boolean) => void) | null = null
-  // ask_user 待答复 resolver: key=toolCallId, value=resolve(answerJson | null)
-  // 流程: ToolExecutionService.handleAskUser → answerCallback → 存入 Map → AskUserCard.onAnswer → resolve
-  private pendingAskUserResolvers: Map<string, (answer: string | null) => void> = new Map()
   // 联网查询全局可用状态（工具中心控制）
   @Local webSearchAvailable: boolean = false
   @Local webSearchConversationEnabled: boolean = false
@@ -207,6 +207,12 @@ export struct ChatPage {
   @Local isRefreshingMcpToolAvailability: boolean = false
   @Local showToolPickerSheet: boolean = false
   @Local showToolExecutionApprovalSheet: boolean = false
+  @Local pendingToolExecutionApprovalToolCallId: string = ''
+  private isResolvingToolExecutionApproval: boolean = false
+  // 用户主动下滑关闭 sheet 后,记录当前 pending toolCallId,避免立即重弹形成"按死了甩不掉"。
+  // 在 sync 时如果 service 里的 pending 仍是这个 id,保持折叠态(不弹 sheet);
+  // 用户离开会话再回来 / 切到列表页 / 点 SnackBar "展开"时清掉,重新弹出。
+  private dismissedPendingToolCallId: string = ''
   @Local toolExecutionApprovalToolId: string = ''
   @Local toolExecutionApprovalIsWriteTool: boolean = false
   @Local toolExecutionApprovalSourceLabel: string = ''
@@ -361,28 +367,6 @@ export struct ChatPage {
 
     // 注册内置工具
     registerBuiltinTools()
-    ServiceRegistry.toolExecution().setApprovalCallback(async (toolCall, tool) => {
-      return await this.requestToolExecutionApproval(
-        tool.config.id,
-        tool.config.name,
-        tool.config.sourceLabel,
-        tool.config.sourceType,
-        tool.config.sourceId,
-        tool.config.permissionLevel,
-        toolCall.arguments
-      )
-    })
-    // ask_user 答复回调: 把 pending toolCall 注入到 Map, 由 AskUserCard.onAnswer → handleAskUserAnswer 恢复
-    ServiceRegistry.toolExecution().setAnswerCallback(async (toolCall) => {
-      return await new Promise<string | null>((resolve) => {
-        // 理论上不会冲突, 保底 reject 已存在的 pending
-        const previous = this.pendingAskUserResolvers.get(toolCall.id)
-        if (previous !== undefined) {
-          previous(null)
-        }
-        this.pendingAskUserResolvers.set(toolCall.id, resolve)
-      })
-    })
 
     // 设置标题生成回调
     const titleCallbacks: TitleGenerationCallbacks = {
@@ -448,7 +432,16 @@ export struct ChatPage {
     }
   }
 
-  // 修复页面恢复时可能的不一致状态
+  // 修复页面恢复时可能的不一致状态。
+  //
+  // 这个方法承担"进程被杀 / App 后台清理后冷启动"的兜底语义:
+  // - ToolExecutionService.pendingApprovals / pendingAnswers 都是内存 Map, 进程死了一起没;
+  // - ChatViewModel.activeRequests / pendingAIMessages 也是内存里的, 同样进程死了就丢;
+  // - 但已经 addMessage 进 DB 的 AI 消息可能带着 isGenerating=true / isSearching=true 残留,
+  //   冷启动后没人 stream 那条消息, 这里发现"DB 标志开着 + activeRequests 没有匹配会话"就把
+  //   isGenerating/isSearching/isSending 全部归位, 视觉上等同于"任务中断"。
+  // - RUNNING_CHAT_TASK_COUNT 在 ChatTaskOrchestratorService 维护, 也是进程内 AppStorage,
+  //   重启后默认从 0 起步, 不会出现"显示有 N 个在跑但其实没有"的鬼影。
   private fixInconsistentState(): void {
     const hasActiveRequestForCurrentSession = this.sessionId !== '' &&
       this.chatViewModel.hasActiveRequestForSession(this.sessionId)
@@ -498,11 +491,6 @@ export struct ChatPage {
 
   aboutToDisappear(): void {
     this.isPageVisible = false
-    ServiceRegistry.toolExecution().setApprovalCallback(null)
-    // 页面销毁时 reject 所有待答复的 ask_user, 避免 ChatViewModel 永挂
-    this.pendingAskUserResolvers.forEach((resolve) => resolve(null))
-    this.pendingAskUserResolvers.clear()
-    ServiceRegistry.toolExecution().setAnswerCallback(null)
     // 释放TTS资源
     this.ttsService.destroy()
     this.clearInitialBottomAlignmentRetries()
@@ -687,6 +675,14 @@ export struct ChatPage {
     this.updateRuntimeStateWatchdog()
   }
 
+  private onPendingToolInteractionChanged(): void {
+    if (this.pendingToolInteractionTick <= 0 || !this.isPageVisible || this.sessionId === '') {
+      return
+    }
+    this.markMessageListChanged()
+    this.syncPendingToolInteractionFromService()
+  }
+
   private registerAppUiStateObservers(): void {
     if (this.appUiStateDisposers.length > 0) {
       return
@@ -695,6 +691,8 @@ export struct ChatPage {
       observeAppUiState(AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD, (): void => this.onInAppTaskAlertPayloadChanged()),
       observeAppUiState(AppStorageKeys.OPEN_SESSION_PAYLOAD, (): void => this.onOpenSessionPayloadChanged()),
       observeAppUiState(AppStorageKeys.TASK_EVENT_TICK, (): void => this.onTaskEventTickChanged()),
+      observeAppUiState(AppStorageKeys.PENDING_TOOL_INTERACTION_TICK,
+        (): void => this.onPendingToolInteractionChanged()),
       observeAppUiState(AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT, (): void => this.onAssistantAvatarRefreshChanged()),
       observeAppUiState(AppStorageKeys.APP_IN_BACKGROUND, (): void => this.onAppBackgroundChanged())
     ]
@@ -737,6 +735,9 @@ export struct ChatPage {
     this.fixInconsistentState()
     this.refreshProviders()
     this.updateRuntimeStateWatchdog()
+    // 重新进入页面视为"再次提醒",清掉折叠态让待确认 sheet 重新弹一次,
+    // 满足"返回会话继续弹出原来的授权框"的产品语义。
+    this.expandPendingToolApproval()
     // 检查在页面切换间隙到达的 in-app alert
     this.getTaskAlertFlow().handleInAppTaskAlertPayload(this.inAppTaskAlertPayload)
   }
@@ -748,6 +749,7 @@ export struct ChatPage {
     this.getTaskAlertFlow().handleOpenSessionPayload(this.openSessionPayload)
     this.getTaskAlertFlow().handleInAppTaskAlertPayload(this.inAppTaskAlertPayload)
     this.updateRuntimeStateWatchdog()
+    this.expandPendingToolApproval()
   }
 
   private clearInitialBottomAlignmentRetries(): void {
@@ -3192,7 +3194,8 @@ export struct ChatPage {
 
   // 处理重新生成（支持非最后一条消息，支持用户消息和 AI 消息）
   async handleRegenerate(message: ChatMessage): Promise<void> {
-    if (this.isSending) {
+    const ok = await this.stopActiveGenerationBeforeMessageRewrite()
+    if (!ok) {
       return
     }
     const userMsgIndex = resolveUserMessageIndexForRegenerate(this.messages, message)
@@ -3220,6 +3223,9 @@ export struct ChatPage {
   }
 
   private resetToolExecutionApprovalState(): void {
+    this.pendingToolExecutionApprovalToolCallId = ''
+    this.toolExecutionApprovalToolId = ''
+    this.toolExecutionApprovalIsWriteTool = false
     this.toolExecutionApprovalSourceLabel = ''
     this.toolExecutionApprovalName = ''
     this.toolExecutionApprovalSourceId = ''
@@ -3230,35 +3236,115 @@ export struct ChatPage {
     this.showRawToolExecutionApprovalArguments = false
   }
 
+  private applyPendingToolExecutionApproval(interaction: PendingToolInteractionSnapshot): void {
+    const preview = buildToolArgumentsPreview(interaction.argumentsJson, 4, 800)
+    this.pendingToolExecutionApprovalToolCallId = interaction.id
+    this.toolExecutionApprovalToolId = interaction.toolId.trim()
+    this.toolExecutionApprovalIsWriteTool = interaction.permissionLevel === ToolPermissionLevel.WRITE
+    this.toolExecutionApprovalSourceLabel = interaction.sourceLabel.trim()
+    this.toolExecutionApprovalName = interaction.toolName.trim() !== ''
+      ? interaction.toolName.trim()
+      : pickLocalizedText('未知工具', 'Unknown tool')
+    this.toolExecutionApprovalSourceId = interaction.sourceType === ToolSourceType.MCP ? interaction.sourceId.trim() : ''
+    this.toolExecutionApprovalArgumentSummary = preview.summary
+    this.toolExecutionApprovalArgumentEntries = [...preview.entries]
+    this.toolExecutionApprovalArgumentsPreview = preview.rawPreview
+    this.toolExecutionApprovalArgumentsTruncated = preview.rawTruncated
+    this.showRawToolExecutionApprovalArguments = false
+    this.showToolExecutionApprovalSheet = true
+  }
+
+  private syncPendingToolInteractionFromService(): void {
+    if (this.sessionId === '') {
+      return
+    }
+    const interaction = ServiceRegistry.toolExecution().getPendingInteractionForSession(this.sessionId)
+    if (interaction === null) {
+      // service 里已经没有 pending 了, 一并清掉折叠态记录, 下次出现新 pending 再重新弹。
+      this.dismissedPendingToolCallId = ''
+      if (this.pendingToolExecutionApprovalToolCallId !== '') {
+        this.showToolExecutionApprovalSheet = false
+        this.resetToolExecutionApprovalState()
+      }
+      return
+    }
+    if (interaction.kind !== PendingToolInteractionKind.APPROVAL) {
+      // ASK_USER 走 AskUserCard, 这里不弹 sheet。残留 sheet 状态清掉避免脏 UI。
+      if (this.pendingToolExecutionApprovalToolCallId !== '') {
+        this.showToolExecutionApprovalSheet = false
+        this.resetToolExecutionApprovalState()
+      }
+      return
+    }
+    if (this.dismissedPendingToolCallId === interaction.id) {
+      // 用户刚下滑过这个 toolCall 的 sheet, 保持折叠态, 不立即重弹。
+      // 用户回到列表页再进来 / 点 SnackBar 的"展开"按钮时会通过 expandPendingToolApproval 清掉。
+      return
+    }
+    if (this.showToolExecutionApprovalSheet &&
+      this.pendingToolExecutionApprovalToolCallId === interaction.id) {
+      return
+    }
+    this.applyPendingToolExecutionApproval(interaction)
+  }
+
+  // 提供给 SnackBar action 调用: 用户主动展开折叠的待确认工具调用。
+  expandPendingToolApproval(): void {
+    this.dismissedPendingToolCallId = ''
+    this.syncPendingToolInteractionFromService()
+  }
+
   private resolveToolExecutionApproval(approved: boolean): void {
-    const resolver = this.pendingToolExecutionApprovalResolver
-    this.pendingToolExecutionApprovalResolver = null
+    const toolCallId = this.pendingToolExecutionApprovalToolCallId
+    this.isResolvingToolExecutionApproval = true
     this.showToolExecutionApprovalSheet = false
     this.resetToolExecutionApprovalState()
-    if (resolver !== null) {
-      resolver(approved)
+    if (toolCallId !== '') {
+      const resolved = ServiceRegistry.toolExecution().resolvePendingApproval(toolCallId, approved)
+      if (!resolved) {
+        console.warn('ChatPage', `resolveToolExecutionApproval: no pending approval for ${toolCallId}`)
+      }
     }
   }
 
   // AskUserCard 提交回调: 把答案 JSON 喂给 ToolExecutionService.handleAskUser 的 await
   handleAskUserAnswer(toolCallId: string, answerJson: string): void {
-    const resolver = this.pendingAskUserResolvers.get(toolCallId)
-    if (resolver === undefined) {
+    const resolved = ServiceRegistry.toolExecution().resolvePendingAnswer(toolCallId, answerJson)
+    if (!resolved) {
       console.warn('ChatPage', `handleAskUserAnswer: no pending resolver for ${toolCallId}`)
       return
     }
-    this.pendingAskUserResolvers.delete(toolCallId)
-    resolver(answerJson)
   }
 
   private handleToolExecutionApprovalSheetDisappear(): void {
     this.showToolExecutionApprovalSheet = false
-    const resolver = this.pendingToolExecutionApprovalResolver
-    this.pendingToolExecutionApprovalResolver = null
+    const dismissedToolCallId = this.pendingToolExecutionApprovalToolCallId
     this.resetToolExecutionApprovalState()
-    if (resolver !== null) {
-      resolver(false)
+    if (this.isResolvingToolExecutionApproval) {
+      this.isResolvingToolExecutionApproval = false
+      return
     }
+    if (dismissedToolCallId === '' || !this.isPageVisible || this.sessionId === '') {
+      return
+    }
+    // 仅当 service 里这个 toolCall 仍然 pending 时才提示折叠;
+    // 已被外部 cancel 的话直接放过,不要给用户看一个废弃的 banner。
+    if (!ServiceRegistry.toolExecution().hasPendingInteractionForSession(this.sessionId)) {
+      return
+    }
+    this.dismissedPendingToolCallId = dismissedToolCallId
+    const opts = new SnackBarDisplayOptions()
+    opts.message = pickLocalizedText(
+      '工具调用待确认,可点击展开继续',
+      'Tool call pending, tap to expand'
+    )
+    opts.duration = 4000
+    opts.tone = SnackBarTone.DEFAULT
+    opts.actionText = pickLocalizedText('展开', 'Expand')
+    opts.onAction = (): void => {
+      this.expandPendingToolApproval()
+    }
+    showSnackBar(this.getUIContext(), opts)
   }
 
   private async approveCurrentMcpServerAlways(): Promise<void> {
@@ -3279,39 +3365,6 @@ export struct ChatPage {
       )
     }
     this.resolveToolExecutionApproval(true)
-  }
-
-  private async requestToolExecutionApproval(
-    toolId: string,
-    toolName: string,
-    sourceLabel: string,
-    sourceType: string,
-    sourceId: string,
-    permissionLevel: string,
-    argumentsJson: string
-  ): Promise<boolean> {
-    const preview = buildToolArgumentsPreview(argumentsJson, 4, 800)
-    return await new Promise<boolean>((resolve) => {
-      if (this.pendingToolExecutionApprovalResolver !== null) {
-        const previousResolver = this.pendingToolExecutionApprovalResolver
-        this.pendingToolExecutionApprovalResolver = null
-        previousResolver(false)
-      }
-      this.toolExecutionApprovalToolId = toolId.trim()
-      this.toolExecutionApprovalIsWriteTool = permissionLevel === ToolPermissionLevel.WRITE
-      this.toolExecutionApprovalSourceLabel = sourceLabel.trim()
-      this.toolExecutionApprovalName = toolName.trim() !== ''
-        ? toolName.trim()
-        : pickLocalizedText('未知工具', 'Unknown tool')
-      this.toolExecutionApprovalSourceId = sourceType === ToolSourceType.MCP ? sourceId.trim() : ''
-      this.toolExecutionApprovalArgumentSummary = preview.summary
-      this.toolExecutionApprovalArgumentEntries = [...preview.entries]
-      this.toolExecutionApprovalArgumentsPreview = preview.rawPreview
-      this.toolExecutionApprovalArgumentsTruncated = preview.rawTruncated
-      this.showRawToolExecutionApprovalArguments = false
-      this.pendingToolExecutionApprovalResolver = resolve
-      this.showToolExecutionApprovalSheet = true
-    })
   }
 
   // 处理删除消息
@@ -3459,6 +3512,10 @@ export struct ChatPage {
 
   // 编辑消息：进入内联编辑模式
   private async handleEditMessage(message: ChatMessage): Promise<void> {
+    const ok = await this.stopActiveGenerationBeforeMessageRewrite()
+    if (!ok) {
+      return
+    }
     this.editingOriginalContent = message.content
     this.editingOriginalAttachments = [...message.attachments]
     this.editingMessageId = message.id
@@ -3509,6 +3566,7 @@ export struct ChatPage {
 
   // 内联编辑模式：保存并发送
   private async handleSaveAndSendInline(): Promise<void> {
+    this.stopActiveGenerationBeforeMessageRewrite()
     await this.getInlineEditFlow().saveAndSendInline(
       this.editingMessageId,
       this.inputText,
@@ -3517,6 +3575,83 @@ export struct ChatPage {
       this.editingSelectedToolIds,
       this.editingReasoningLevel
     )
+  }
+
+  private async stopActiveGenerationBeforeMessageRewrite(): Promise<boolean> {
+    const hasPendingToolInteraction = this.sessionId !== '' &&
+      ServiceRegistry.toolExecution().hasPendingInteractionForSession(this.sessionId)
+    if (!this.isSending && this.currentTaskId === '' && !this.showToolExecutionApprovalSheet &&
+      !hasPendingToolInteraction) {
+      return true
+    }
+
+    // 有 pending 工具交互 / sheet 弹出中时,编辑或重新生成会丢弃用户正在审批的工具调用,
+    // 必须给一次显式确认,避免静默吞掉用户操作。仅有"普通流式生成中"则继续保留默认覆盖行为
+    // (用户已经知道点编辑/重新生成会替换当前回复)。
+    if (hasPendingToolInteraction || this.showToolExecutionApprovalSheet) {
+      const confirmed = await this.confirmCancelPendingToolForRewrite()
+      if (!confirmed) {
+        return false
+      }
+    }
+
+    if (this.showToolExecutionApprovalSheet) {
+      this.showToolExecutionApprovalSheet = false
+      this.resetToolExecutionApprovalState()
+    }
+    if (hasPendingToolInteraction) {
+      ServiceRegistry.toolExecution().cancelPendingInteractionsForSession(this.sessionId)
+    }
+    this.dismissedPendingToolCallId = ''
+    this.webSearchService.cancelAllRequests()
+    if (this.isSending || this.currentTaskId !== '') {
+      this.chatViewModel.cancelGenerationForMessageRewrite(this.sessionId)
+      if (this.currentTaskId !== '') {
+        this.chatTaskOrchestrator.cancelTask(this.currentTaskId)
+        this.currentTaskId = ''
+      }
+      this.isSending = false
+      this.isLoading = false
+      this.forcedToolIdsOnce = []
+    }
+    return true
+  }
+
+  private confirmCancelPendingToolForRewrite(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const settle = (value: boolean): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        resolve(value)
+      }
+      this.getUIContext().showAlertDialog({
+        title: pickLocalizedText('取消待确认的工具调用?', 'Cancel pending tool call?'),
+        message: pickLocalizedText(
+          '当前会话有工具调用待确认,继续编辑或重新生成会取消该工具调用。',
+          'A tool call is pending confirmation in this chat. Continuing will cancel it.'
+        ),
+        primaryButton: {
+          value: pickLocalizedText('返回', 'Back'),
+          action: (): void => {
+            settle(false)
+          }
+        },
+        secondaryButton: {
+          value: pickLocalizedText('继续', 'Continue'),
+          fontColor: $r('app.color.status_error'),
+          action: (): void => {
+            settle(true)
+          }
+        },
+        cancel: (): void => {
+          // 点遮罩 / 返回键关闭对话框 = 不要继续, 维持当前 pending 工具调用
+          settle(false)
+        }
+      })
+    })
   }
 
   // 分享单条消息：进入多选模式并触发分享

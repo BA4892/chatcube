@@ -8,6 +8,7 @@ export class AppStorageKeys {
   static readonly SCREENSHOT_DISMISSED_TS: string = 'screenshot_dismissed_ts'
   static readonly TASK_EVENT_TICK: string = 'task_event_tick'
   static readonly IN_APP_TASK_ALERT_PAYLOAD: string = 'in_app_task_alert_payload'
+  static readonly PENDING_TOOL_INTERACTION_TICK: string = 'pending_tool_interaction_tick'
   static readonly RUNNING_CHAT_TASK_COUNT: string = 'running_chat_task_count'
 
   // 系统状态键

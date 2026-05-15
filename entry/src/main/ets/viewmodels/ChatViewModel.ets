@@ -11,7 +11,7 @@ import {
 import { getAppStateManager, AppStateManager } from './AppStateManager'
 import { getAITaskService, AITaskService } from '../services/AITaskService'
 import { getAttachmentStorageService, AttachmentStorageService } from '../services/AttachmentStorageService'
-import { getToolExecutionService, ToolExecutionService } from '../services/ToolExecutionService'
+import { getToolExecutionService, ToolExecutionService, ToolExecutionContext, isCancelledToolResult, CancelledToolResultInfo } from '../services/ToolExecutionService'
 import { getProviderViewModel, ProviderViewModel } from './ProviderViewModel'
 import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '../services/AssistantService'
 import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport } from '../models/ChatModels'
@@ -824,6 +824,21 @@ export class ChatViewModel {
     }
   }
 
+  private discardPendingAIMessagesForScope(sessionIdScope?: string): void {
+    const scoped = sessionIdScope !== undefined && sessionIdScope !== ''
+    const discardMessageIds: string[] = []
+    this.pendingAIMessages.forEach((info: PendingAIMessageInfo) => {
+      if (scoped && info.sessionId !== sessionIdScope) {
+        return
+      }
+      discardMessageIds.push(info.message.id)
+    })
+    for (let i = 0; i < discardMessageIds.length; i++) {
+      this.clearPendingAIMessageIfMatches(discardMessageIds[i])
+      console.info('ChatViewModel', `Discard pending AI message before rewrite: ${discardMessageIds[i]}`)
+    }
+  }
+
   private registerActiveRequest(
     requestId: string,
     httpRequest: http.HttpRequest,
@@ -938,6 +953,8 @@ export class ChatViewModel {
 
   // 删除会话
   async deleteSession(sessionId: string): Promise<void> {
+    this.cancelGenerationForMessageRewrite(sessionId)
+    this.toolExecutionService.cancelPendingInteractionsForSession(sessionId)
     await this.sessionStore.deleteSession(sessionId)
     this.currentSession = this.sessionStore.getCurrentSession()
   }
@@ -2220,6 +2237,82 @@ ${limitedSearchContext}
     onComplete()
   }
 
+  private getCancelledToolResultMessage(toolResults: ToolResult[]): string {
+    for (let i = 0; i < toolResults.length; i++) {
+      const info: CancelledToolResultInfo = isCancelledToolResult(toolResults[i])
+      if (!info.cancelled) {
+        continue
+      }
+      if (info.reason !== '') {
+        return `工具调用已取消：${info.reason}`
+      }
+      return '工具调用已取消，未生成最终回复'
+    }
+    return ''
+  }
+
+  private appendInterruptionTextIfNeeded(aiMessage: ChatMessage, message: string): void {
+    if (message.trim() === '' || aiMessage.content.trim() !== '') {
+      return
+    }
+    aiMessage.content = message
+    this.pushPartText(aiMessage, message)
+  }
+
+  private async persistToolEvents(
+    snapshotSessionId: string,
+    snapshotSession: ChatSession | null,
+    aiMessage: ChatMessage,
+    toolCalls: ToolCall[],
+    toolResults: ToolResult[]
+  ): Promise<void> {
+    if (snapshotSession === null) {
+      return
+    }
+    for (let i = 0; i < toolCalls.length; i++) {
+      const result = i < toolResults.length ? toolResults[i] : null
+      const status = result !== null ? (result.isError ? 'failed' : 'completed') : 'pending'
+      await this.databaseService.saveToolEvent(
+        snapshotSessionId,
+        aiMessage.id,
+        toolCalls[i].id,
+        toolCalls[i].functionName,
+        toolCalls[i].displayName,
+        toolCalls[i].sourceLabel,
+        toolCalls[i].sourceType,
+        toolCalls[i].permissionLevel,
+        toolCalls[i].arguments,
+        result !== null ? result.content : '',
+        status
+      )
+    }
+  }
+
+  private async failAIMessage(
+    aiMessage: ChatMessage,
+    onAIMessageUpdated: (message: ChatMessage) => void,
+    onError: (error: string) => void,
+    snapshotSessionId: string,
+    snapshotSession: ChatSession | null,
+    requestId: string,
+    errorMessage: string
+  ): Promise<void> {
+    this.appendInterruptionTextIfNeeded(aiMessage, errorMessage)
+    this.fillEmptyAIContentPlaceholder(aiMessage, errorMessage)
+    aiMessage.isGenerating = false
+    aiMessage.isSearching = false
+    onAIMessageUpdated(aiMessage)
+
+    if (snapshotSession !== null) {
+      await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+      this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+      this.markPendingAIMessagePersisted(aiMessage.id)
+    }
+    this.clearPendingAIMessageIfMatches(aiMessage.id)
+    this.unregisterActiveRequest(requestId)
+    onError(errorMessage)
+  }
+
   // 工具调用循环
   //
   // 重要: 这里曾经是"onComplete 内 await this.executeToolCallLoop(...)"的递归实现,
@@ -2632,21 +2725,37 @@ ${limitedSearchContext}
       }
 
       // 执行工具调用
-      const toolResults = await this.toolExecutionService.executeToolCalls(toolCalls)
+      const toolResults = await this.toolExecutionService.executeToolCalls(
+        toolCalls,
+        new ToolExecutionContext(snapshotSessionId, snapshotSession !== null ? snapshotSession.title : '')
+      )
       if (isCancelledFn()) {
         // stopGeneration 已经触发, 它内部会 destroy + unregister, 这里直接 return
         return
       }
 
-      if (toolResults.length > 0 && toolResults[0].content.includes('"cancelled":true')) {
+      const cancelledToolMessage = this.getCancelledToolResultMessage(toolResults)
+      if (cancelledToolMessage !== '') {
         console.info('ChatViewModel', 'Tool execution was cancelled')
-        aiMessage.isGenerating = false
+        for (let i = 0; i < toolCalls.length; i++) {
+          this.syncToolPartByCall(aiMessage, toolCalls[i])
+        }
+        for (let i = 0; i < toolResults.length; i++) {
+          aiMessage.toolResults.push(toolResults[i])
+          this.attachToolResultPart(aiMessage, toolResults[i])
+        }
         onAIMessageUpdated(aiMessage)
-        onComplete()
+        await this.persistToolEvents(snapshotSessionId, snapshotSession, aiMessage, toolCalls, toolResults)
+        await this.failAIMessage(
+          aiMessage,
+          onAIMessageUpdated,
+          onError,
+          snapshotSessionId,
+          snapshotSession,
+          requestId,
+          cancelledToolMessage
+        )
         this.toolExecutionService.clearCancelCheckCallback()
-        // 工具用户取消时 stream 已结束, 必须主动 unregister + destroy 当前轮 httpRequest, 避免泄漏
-        this.unregisterActiveRequest(requestId)
-        this.clearPendingAIMessageIfMatches(aiMessage.id)
         return
       }
 
@@ -2663,28 +2772,10 @@ ${limitedSearchContext}
       onAIMessageUpdated(aiMessage)
 
       // 持久化工具事件
-      if (snapshotSession !== null) {
-        for (let i = 0; i < toolCalls.length; i++) {
-          if (isCancelledFn()) {
-            return
-          }
-          const result = i < toolResults.length ? toolResults[i] : null
-          const status = result !== null ? (result.isError ? 'failed' : 'completed') : 'pending'
-          await this.databaseService.saveToolEvent(
-            snapshotSessionId,
-            aiMessage.id,
-            toolCalls[i].id,
-            toolCalls[i].functionName,
-            toolCalls[i].displayName,
-            toolCalls[i].sourceLabel,
-            toolCalls[i].sourceType,
-            toolCalls[i].permissionLevel,
-            toolCalls[i].arguments,
-            result !== null ? result.content : '',
-            status
-          )
-        }
+      if (isCancelledFn()) {
+        return
       }
+      await this.persistToolEvents(snapshotSessionId, snapshotSession, aiMessage, toolCalls, toolResults)
 
       // 处理搜索结果引用
       for (let i = 0; i < toolCalls.length; i++) {
@@ -2930,21 +3021,10 @@ ${limitedSearchContext}
     await this.databaseService.addMessage(this.currentSession.id, message)
   }
 
-  // 停止生成
-  // sessionId 为空/undefined 时全局停止；指定 sessionId 时只取消该会话的请求与待持久化消息，
-  // 避免在多会话并发时停止 B 影响 A。
-  stopGeneration(sessionId?: string): void {
-    const scopedToSession = sessionId !== undefined && sessionId !== ''
-
-    // 取消令牌仅在全局停止时推进，否则会让其它会话尚未进入 registerActiveRequest 的请求被误判为已取消
-    if (!scopedToSession) {
-      this.cancelToken = this.cancelToken + 1
-    }
-
-    // 停止前持久化匹配作用域内的待处理 AI 消息
-    this.persistPendingAIMessageIfNeeded(sessionId)
-
-    // 取消活跃请求：全局停止时清空所有，per-session 时只动匹配项
+  // 取消活跃请求 + pending 工具交互的统一入口。scopedToSession=false 时清掉全部, 为 true 时
+  // 只清匹配 sessionId 的, 这样 stopGeneration / cancelGenerationForMessageRewrite 全局/局部
+  // 两条路径可以共用同一份 destroy + cancel 逻辑。
+  private cancelActiveRequestsForScope(scopedToSession: boolean, sessionId?: string): void {
     if (!scopedToSession) {
       this.activeRequests.forEach((info: ActiveRequestInfo) => {
         info.cancelCallback()
@@ -2955,6 +3035,10 @@ ${limitedSearchContext}
         }
       })
       this.activeRequests.clear()
+      // 全局停止: 直接拒绝所有 pending 工具交互, 不再绕一圈通过 activeRequests 反推 sessionId,
+      // 避免漏掉 activeRequests 已被清空但 pending 还在的边界场景(例如工具一直在等用户授权,
+      // 此时 stream 已完成 destroy 出 activeRequests, 但 pending Map 里还挂着)。
+      this.toolExecutionService.cancelAllPendingInteractions()
       // 重置 AIApiService 的解析状态（MiniMax 缓冲区等）；per-session 不重置避免影响其它会话
       this.aiApiService.resetThinkingState()
     } else {
@@ -2974,9 +3058,55 @@ ${limitedSearchContext}
       for (let i = 0; i < targetRequestIds.length; i++) {
         this.activeRequests.delete(targetRequestIds[i])
       }
+      if (sessionId !== undefined && sessionId !== '') {
+        this.toolExecutionService.cancelPendingInteractionsForSession(sessionId)
+      }
+    }
+  }
+
+  // 停止生成。
+  //
+  // 调用语义:
+  // - sessionId 为空/undefined 时全局停止, 推进 cancelToken, 清掉所有会话的请求/pending 工具交互;
+  // - 指定 sessionId 时只取消该会话的请求与 pending 工具交互, 不动 cancelToken, 多会话并发时
+  //   不会因为停止 B 把 A 一起干掉。
+  //
+  // 与 cancelGenerationForMessageRewrite 的差异:
+  // - 本方法会先 persistPendingAIMessageIfNeeded(sessionId) 把已经累积的 AI 文本/工具事件
+  //   存进 DB, 用户能在历史里看到"已生成的部分 + 中断"。
+  // - cancelGenerationForMessageRewrite 不持久化, 因为编辑/重新生成立刻会把这条消息从 UI
+  //   尾部删掉, 半截内容落库会变成"幽灵消息"。
+  stopGeneration(sessionId?: string): void {
+    const scopedToSession = sessionId !== undefined && sessionId !== ''
+
+    // 取消令牌仅在全局停止时推进，否则会让其它会话尚未进入 registerActiveRequest 的请求被误判为已取消
+    if (!scopedToSession) {
+      this.cancelToken = this.cancelToken + 1
     }
 
+    // 停止前持久化匹配作用域内的待处理 AI 消息
+    this.persistPendingAIMessageIfNeeded(sessionId)
+    this.cancelActiveRequestsForScope(scopedToSession, sessionId)
+
     console.info('ChatViewModel', `Generation stopped (scope=${scopedToSession ? sessionId : 'all'})`)
+  }
+
+  // 编辑 / 重新生成 / 删除会话前的取消生成路径, 不持久化半截 AI 消息。
+  //
+  // 与 stopGeneration 共用 cancelActiveRequestsForScope, 但走的是 discard 分支:
+  // - discardPendingAIMessagesForScope 把 pendingAIMessages 中匹配会话直接丢弃,
+  //   不会触发 databaseService.addMessage, 也不会让用户看到一条空 AI 消息;
+  // - 之后 ChatPage 会立即从 UI 尾部删掉旧消息, 写入新 prompt, 不需要任何"中断态"展示。
+  //
+  // 不要在普通 stop 按钮场景调用这个方法, 否则用户会丢失工具事件 / 部分回复。
+  cancelGenerationForMessageRewrite(sessionId?: string): void {
+    const scopedToSession = sessionId !== undefined && sessionId !== ''
+    if (!scopedToSession) {
+      this.cancelToken = this.cancelToken + 1
+    }
+    this.discardPendingAIMessagesForScope(sessionId)
+    this.cancelActiveRequestsForScope(scopedToSession, sessionId)
+    console.info('ChatViewModel', `Generation cancelled for message rewrite (scope=${scopedToSession ? sessionId : 'all'})`)
   }
 
   // 检查是否有活跃的请求

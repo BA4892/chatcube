@@ -260,12 +260,12 @@ export struct ModelEditSheet {
           this.capSupportsReasoning = !this.capSupportsReasoning
         })
 
-        // 联网搜索
+        // 模型原生/内置联网搜索
         Row() {
           SymbolGlyph($r('sys.symbol.ohos_wifi'))
             .fontSize(16)
             .fontColor([this.capSupportsWebSearch ? this.themePrimary : $r('app.color.text_tertiary')])
-          Text('联网搜索')
+          Text('内置联网')
             .fontSize(13)
             .fontColor(this.capSupportsWebSearch ? this.themePrimary : $r('app.color.text_secondary'))
             .margin({ left: 6 })
