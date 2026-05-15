@@ -2197,6 +2197,70 @@
       "value": "跟随全局"
     },
     {
+      "name": "assistant_editor_identity_section",
+      "value": "基础信息"
+    },
+    {
+      "name": "assistant_editor_identity_desc",
+      "value": "名称、头像和列表中的识别方式"
+    },
+    {
+      "name": "assistant_editor_prompt_section",
+      "value": "提示词"
+    },
+    {
+      "name": "assistant_editor_prompt_desc",
+      "value": "只影响这个助手，会与全局系统提示词一起发送"
+    },
+    {
+      "name": "assistant_editor_model_section",
+      "value": "模型与推理"
+    },
+    {
+      "name": "assistant_editor_model_desc",
+      "value": "设置此助手默认使用的模型和新会话推理强度"
+    },
+    {
+      "name": "assistant_editor_sampling_section",
+      "value": "采样参数"
+    },
+    {
+      "name": "assistant_editor_sampling_desc",
+      "value": "关闭时沿用全局配置或服务商默认值"
+    },
+    {
+      "name": "assistant_editor_context_section",
+      "value": "上下文与输出"
+    },
+    {
+      "name": "assistant_editor_context_desc",
+      "value": "控制发送历史范围和单次回复长度"
+    },
+    {
+      "name": "assistant_context_message_count",
+      "value": "上下文消息数"
+    },
+    {
+      "name": "assistant_context_unlimited",
+      "value": "不限制"
+    },
+    {
+      "name": "assistant_context_message_hint",
+      "value": "限制发送给模型的历史消息数量，0 为不限制"
+    },
+    {
+      "name": "assistant_max_output_tokens",
+      "value": "最大输出长度"
+    },
+    {
+      "name": "assistant_max_output_default",
+      "value": "默认"
+    },
+    {
+      "name": "assistant_max_output_hint",
+      "value": "限制模型单次回复的最大 token 数，0 为使用默认值"
+    },
+    {
       "name": "assistant_name_required",
       "value": "请输入助手名称"
     },

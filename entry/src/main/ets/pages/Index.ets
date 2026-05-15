@@ -2921,14 +2921,28 @@ struct Index {
       Scroll() {
         Row() {
           Column({ space: 14 }) {
+            this.AssistantEditorSectionHeader($r('app.string.assistant_editor_identity_section'),
+              $r('app.string.assistant_editor_identity_desc'))
             this.AssistantNameAvatarRow()
+
+            this.AssistantEditorSectionHeader($r('app.string.assistant_editor_prompt_section'),
+              $r('app.string.assistant_editor_prompt_desc'))
             this.AssistantPromptEditor()
+
+            this.AssistantEditorSectionHeader($r('app.string.assistant_editor_model_section'),
+              $r('app.string.assistant_editor_model_desc'))
             this.AssistantDefaultModelRow()
+            this.AssistantReasoningLevelRow()
+
+            this.AssistantEditorSectionHeader($r('app.string.assistant_editor_sampling_section'),
+              $r('app.string.assistant_editor_sampling_desc'))
             this.AssistantTemperatureRow()
             this.AssistantTopPRow()
             this.AssistantPresencePenaltyRow()
             this.AssistantFrequencyPenaltyRow()
-            this.AssistantReasoningLevelRow()
+
+            this.AssistantEditorSectionHeader($r('app.string.assistant_editor_context_section'),
+              $r('app.string.assistant_editor_context_desc'))
             this.AssistantContextMessageCountRow()
             this.AssistantMaxOutputTokensRow()
           }
@@ -2989,6 +3003,26 @@ struct Index {
     .width('100%')
     .height(56)
     .padding({ left: 16, right: 16 })
+  }
+
+  @Builder
+  private AssistantEditorSectionHeader(title: ResourceStr, description: ResourceStr) {
+    Column({ space: 4 }) {
+      Text(title)
+        .fontSize(15)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+
+      Text(description)
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding({ left: 4, right: 4, top: 2 })
   }
 
   @Builder
@@ -3214,12 +3248,13 @@ struct Index {
   private AssistantContextMessageCountRow() {
     Column({ space: 10 }) {
       Row() {
-        Text('上下文消息数')
+        Text($r('app.string.assistant_context_message_count'))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
-        Text(this.assistantFormContextMessageCount > 0 ? `${this.assistantFormContextMessageCount} 条` : '不限制')
+        Text(this.assistantFormContextMessageCount > 0 ? `${this.assistantFormContextMessageCount} 条` :
+          $r('app.string.assistant_context_unlimited'))
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -3232,7 +3267,7 @@ struct Index {
           this.assistantFormContextMessageCount = Math.round(value)
         })
 
-      Text('限制发送给模型的历史消息数量，0 为不限制')
+      Text($r('app.string.assistant_context_message_hint'))
         .fontSize(11)
         .fontColor($r('app.color.text_tertiary'))
         .width('100%')
@@ -3247,12 +3282,13 @@ struct Index {
   private AssistantMaxOutputTokensRow() {
     Column({ space: 10 }) {
       Row() {
-        Text('最大输出长度')
+        Text($r('app.string.assistant_max_output_tokens'))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
-        Text(this.assistantFormMaxOutputTokens > 0 ? `${this.assistantFormMaxOutputTokens}` : '默认')
+        Text(this.assistantFormMaxOutputTokens > 0 ? `${this.assistantFormMaxOutputTokens}` :
+          $r('app.string.assistant_max_output_default'))
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -3265,7 +3301,7 @@ struct Index {
           this.assistantFormMaxOutputTokens = Math.round(value)
         })
 
-      Text('限制模型单次回复的最大 token 数，0 为使用默认值')
+      Text($r('app.string.assistant_max_output_hint'))
         .fontSize(11)
         .fontColor($r('app.color.text_tertiary'))
         .width('100%')
