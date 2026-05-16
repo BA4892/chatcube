@@ -498,7 +498,9 @@ interface GoogleThinkingConfig {
 
 interface GoogleGenerationConfig {
   temperature: number
-  maxOutputTokens: number
+  // maxOutputTokens 留 optional, 助手未配置 max output (0 / undefined) 时直接不下发, 让 Google
+  // 模型走自身默认上限。
+  maxOutputTokens?: number
   thinkingConfig?: GoogleThinkingConfig
 }
 
@@ -1459,12 +1461,18 @@ export class AIApiService {
   }
 
   // 构建请求体
+  //
+  // maxTokens 语义:
+  // - undefined / 0 表示"无限制", 仅在 Anthropic Claude 路径会兜底成 64_000 (Anthropic API 强制要求);
+  // - OpenAI Chat / OpenAI Responses / Google Gemini 等路径在 0/undefined 时直接不下发对应字段,
+  //   让模型按自身上限输出, 避免被全局 4096 锁死。
+  // 调用方应将助手配置中的 maxOutputTokens (0 = 无限制) 直接透传到这里。
   private buildRequestBody(
     config: AIApiConfig,
     messages: RequestMessage[],
     model: string,
     temperature: number,
-    maxTokens: number,
+    maxTokens: number | undefined,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
     toolChoice?: string,
@@ -1522,9 +1530,11 @@ export class AIApiService {
       const googleBody: GoogleRequestBody = {
         contents: googleContents,
         generationConfig: {
-          temperature: temperature,
-          maxOutputTokens: maxTokens
+          temperature: temperature
         }
+      }
+      if (maxTokens !== undefined && maxTokens > 0) {
+        googleBody.generationConfig.maxOutputTokens = maxTokens
       }
       if (googleSystemInstruction !== undefined) {
         googleBody.systemInstruction = googleSystemInstruction
@@ -1607,11 +1617,15 @@ export class AIApiService {
         }
       }
 
+      // Anthropic Claude API 强制要求 max_tokens 字段, 助手未配置时按 RikkaHub 兜底 64_000,
+      // 覆盖 Claude 4 系列 64K 输出能力。其他 provider 不传字段就好, 不要在这里改成 4096。
+      const claudeMaxTokens = (maxTokens !== undefined && maxTokens > 0) ? maxTokens : 64_000
+
       if (systemPrompt !== '') {
         const bodyWithSystem: AnthropicRequestBody = {
           model: model,
           messages: anthropicMessages,
-          max_tokens: maxTokens,
+          max_tokens: claudeMaxTokens,
           temperature: temperature,
           system: systemPrompt
         }
@@ -1628,7 +1642,7 @@ export class AIApiService {
       const body: AnthropicRequestBody = {
         model: model,
         messages: anthropicMessages,
-        max_tokens: maxTokens,
+        max_tokens: claudeMaxTokens,
         temperature: temperature
       }
       this.applyAnthropicReasoningConfig(
@@ -1911,11 +1925,13 @@ export class AIApiService {
       temperature: temperature
     }
     if (this.requiresMaxCompletionTokens(model)) {
-      requestBody.max_completion_tokens = maxTokens
       // gpt-5 / o-系列推理模型只接受 temperature=1,自定义值会被官方接口拒绝(HTTP 400)。
       // 不下发字段即走默认 1,既不破坏行为又规避 400。
       requestBody.temperature = undefined
-    } else {
+      if (maxTokens !== undefined && maxTokens > 0) {
+        requestBody.max_completion_tokens = maxTokens
+      }
+    } else if (maxTokens !== undefined && maxTokens > 0) {
       requestBody.max_tokens = maxTokens
     }
 
@@ -2697,7 +2713,7 @@ export class AIApiService {
     onComplete: (toolCalls: ToolCall[]) => void,
     onError: (error: string) => void,
     temperature: number = 0.7,
-    maxTokens: number = 4096,
+    maxTokens: number | undefined,
     onReasoningData?: (content: string) => void,
     onImageData?: (base64Data: string, mimeType: string) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,

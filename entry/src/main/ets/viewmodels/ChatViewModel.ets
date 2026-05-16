@@ -103,8 +103,6 @@ interface ImageDownloadResult {
 
 // 助手未启用 temperature 时的全局回退值
 const DEFAULT_FALLBACK_TEMPERATURE: number = 0.7
-// 请求体默认 max_tokens 回退值
-const DEFAULT_FALLBACK_MAX_TOKENS: number = 4096
 
 // 聊天状态管理
 export class ChatViewModel {
@@ -225,6 +223,17 @@ export class ChatViewModel {
   async getMaxOutputTokens(): Promise<number> {
     const config = await this.getAssistantRuntimeConfig()
     return config.maxOutputTokens
+  }
+
+  // 解析"本次请求要发的 max output tokens", 0 / undefined 一律返回 undefined,
+  // 让 AIApiService 在各 provider 路径里决定是否下发字段(只有 Claude 必传时会兜底 64_000)。
+  // override 优先于助手配置, 用于 sendMessage 这种从 ChatSendFlow 传入显式覆盖值的入口。
+  private async resolveEffectiveMaxOutputTokens(override?: number): Promise<number | undefined> {
+    if (override !== undefined && override > 0) {
+      return override
+    }
+    const fromAssistant = await this.getMaxOutputTokens()
+    return fromAssistant > 0 ? fromAssistant : undefined
   }
 
   private notifySessionListChanged(): void {
@@ -1134,6 +1143,7 @@ export class ChatViewModel {
 
     // 发送流式请求
 	    const requestTemperature = await this.getRequestTemperature()
+	    const effectiveMaxOutputTokens = await this.resolveEffectiveMaxOutputTokens(maxOutputTokens)
 	    const httpRequest = this.aiApiService.streamChatRequest(
       apiConfig,
       requestMessages,
@@ -1272,7 +1282,7 @@ export class ChatViewModel {
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      maxOutputTokens !== undefined && maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_FALLBACK_MAX_TOKENS,
+      effectiveMaxOutputTokens,
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -1575,7 +1585,7 @@ ${webContext.content}
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      DEFAULT_FALLBACK_MAX_TOKENS,
+      await this.resolveEffectiveMaxOutputTokens(),
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -1910,7 +1920,7 @@ ${limitedSearchContext}
         this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
-      DEFAULT_FALLBACK_MAX_TOKENS,
+      await this.resolveEffectiveMaxOutputTokens(),
       (reasoningContent: string) => {
         if (cancelled) {
           return
@@ -2474,6 +2484,9 @@ ${limitedSearchContext}
       // - onComplete(toolCalls) → resolve({toolCalls, ...})
       // - onError(error)        → resolve({hasError: true, error, ...})
       // 之后外层根据 outcome 在 while 迭代里做 finalize / 工具执行 / 错误处理。
+      // Promise executor 是同步的, 不能在里面 await, 所以在循环每轮开始前先解析一次 effective
+      // max output tokens 再传进 streamChatRequestWithTools。
+      const roundMaxOutputTokens = await this.resolveEffectiveMaxOutputTokens()
       const outcome: ToolStreamRoundOutcome = await new Promise<ToolStreamRoundOutcome>((resolve) => {
         const httpRequest = this.aiApiService.streamChatRequestWithTools(
           apiConfig,
@@ -2558,7 +2571,7 @@ ${limitedSearchContext}
             })
           },
           requestTemperature,
-          DEFAULT_FALLBACK_MAX_TOKENS,
+          roundMaxOutputTokens,
           (reasoningContent: string) => {
             if (isCancelledFn()) {
               return

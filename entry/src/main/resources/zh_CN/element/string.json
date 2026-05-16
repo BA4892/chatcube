@@ -2234,11 +2234,11 @@
     },
     {
       "name": "assistant_max_output_default",
-      "value": "默认"
+      "value": "无限制"
     },
     {
       "name": "assistant_max_output_hint",
-      "value": "限制模型单次回复的最大 token 数，0 为使用默认值"
+      "value": "0 表示不限制(由模型按自身上限输出),Claude 等强制要求该字段的服务商会兜底为 64K"
     },
     {
       "name": "assistant_name_required",

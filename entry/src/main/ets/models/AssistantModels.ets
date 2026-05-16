@@ -25,7 +25,10 @@ export class Assistant {
   @Trace reasoningLevelPreference: string = ''
   // 上下文消息数量限制。0 = 不限制,发送全部历史;>0 = 仅发送最近 N 条消息
   @Trace contextMessageCount: number = 0
-  // 最大输出 token 数。0 = 使用默认值(4096);>0 = 限制模型输出长度
+  // 最大输出 token 数。
+  // 0 = "无限制",请求时不下发对应字段(max_tokens / max_output_tokens / maxOutputTokens),
+  //   让模型按自身上限输出;Anthropic Claude 强制要求该字段时会在 AIApiService 内兜底 64_000。
+  // >0 = 限制模型输出长度,请求时显式下发该值。
   @Trace maxOutputTokens: number = 0
   // 助手专属工具白名单。空数组 = 不设边界(继承全局所有工具);
   // 非空 = 仅允许列出的 toolId。搜索工具不在此白名单内(走独立 webSearch 通道)。
