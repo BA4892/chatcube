@@ -597,7 +597,8 @@ export struct ChatPage {
     this.webSearchConversationEnabled =
       loadResult.webSearchEnabled && this.availableSearchEngines.length > 0 && loadResult.webSearchConversationEnabled
     this.reasoningLevel = loadResult.reasoningLevel
-    this.inputText = loadResult.draftText
+    // initialDraft(来自推荐提示词点击)优先于持久化 draftText, 仅 prefill 不自动发送
+    this.inputText = loadResult.pendingInitialDraft !== '' ? loadResult.pendingInitialDraft : loadResult.draftText
     this.pendingAttachments = [...loadResult.draftAttachments]
     this.isNewChatTransition = loadResult.isNewChatTransition
     this.isNewEmptySession = loadResult.isNewEmptySession

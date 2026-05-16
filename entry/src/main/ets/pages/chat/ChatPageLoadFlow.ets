@@ -15,6 +15,7 @@ export class ChatPageLoadResult {
   reasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   providers: ModelProvider[] = []
   pendingInitialPrompt: string = ''
+  pendingInitialDraft: string = ''
   pendingInitialToolIds: string[] = []
   initialPromptAutoSent: boolean = false
   sessionId: string = ''
@@ -67,6 +68,9 @@ export class ChatPageLoadFlow {
     result.pendingInitialPrompt =
       routeParams !== null && routeParams !== undefined && routeParams.initialPrompt !== undefined ?
         routeParams.initialPrompt.trim() : ''
+    result.pendingInitialDraft =
+      routeParams !== null && routeParams !== undefined && routeParams.initialDraft !== undefined ?
+        routeParams.initialDraft : ''
     result.pendingInitialToolIds =
       this.deps.parseToolIdsFromRoute(routeParams !== null && routeParams !== undefined &&
         routeParams.initialToolIds !== undefined ? routeParams.initialToolIds : '')

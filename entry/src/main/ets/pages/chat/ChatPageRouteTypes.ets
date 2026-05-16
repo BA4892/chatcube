@@ -4,5 +4,6 @@ export interface ChatPageRouteParams {
   modelId?: string
   providerId?: string
   initialPrompt?: string
+  initialDraft?: string
   initialToolIds?: string
 }
