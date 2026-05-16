@@ -58,6 +58,15 @@ import {
 } from '../utils/TaskAlertUtils'
 import { IndexBottomTabItem } from '../components/index/IndexBottomTabItem'
 import { IndexEmptyStateCard } from '../components/index/IndexEmptyStateCard'
+import { IndexRecommendedPromptsCard } from '../components/index/IndexRecommendedPromptsCard'
+import {
+  getPresetPrompts,
+  parseOpenNewChatWithPromptPayload,
+  PresetPrompt,
+  resolvePromptBody
+} from '../config/PresetPrompts'
+import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay'
+import { getOnboardingViewModel } from '../viewmodels/OnboardingViewModel'
 import { IndexSettingsPanel } from '../components/index/IndexSettingsPanel'
 import { IndexSettingsSheetContent } from '../components/index/IndexSettingsSheetContent'
 import { IndexSessionListSection } from '../components/index/IndexSessionListSection'
@@ -131,6 +140,8 @@ struct Index {
   @Local notifyEnabled: boolean = true
   @Local notifyOnComplete: boolean = true
   @Local notifyOnFailed: boolean = true
+  // 首次启动引导。默认 true 防止 prefs 异步读取期间出现真页闪现
+  @Local onboardingActive: boolean = true
   @Local handAdaptiveEnabled: boolean = false
   @Local handAdaptiveNewChat: boolean = false
   @Local handAdaptiveUnsupported: boolean = false
@@ -244,6 +255,9 @@ struct Index {
   // 监听从服务卡片打开新聊天的事件
   private get openNewChatTimestamp(): number {
     return getAppUiState().openNewChatTimestamp
+  }
+  private get openNewChatWithPromptPayload(): string {
+    return getAppUiState().openNewChatWithPromptPayload
   }
   private get openSessionPayload(): string {
     return getAppUiState().openSessionPayload
@@ -663,6 +677,14 @@ struct Index {
     }
   }
 
+  onOpenNewChatWithPrompt(): void {
+    const payload = parseOpenNewChatWithPromptPayload(this.openNewChatWithPromptPayload)
+    if (payload === null || payload.ts <= 0 || payload.text === '') {
+      return
+    }
+    this.openChatRoute({ initialDraft: payload.text } as ChatPageRouteParams)
+  }
+
   onOpenSessionPayloadChanged(): void {
     this.handleOpenSessionPayload(this.openSessionPayload)
   }
@@ -716,6 +738,7 @@ struct Index {
       observeAppUiState([AppStorageKeys.WINDOW_WIDTH_VP, AppStorageKeys.WINDOW_HEIGHT_VP],
         (): void => this.onWindowMetricsChanged()),
       observeAppUiState(AppStorageKeys.OPEN_NEW_CHAT, (): void => this.onOpenNewChat()),
+      observeAppUiState(AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT, (): void => this.onOpenNewChatWithPrompt()),
       observeAppUiState(AppStorageKeys.OPEN_SESSION_PAYLOAD, (): void => this.onOpenSessionPayloadChanged()),
       observeAppUiState(AppStorageKeys.ACTIVE_CHAT_SESSION_ID, (): void => this.onActiveChatSessionIdChanged()),
       observeAppUiState(AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT,
@@ -798,6 +821,33 @@ struct Index {
     this.handleOpenSessionPayload(this.openSessionPayload)
     this.handleInAppTaskAlertPayload(this.inAppTaskAlertPayload)
     this.processPendingToolInteractionAlert(false)
+    this.initializeOnboarding()
+  }
+
+  private async initializeOnboarding(): Promise<void> {
+    try {
+      const completed = await this.preferencesService.getOnboardingCompleted()
+      if (completed) {
+        this.onboardingActive = false
+        return
+      }
+      getOnboardingViewModel().start(this.currentThemeMode, this.currentColorTheme)
+      this.onboardingActive = true
+    } catch (err) {
+      console.error('Index', `Failed to initialize onboarding: ${JSON.stringify(err)}`)
+      // 读取失败时默认跳过 onboarding 不阻塞用户
+      this.onboardingActive = false
+    }
+  }
+
+  private handleOnboardingCompleted(prefillText: string): void {
+    this.preferencesService.setOnboardingCompleted(true).catch((err: Object) => {
+      console.error('Index', `Failed to persist onboarding flag: ${JSON.stringify(err)}`)
+    })
+    this.onboardingActive = false
+    if (prefillText !== '') {
+      this.openChatRoute({ initialDraft: prefillText } as ChatPageRouteParams)
+    }
   }
 
   onPageShow(): void {
@@ -1781,6 +1831,14 @@ struct Index {
           preferType: SheetType.BOTTOM,
           title: { title: $r('app.string.assistant_default_model') }
         })
+
+      if (this.onboardingActive) {
+        OnboardingOverlay({
+          onCompleted: (prefillText: string): void => {
+            this.handleOnboardingCompleted(prefillText)
+          }
+        })
+      }
 
     }
     .width('100%')
@@ -4088,6 +4146,18 @@ struct Index {
               this.openChatRoute({} as ChatPageRouteParams)
             }
           })
+
+          IndexRecommendedPromptsCard({
+            prompts: getPresetPrompts(),
+            onPromptClick: (prompt: PresetPrompt): void => {
+              const bodyText = resolvePromptBody(prompt, getContext(this) as common.Context)
+              if (bodyText === '') {
+                return
+              }
+              this.openChatRoute({ initialDraft: bodyText } as ChatPageRouteParams)
+            }
+          })
+            .margin({ bottom: 24 })
         }
         .width('100%')
         .layoutWeight(1)
@@ -4379,8 +4449,23 @@ struct Index {
       },
       onOpenPrivacy: (): void => {
         this.openPrivacyPolicy()
+      },
+      onOpenReplayOnboarding: (): void => {
+        this.handleReplayOnboarding()
       }
     })
+  }
+
+  private handleReplayOnboarding(): void {
+    // 关掉设置 sheet,免得 overlay 被 sheet 盖住
+    if (this.showSettingsSheet) {
+      this.showSettingsSheet = false
+    }
+    this.preferencesService.setOnboardingCompleted(false).catch((err: Object) => {
+      console.error('Index', `Failed to reset onboarding flag: ${JSON.stringify(err)}`)
+    })
+    getOnboardingViewModel().start(this.currentThemeMode, this.currentColorTheme)
+    this.onboardingActive = true
   }
 
   @Builder

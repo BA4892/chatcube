@@ -2523,6 +2523,138 @@
     {
       "name": "hw_logout_confirm_cancel",
       "value": "取消"
+    },
+    {
+      "name": "onboarding_step1_title",
+      "value": "选择主题"
+    },
+    {
+      "name": "onboarding_step1_desc",
+      "value": "你可以稍后在设置里修改。"
+    },
+    {
+      "name": "onboarding_step1_color_label",
+      "value": "主题配色"
+    },
+    {
+      "name": "settings_replay_onboarding",
+      "value": "重新查看引导"
+    },
+    {
+      "name": "settings_replay_onboarding_desc",
+      "value": "再次体验首次启动指引"
+    },
+    {
+      "name": "onboarding_theme_system",
+      "value": "跟随系统"
+    },
+    {
+      "name": "onboarding_theme_light",
+      "value": "浅色"
+    },
+    {
+      "name": "onboarding_theme_dark",
+      "value": "深色"
+    },
+    {
+      "name": "onboarding_step2_title",
+      "value": "配置 AI 服务"
+    },
+    {
+      "name": "onboarding_step2_desc",
+      "value": "选一个服务商并粘贴 API Key,即可开始对话。"
+    },
+    {
+      "name": "onboarding_step2_apikey_label",
+      "value": "API Key"
+    },
+    {
+      "name": "onboarding_step2_apikey_placeholder",
+      "value": "粘贴你的 API Key"
+    },
+    {
+      "name": "onboarding_step3_title",
+      "value": "试试这些用法"
+    },
+    {
+      "name": "onboarding_step3_desc",
+      "value": "点击任一卡片,直接开始你的第一次对话。"
+    },
+    {
+      "name": "onboarding_next",
+      "value": "下一步"
+    },
+    {
+      "name": "onboarding_prev",
+      "value": "上一步"
+    },
+    {
+      "name": "onboarding_skip",
+      "value": "跳过"
+    },
+    {
+      "name": "onboarding_finish",
+      "value": "完成"
+    },
+    {
+      "name": "onboarding_skip_provider",
+      "value": "稍后配置"
+    },
+    {
+      "name": "onboarding_skip_prompts",
+      "value": "先逛逛"
+    },
+    {
+      "name": "onboarding_no_provider_hint",
+      "value": "还未配置服务商,点击去设置"
+    },
+    {
+      "name": "preset_prompt_writing_polish_title",
+      "value": "帮我润色文字"
+    },
+    {
+      "name": "preset_prompt_writing_polish_body",
+      "value": "请帮我润色下面这段文字,使其更通顺自然,但保留原意:\n\n[在此粘贴文字]"
+    },
+    {
+      "name": "preset_prompt_translate_zh_en_title",
+      "value": "中英互译"
+    },
+    {
+      "name": "preset_prompt_translate_zh_en_body",
+      "value": "请将以下内容在中文与英文之间互译,中文译为英文,英文译为中文:\n\n[在此粘贴文字]"
+    },
+    {
+      "name": "preset_prompt_code_explain_title",
+      "value": "解释这段代码"
+    },
+    {
+      "name": "preset_prompt_code_explain_body",
+      "value": "请逐行解释下面这段代码的功能、关键逻辑和潜在问题:\n\n```\n[在此粘贴代码]\n```"
+    },
+    {
+      "name": "preset_prompt_learn_explain5_title",
+      "value": "通俗解释概念"
+    },
+    {
+      "name": "preset_prompt_learn_explain5_body",
+      "value": "请用通俗易懂的语言解释这个概念,并举一个生活中的例子:\n\n[概念]"
+    },
+    {
+      "name": "preset_prompt_creative_brainstorm_title",
+      "value": "头脑风暴想法"
+    },
+    {
+      "name": "preset_prompt_creative_brainstorm_body",
+      "value": "围绕以下主题给我 10 个有创意的想法,每个简要说明亮点:\n\n[主题]"
+    },
+    {
+      "name": "preset_prompt_summary_long_title",
+      "value": "总结长文要点"
+    },
+    {
+      "name": "preset_prompt_summary_long_body",
+      "value": "请将下面的长文压缩成 200 字以内的要点摘要,保留核心结论:\n\n[正文]"
     }
   ]
 }

@@ -2471,6 +2471,138 @@
     {
       "name": "hw_logout_confirm_cancel",
       "value": "Cancel"
+    },
+    {
+      "name": "onboarding_step1_title",
+      "value": "Choose your theme"
+    },
+    {
+      "name": "onboarding_step1_desc",
+      "value": "You can change this anytime in Settings."
+    },
+    {
+      "name": "onboarding_step1_color_label",
+      "value": "Accent color"
+    },
+    {
+      "name": "settings_replay_onboarding",
+      "value": "Replay onboarding"
+    },
+    {
+      "name": "settings_replay_onboarding_desc",
+      "value": "Walk through the welcome tour again"
+    },
+    {
+      "name": "onboarding_theme_system",
+      "value": "Follow system"
+    },
+    {
+      "name": "onboarding_theme_light",
+      "value": "Light"
+    },
+    {
+      "name": "onboarding_theme_dark",
+      "value": "Dark"
+    },
+    {
+      "name": "onboarding_step2_title",
+      "value": "Set up an AI provider"
+    },
+    {
+      "name": "onboarding_step2_desc",
+      "value": "Pick a provider and paste its API key to start chatting."
+    },
+    {
+      "name": "onboarding_step2_apikey_label",
+      "value": "API Key"
+    },
+    {
+      "name": "onboarding_step2_apikey_placeholder",
+      "value": "Paste your API key"
+    },
+    {
+      "name": "onboarding_step3_title",
+      "value": "Try one of these"
+    },
+    {
+      "name": "onboarding_step3_desc",
+      "value": "Tap any card to start your first conversation."
+    },
+    {
+      "name": "onboarding_next",
+      "value": "Next"
+    },
+    {
+      "name": "onboarding_prev",
+      "value": "Back"
+    },
+    {
+      "name": "onboarding_skip",
+      "value": "Skip"
+    },
+    {
+      "name": "onboarding_finish",
+      "value": "Done"
+    },
+    {
+      "name": "onboarding_skip_provider",
+      "value": "Set up later"
+    },
+    {
+      "name": "onboarding_skip_prompts",
+      "value": "Just look around"
+    },
+    {
+      "name": "onboarding_no_provider_hint",
+      "value": "No provider configured — tap to set up"
+    },
+    {
+      "name": "preset_prompt_writing_polish_title",
+      "value": "Polish my writing"
+    },
+    {
+      "name": "preset_prompt_writing_polish_body",
+      "value": "Please polish the following text to make it more fluent and natural while keeping the original meaning:\n\n[paste text here]"
+    },
+    {
+      "name": "preset_prompt_translate_zh_en_title",
+      "value": "Translate ZH ↔ EN"
+    },
+    {
+      "name": "preset_prompt_translate_zh_en_body",
+      "value": "Please translate the following between Chinese and English — Chinese to English, English to Chinese:\n\n[paste text here]"
+    },
+    {
+      "name": "preset_prompt_code_explain_title",
+      "value": "Explain this code"
+    },
+    {
+      "name": "preset_prompt_code_explain_body",
+      "value": "Please walk through the following code line by line, covering what it does, key logic, and potential issues:\n\n```\n[paste code here]\n```"
+    },
+    {
+      "name": "preset_prompt_learn_explain5_title",
+      "value": "Explain it simply"
+    },
+    {
+      "name": "preset_prompt_learn_explain5_body",
+      "value": "Please explain this concept in plain language, with one real-life example:\n\n[concept]"
+    },
+    {
+      "name": "preset_prompt_creative_brainstorm_title",
+      "value": "Brainstorm ideas"
+    },
+    {
+      "name": "preset_prompt_creative_brainstorm_body",
+      "value": "Please give me 10 creative ideas around the following topic, with a brief highlight for each:\n\n[topic]"
+    },
+    {
+      "name": "preset_prompt_summary_long_title",
+      "value": "Summarize a long text"
+    },
+    {
+      "name": "preset_prompt_summary_long_body",
+      "value": "Please summarize the following long text into key points under 200 words, preserving the core conclusions:\n\n[content]"
     }
   ]
 }

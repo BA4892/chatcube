@@ -53,6 +53,7 @@ export struct IndexSettingsPanel {
   @Event onOpenSupportDevelopment: () => void = () => {}
   @Event onOpenPrivacy: () => void = () => {}
   @Event onOpenInvitation: () => void = () => {}
+  @Event onOpenReplayOnboarding: () => void = () => {}
 
   aboutToAppear(): void {
     try {
@@ -189,6 +190,13 @@ export struct IndexSettingsPanel {
         key: 'about',
         title: $r('app.string.settings_about'),
         items: [
+          {
+            key: 'replay_onboarding',
+            icon: $r('sys.symbol.arrow_clockwise'),
+            title: $r('app.string.settings_replay_onboarding'),
+            subtitle: $r('app.string.settings_replay_onboarding_desc'),
+            action: (): void => { this.onOpenReplayOnboarding() }
+          } as SettingsListItemModel,
           {
             key: SettingsRouteName.ABOUT,
             icon: $r('sys.symbol.exclamationmark_message'),

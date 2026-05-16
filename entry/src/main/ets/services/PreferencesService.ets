@@ -99,6 +99,9 @@ export class PreferenceKeys {
   static readonly HW_ACCOUNT_UNION_ID: string = 'hw_account_union_id'
   static readonly HW_ACCOUNT_NICK_NAME: string = 'hw_account_nick_name'
   static readonly HW_ACCOUNT_AVATAR_URI: string = 'hw_account_avatar_uri'
+
+  // 首次启动引导
+  static readonly ONBOARDING_COMPLETED: string = 'onboarding_completed'
 }
 
 // models.dev 默认基址，PreferenceKeys.MODELS_DEV_BASE_URL 未配置时使用
@@ -468,6 +471,16 @@ export class PreferencesService {
   // 设置光效颜色模式
   async setLightColorMode(mode: string): Promise<void> {
     await this.setString(PreferenceKeys.LIGHT_COLOR_MODE, mode)
+  }
+
+  // 获取首次启动引导完成态
+  async getOnboardingCompleted(): Promise<boolean> {
+    return await this.getBoolean(PreferenceKeys.ONBOARDING_COMPLETED, false)
+  }
+
+  // 设置首次启动引导完成态
+  async setOnboardingCompleted(completed: boolean): Promise<void> {
+    await this.setBoolean(PreferenceKeys.ONBOARDING_COMPLETED, completed)
   }
 }
 
