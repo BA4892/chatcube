@@ -2033,21 +2033,6 @@ ${limitedSearchContext}
     )
     aiMessage.isGenerating = true
 
-    // 检测启用了哪些工具（用于构建 system prompt）
-    let hasWebSearchTool = false
-    let hasScrapeWebTool = false
-    for (let i = 0; i < tools.length; i++) {
-      if (isSearchToolFunctionName(tools[i].function.name)) {
-        hasWebSearchTool = true
-      }
-      if (isScrapeWebFunctionName(tools[i].function.name)) {
-        hasScrapeWebTool = true
-      }
-      if (hasWebSearchTool && hasScrapeWebTool) {
-        break
-      }
-    }
-
     onAIMessageAdded(aiMessage)
     this.addPendingAIMessage(aiMessage, snapshotSessionId)
 
@@ -2069,7 +2054,11 @@ ${limitedSearchContext}
     // 构建请求消息列表
     const requestMessages: RequestMessage[] = []
     const currentTime = this.getCurrentTimeContext()
-    let toolUsageSystemPrompt = `当前时间: ${currentTime}
+    // 工具使用规则只保留与具体工具无关的通用约束。
+    // 工具特定的细节（如 search_web 怎么用关键词、scrape_web URL 原样传入、引用 Markdown 链接）
+    // 都已经写在 BuiltinTools.ets 的 ToolFunction.description 里，模型在 function calling 时直接看到，
+    // 不需要在 system 中再复述一遍，避免与 description 冲突或重复消耗 token。
+    const toolUsageSystemPrompt = `当前时间: ${currentTime}
 
 你是一个智能助手。你的首要任务是直接完成用户请求，只在确实需要访问外部信息或外部系统时才调用工具。
 
@@ -2077,20 +2066,7 @@ ${limitedSearchContext}
 - 绝大多数普通问答不需要调用工具，请优先用自身知识直接回答。
 - 只有在用户请求明确依赖外部实时信息、外部文档、外部仓库、外部笔记或其他外部系统状态时才调用工具。
 - 对外部系统有副作用的工具（例如创建、修改、删除、提交、上传）必须先确认用户意图与目标对象，不要擅自操作。
-- 编程、写作、翻译、数学、创意等纯生成任务，若不依赖外部状态，绝对不要调用任何工具。`
-    if (hasWebSearchTool) {
-      toolUsageSystemPrompt += `
-- 使用 search_web 前先评估是否真的需要联网；普通常识、稳定知识和纯生成任务优先用自身知识回答。
-- 生成 search_web.query 时使用聚焦关键词，优先保留用户原始实体、地点和时间；一次结果不足以回答时，可以用不同关键词继续搜索。
-- 每次搜索都有真实成本，避免重复查询同一含义的问题，拿到足够证据后整理最终回答。
-- 引用搜索结果时必须使用标准 Markdown 链接格式，例如 [新闻标题](https://example.com)，不要只写 [1]、[2] 这种不可点击编号。`
-      if (hasScrapeWebTool) {
-        toolUsageSystemPrompt += `
-- 当用户给出具体 URL、要求读取/总结/分析网页，或搜索摘要不足以回答时，使用 scrape_web 读取页面内容。
-- scrape_web.url 必须原样传入目标 URL，不要改写成标题、关键词或搜索语句。`
-      }
-    }
-    toolUsageSystemPrompt += `
+- 编程、写作、翻译、数学、创意等纯生成任务，若不依赖外部状态，绝对不要调用任何工具。
 - 若用户提到“今天/昨天/明天/现在/最新”等相对时间，请以当前时间为基准理解，不要编造不一致的绝对日期。
 - 工具返回后必须给出最终回答，不要在没有必要的情况下重复调用工具。`
     const finalToolUsageSystemPrompt = await this.buildRequestSystemPrompt(toolUsageSystemPrompt)

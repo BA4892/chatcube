@@ -2028,7 +2028,9 @@ export class WebSearchService {
 
   // 构建给 AI 的内容（限制总长度，避免上下文过大）
   private buildContentForAI(results: SearchResultItem[]): string {
-    let content = '以下是搜索结果:\n\n'
+    // 引用格式指引贴在搜索结果旁边，比塞进 system 更精准、不调用搜索时 0 token 占用。
+    // 与 BuiltinTools.ets 的工具 description 一致，避免两边出现冲突的指令。
+    let content = '以下是搜索结果。引用搜索结果时请使用标准 Markdown 链接格式 [title](url)，不要写成 [1]、[2] 这类编号。\n\n'
     const maxChars = 3800
 
     for (let i = 0; i < results.length; i++) {
