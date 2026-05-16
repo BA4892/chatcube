@@ -91,7 +91,7 @@ import {
 } from './chat/ChatMessageActionHelper'
 import { ChatPageRouteParams } from './chat/ChatPageRouteTypes'
 import { resolveModelSwitchReasoningLevel } from './chat/ChatReasoningStateHelper'
-import { getChatContentMaxWidth, LayoutSizeClass } from '../config/LayoutProfile'
+import { getChatContentMaxWidth, LayoutSizeClass, shouldUseIndexChatSplitLayout } from '../config/LayoutProfile'
 import { getAppUiState, observeAppUiState, setAppUiStateValue } from '../state/AppUiState'
 import { applyModelDraft } from '../utils/ModelDraftUtils'
 import { ToolPreviewEntry, buildToolArgumentsPreview } from '../utils/ToolPayloadSummaryUtils'
@@ -2074,16 +2074,9 @@ export struct ChatPage {
     return buildHdsTopNavigationTitleBarOptions(options)
   }
 
-  // 平板分栏（横屏 + 非 COMPACT）下复用 Index.ets 同名判定，
-  // 此处独立实现以避免引入跨页面依赖。
+  // 平板分栏复用 Index.ets 外层宽度判定，避免右栏按旧阈值保留分栏态。
   private isChatSplitLayout(): boolean {
-    if (this.layoutSizeClass === LayoutSizeClass.COMPACT) {
-      return false
-    }
-    if (this.windowWidthVp <= 0 || this.windowHeightVp <= 0) {
-      return false
-    }
-    return this.windowWidthVp > this.windowHeightVp
+    return shouldUseIndexChatSplitLayout(this.windowWidthVp, this.windowHeightVp, this.layoutSizeClass)
   }
 
   // 大屏分栏下削减模糊蒙版向下渐变带的视觉占位，

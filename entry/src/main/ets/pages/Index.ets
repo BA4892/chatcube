@@ -33,8 +33,15 @@ import {
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { SettingsRouteName } from '../config/SettingsRouteName'
 import {
+  CHAT_SPLIT_DETAIL_PANE_MIN_WIDTH,
+  CHAT_SPLIT_LIST_PANE_MIN_WIDTH,
+  clampIndexChatListPaneWidth,
+  getDefaultIndexChatListPaneWidth,
   getIndexChatListPaneWidth,
+  getIndexChatNavigationAvailableWidth,
   getIndexPageHorizontalPadding,
+  getMaxIndexChatListPaneWidth,
+  shouldUseIndexChatSplitLayout,
   LayoutSizeClass
 } from '../config/LayoutProfile'
 import { createButtonTouchHandler, getButtonScale } from '../utils/ButtonAnimationUtils'
@@ -177,6 +184,7 @@ struct Index {
   @Local assistantFormMaxOutputTokens: number = 0
   @Local currentChatRouteName: string = ''
   @Local chatTabTopSessionId: string = ''
+  @Local chatListPaneUserWidth: number = 0
   // 已经提示过的 pending 工具交互 id → 上次提示的时间戳。
   // 同一个 toolCall 在 cooldown 内不再重复提示, 避免用户切 Tab / tick 触发反复打扰。
   private recentlyPromptedToolInteractions: Map<string, number> = new Map()
@@ -186,6 +194,9 @@ struct Index {
   private snackBarQueue: SnackBarDisplayOptions[] = []
   private snackBarQueueTimerId: number = -1
   private pendingToolInteractionAlertTimerId: number = -1
+  private chatListPaneResizeSaveTimerId: number = -1
+  private chatListPaneResizeChangeCount: number = 0
+  private lastObservedChatListPaneWidth: number = 0
   private static readonly PENDING_TOOL_INTERACTION_PROMPT_COOLDOWN_MS: number = 60_000
   private get activeChatSessionId(): string {
     return getAppUiState().activeChatSessionId
@@ -335,6 +346,7 @@ struct Index {
   }
 
   onLayoutSizeClassChanged(): void {
+    this.resetChatListPaneResizeTracking()
     if (this.currentTabIndex === Index.TAB_SETTINGS && this.settingsNavPathStack.size() > 0) {
       this.syncSettingsDetailPresentationMode()
     }
@@ -354,6 +366,7 @@ struct Index {
   }
 
   onWindowMetricsChanged(): void {
+    this.resetChatListPaneResizeTracking()
     if (this.currentTabIndex === Index.TAB_SETTINGS) {
       this.syncSettingsDetailPresentationMode()
       if (this.isSettingsSplitMode()) {
@@ -374,8 +387,23 @@ struct Index {
     return this.windowWidthVp > this.windowHeightVp
   }
 
+  private getChatNavigationAvailableWidth(): number {
+    return getIndexChatNavigationAvailableWidth(this.windowWidthVp, this.layoutSizeClass)
+  }
+
   private getExpandedChatListWidth(): number {
-    return getIndexChatListPaneWidth(this.windowWidthVp)
+    if (!this.isChatSplitLayout()) {
+      return this.windowWidthVp
+    }
+    const availableWidth = this.getChatNavigationAvailableWidth()
+    if (this.chatListPaneUserWidth > 0) {
+      return clampIndexChatListPaneWidth(this.chatListPaneUserWidth, availableWidth)
+    }
+    return getDefaultIndexChatListPaneWidth(availableWidth)
+  }
+
+  private getExpandedChatListMaxWidth(): number {
+    return getMaxIndexChatListPaneWidth(this.getChatNavigationAvailableWidth())
   }
 
   private getExpandedPageHorizontalPadding(): number {
@@ -480,11 +508,84 @@ struct Index {
   }
 
   private isChatSplitLayout(): boolean {
-    return this.layoutSizeClass !== LayoutSizeClass.COMPACT && this.isLandscapeWindow()
+    return shouldUseIndexChatSplitLayout(this.windowWidthVp, this.windowHeightVp, this.layoutSizeClass)
   }
 
   private getChatNavigationMode(): NavigationMode {
     return this.isChatSplitLayout() ? NavigationMode.Split : NavigationMode.Stack
+  }
+
+  private toAreaWidthVp(width: Length): number {
+    if (typeof width === 'number') {
+      return width
+    }
+    if (typeof width === 'string') {
+      const parsed = Number.parseFloat(width)
+      if (Number.isNaN(parsed)) {
+        return 0
+      }
+      return parsed
+    }
+    return 0
+  }
+
+  private resetChatListPaneResizeTracking(): void {
+    this.chatListPaneResizeChangeCount = 0
+    this.lastObservedChatListPaneWidth = 0
+    this.clearChatListPaneResizeSaveTimer()
+  }
+
+  private clearChatListPaneResizeSaveTimer(): void {
+    if (this.chatListPaneResizeSaveTimerId === -1) {
+      return
+    }
+    clearTimeout(this.chatListPaneResizeSaveTimerId)
+    this.chatListPaneResizeSaveTimerId = -1
+  }
+
+  private handleChatListPaneAreaChange(newArea: Area): void {
+    if (!this.isChatSplitLayout()) {
+      this.resetChatListPaneResizeTracking()
+      return
+    }
+    const width = Math.round(this.toAreaWidthVp(newArea.width))
+    if (width <= 0) {
+      return
+    }
+    if (this.lastObservedChatListPaneWidth <= 0) {
+      this.lastObservedChatListPaneWidth = width
+      return
+    }
+    if (Math.abs(width - this.lastObservedChatListPaneWidth) < 1) {
+      return
+    }
+    this.lastObservedChatListPaneWidth = width
+    if (Math.abs(width - this.getExpandedChatListWidth()) < 2) {
+      return
+    }
+    this.chatListPaneResizeChangeCount++
+    if (this.chatListPaneResizeChangeCount < 3) {
+      return
+    }
+    this.scheduleSaveChatListPaneWidth(width)
+  }
+
+  private scheduleSaveChatListPaneWidth(width: number): void {
+    this.clearChatListPaneResizeSaveTimer()
+    this.chatListPaneResizeSaveTimerId = setTimeout((): void => {
+      this.chatListPaneResizeSaveTimerId = -1
+      if (!this.isChatSplitLayout()) {
+        return
+      }
+      const nextWidth = clampIndexChatListPaneWidth(width, this.getChatNavigationAvailableWidth())
+      if (Math.abs(nextWidth - this.chatListPaneUserWidth) < 1) {
+        return
+      }
+      this.chatListPaneUserWidth = nextWidth
+      this.preferencesService.setNumber(PreferenceKeys.CHAT_SPLIT_LIST_PANE_WIDTH, nextWidth).catch((error: Object) => {
+        console.error('Index', `Failed to save chat split pane width: ${JSON.stringify(error)}`)
+      })
+    }, 650)
   }
 
   private syncChatDetailPlaceholder(): void {
@@ -711,6 +812,7 @@ struct Index {
   aboutToDisappear(): void {
     this.unregisterAppUiStateObservers()
     this.clearPendingToolInteractionAlertTimer()
+    this.clearChatListPaneResizeSaveTimer()
     this.unsubscribeHoldingHand()
     if (this.settingsCallback !== null) {
       this.settingsManager.unregisterCallback(this.settingsCallback)
@@ -859,8 +961,14 @@ struct Index {
     this.materialType = this.settingsManager.getMaterialType()
     this.materialLevel = this.settingsManager.getMaterialLevel()
     this.lightColorMode = this.settingsManager.getLightColorMode()
+    await this.loadChatListPaneWidthPreference()
     await this.loadHandAdaptiveSettings()
     this.syncSettingsSummaryToStorage()
+  }
+
+  private async loadChatListPaneWidthPreference(): Promise<void> {
+    const width = await this.preferencesService.getNumber(PreferenceKeys.CHAT_SPLIT_LIST_PANE_WIDTH, 0)
+    this.chatListPaneUserWidth = width >= CHAT_SPLIT_LIST_PANE_MIN_WIDTH ? Math.round(width) : 0
   }
 
   private patchAssistantInMemory(assistant: Assistant): void {
@@ -2155,7 +2263,14 @@ struct Index {
   @Builder
   ChatTab() {
     HdsNavigation(this.chatTabNavStack) {
-      this.ChatListPanel()
+      Column() {
+        this.ChatListPanel()
+      }
+      .width('100%')
+      .height('100%')
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.handleChatListPaneAreaChange(newArea)
+      })
     }
     .width('100%')
     .height('100%')
@@ -2171,6 +2286,16 @@ struct Index {
     .hideToolBar(true)
     .mode(this.getChatNavigationMode())
     .navBarWidth(this.isChatSplitLayout() ? this.getExpandedChatListWidth() : this.windowWidthVp)
+    .navBarWidthRange({
+      minWidth: CHAT_SPLIT_LIST_PANE_MIN_WIDTH,
+      maxWidth: this.getExpandedChatListMaxWidth()
+    })
+    .minContentWidth(CHAT_SPLIT_DETAIL_PANE_MIN_WIDTH)
+    .enableDragBar(this.isChatSplitLayout())
+    .enableModeChangeAnimation(false)
+    .onNavigationModeChange((_mode: NavigationMode) => {
+      this.resetChatListPaneResizeTracking()
+    })
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 

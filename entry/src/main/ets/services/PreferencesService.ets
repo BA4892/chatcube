@@ -76,6 +76,9 @@ export class PreferenceKeys {
   // 聊天输入设置
   static readonly CHAT_INPUT_ENTER_KEY_SEND: string = 'chat_input_enter_key_send'
 
+  // 平板聊天分栏
+  static readonly CHAT_SPLIT_LIST_PANE_WIDTH: string = 'chat_split_list_pane_width'
+
   // 材质效果
   static readonly MATERIAL_TYPE: string = 'material_type'
   static readonly MATERIAL_LEVEL: string = 'material_level'
