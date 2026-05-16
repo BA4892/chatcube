@@ -75,22 +75,6 @@ export enum ProviderDetailPresentationMode {
   DETAIL_PANE = 'detailPane'
 }
 
-const PROVIDER_DETAIL_PANE_BOTTOM_BAR_BASE_HEIGHT = 60
-const PROVIDER_DETAIL_PANE_BOTTOM_BAR_EXTRA_SPACING = 12
-
-export function getProviderDetailPaneBottomBarHeight(bottomAvoidHeightVp: number): number {
-  return PROVIDER_DETAIL_PANE_BOTTOM_BAR_BASE_HEIGHT + bottomAvoidHeightVp
-}
-
-export function getProviderDetailPaneBottomInset(bottomAvoidHeightVp: number,
-  presentationMode: ProviderDetailPresentationMode): number {
-  if (presentationMode !== ProviderDetailPresentationMode.DETAIL_PANE) {
-    return 0
-  }
-  // Reserve trailing content space only when the bottom tabs overlay the detail pane body.
-  return getProviderDetailPaneBottomBarHeight(bottomAvoidHeightVp) + PROVIDER_DETAIL_PANE_BOTTOM_BAR_EXTRA_SPACING
-}
-
 enum ProviderModelRenderRowType {
   GROUP_HEADER = 0,
   MODEL = 1
@@ -984,14 +968,6 @@ export struct ProviderDetailPanel {
       this.windowHeightVp, (): void => this.StandaloneTitleStackBuilder())
   }
 
-  private getDetailPaneBottomBarHeight(): number {
-    return getProviderDetailPaneBottomBarHeight(this.getBottomAvoidHeightVp())
-  }
-
-  private getDetailPaneBottomInset(): number {
-    return getProviderDetailPaneBottomInset(this.getBottomAvoidHeightVp(), this.presentationMode)
-  }
-
   private getCompactSettingsTabsInset(): number {
     return getSettingsPageCompactTabsTotalInset(this.getBottomAvoidHeightVp(), this.settingsDetailPresentationMode)
   }
@@ -1003,7 +979,7 @@ export struct ProviderDetailPanel {
 
   private getConfigContentBottomSpacerHeight(): number {
     if (this.isDetailPanePresentation()) {
-      return this.getDetailPaneBottomInset()
+      return 12 + this.getBottomAvoidHeightVp()
     }
     if (this.shouldAvoidCompactSettingsTabs()) {
       return 24 + this.getCompactSettingsTabsInset()
@@ -1013,7 +989,7 @@ export struct ProviderDetailPanel {
 
   private getModelsListBottomSpacerHeight(): number {
     if (this.isDetailPanePresentation()) {
-      return this.getDetailPaneBottomInset()
+      return 12 + this.getBottomAvoidHeightVp()
     }
     if (this.shouldAvoidCompactSettingsTabs()) {
       return 24 + this.getCompactSettingsTabsInset()
@@ -1139,6 +1115,7 @@ export struct ProviderDetailPanel {
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
           .align(Alignment.Top)
+          .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
         } else {
           Column() {
             this.ModelsCard()
@@ -1147,18 +1124,13 @@ export struct ProviderDetailPanel {
           .layoutWeight(1)
         }
       } else if (this.isDetailPanePresentation()) {
-        Stack({ alignContent: Alignment.BottomEnd }) {
-          Stack({ alignContent: Alignment.TopStart }) {
-            this.DetailPaneConfigContent()
-            this.DetailPaneModelsContent()
-          }
-          .width('100%')
-          .height('100%')
+        this.PageSectionTabs()
 
-          this.DetailPaneBottomTabs()
+        if (this.currentTabIndex === 0) {
+          this.DetailPaneConfigContent()
+        } else {
+          this.DetailPaneModelsContent()
         }
-        .width('100%')
-        .layoutWeight(1)
       } else {
         Tabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
           TabContent() {
@@ -1258,7 +1230,7 @@ export struct ProviderDetailPanel {
 
   @Builder
   private DetailPaneConfigContent() {
-    Scroll() {
+    Scroll(this.pageConfigScroller) {
       Column() {
         this.ApiConfigCard()
 
@@ -1267,11 +1239,11 @@ export struct ProviderDetailPanel {
       .width('100%')
     }
     .width('100%')
-    .height('100%')
+    .layoutWeight(1)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .align(Alignment.Top)
-    .visibility(this.currentTabIndex === 0 ? Visibility.Visible : Visibility.Hidden)
+    .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -1280,62 +1252,7 @@ export struct ProviderDetailPanel {
       this.ModelsCard()
     }
     .width('100%')
-    .height('100%')
-    .visibility(this.currentTabIndex === 1 ? Visibility.Visible : Visibility.Hidden)
-  }
-
-  @Builder
-  private DetailPaneBottomTabs() {
-    Column() {
-      Row({ space: 12 }) {
-        this.DetailPaneBottomTabButton(0, $r('sys.symbol.gearshape'), $r('app.string.provider_tab_config'))
-        this.DetailPaneBottomTabButton(1, $r('sys.symbol.satellite_map'), $r('app.string.provider_tab_models'))
-      }
-      .width('100%')
-      .padding({
-        left: 24,
-        right: 24,
-        top: 8,
-        bottom: 8 + this.getBottomAvoidHeightVp()
-      })
-    }
-    .width('100%')
-    .height(this.getDetailPaneBottomBarHeight())
-    .backgroundColor(getAppUiState().themeBackground)
-    .backgroundBlurStyle(BlurStyle.Thin)
-    .border({ width: { top: 1 }, color: $r('app.color.divider') })
-  }
-
-  @Builder
-  private DetailPaneBottomTabButton(index: number, icon: Resource, title: Resource) {
-    Button() {
-      Column({ space: 4 }) {
-        SymbolGlyph(icon)
-          .fontSize(18)
-          .fontColor([this.currentTabIndex === index ? this.themePrimary : $r('app.color.text_tertiary')])
-
-        Text(title)
-          .fontSize(12)
-          .fontWeight(this.currentTabIndex === index ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.currentTabIndex === index ? this.themePrimary : $r('app.color.text_secondary'))
-      }
-      .width('100%')
-      .height(44)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .type(ButtonType.Normal)
-    .stateEffect(false)
     .layoutWeight(1)
-    .padding(0)
-    .borderRadius(16)
-    .backgroundColor(this.currentTabIndex === index ? this.themePrimarySubtleBackground : Color.Transparent)
-    .onClick(() => {
-      if (this.currentTabIndex === index) {
-        return
-      }
-      this.currentTabIndex = index
-    })
   }
 
   @Builder
