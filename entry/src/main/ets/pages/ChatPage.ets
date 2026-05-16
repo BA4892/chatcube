@@ -2232,15 +2232,26 @@ export struct ChatPage {
           .height('100%')
           .backgroundColor(this.themeBackground)
 
-        // 编辑模式点击层 - 点击空白处取消编辑
+        // 编辑模式覆盖层 - 点击/滑动空白处都取消编辑
+        // 滑动不再传透给 List,List 不会跟随滚动(已与产品确认)
         if (this.isEditingMessage) {
           Column()
             .width('100%')
             .height('100%')
             .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.handleCancelEdit()
-            })
+            .gesture(
+              GestureGroup(GestureMode.Exclusive,
+                // PanGesture 在前: 手指移动超过阈值时胜出, TapGesture 被取消
+                PanGesture({ fingers: 1, distance: 8 })
+                  .onActionStart(() => {
+                    this.handleCancelEdit()
+                  }),
+                TapGesture({ count: 1 })
+                  .onAction(() => {
+                    this.handleCancelEdit()
+                  })
+              )
+            )
         }
 
         // 快速到顶部按钮
@@ -2945,7 +2956,7 @@ export struct ChatPage {
   }
 
   private shouldShowScrollToTopButton(): boolean {
-    if (this.hasDraftContent() || this.showImagePreview) {
+    if (this.isEditingMessage || this.hasDraftContent() || this.showImagePreview) {
       return false
     }
     return shouldShowScrollToTopButtonForChat(
@@ -2958,11 +2969,13 @@ export struct ChatPage {
   }
 
   private shouldShowScrollToBottomLoadingButton(): boolean {
-    return !this.hasDraftContent() && !this.showImagePreview && !this.isAtBottom && !this.isMultiSelectMode && this.isSending
+    return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
+      !this.isAtBottom && !this.isMultiSelectMode && this.isSending
   }
 
   private shouldShowStandardScrollToBottomButton(): boolean {
-    return !this.hasDraftContent() && !this.showImagePreview && this.messages.length > 0 && !this.isAtBottom &&
+    return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
+      this.messages.length > 0 && !this.isAtBottom &&
       !this.isMultiSelectMode && !this.isSending
   }
 
@@ -3620,6 +3633,10 @@ export struct ChatPage {
     this.editingWebSearchEnabled = false
     this.editingSelectedToolIds = []
     this.editingReasoningLevel = ReasoningLevel.OFF
+    // 允许下次进入编辑时 ChatInputBar @Monitor('autoFocus') 重新触发
+    this.autoFocusInput = false
+    // 收键盘 + clearFocus + stopInputSession, 避免 textarea 残留焦点引发键盘异常弹起
+    this.safeStopInputSession()
   }
 
   // 内联编辑模式：保存并发送
