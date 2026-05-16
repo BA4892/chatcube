@@ -1,5 +1,13 @@
 import { IndexEmptyStateCard } from '../components/index/IndexEmptyStateCard'
+import { IndexRecommendedPromptsCard } from '../components/index/IndexRecommendedPromptsCard'
+import {
+  buildOpenNewChatWithPromptPayload,
+  getPresetPrompts,
+  PresetPrompt,
+  resolvePromptBody
+} from '../config/PresetPrompts'
 import { AppStorageKeys } from '../config/AppStorageKeys'
+import { common } from '@kit.AbilityKit'
 import { getAppUiState, setAppUiStateValue } from '../state/AppUiState'
 
 @ComponentV2
@@ -21,6 +29,19 @@ struct ChatDetailEmptyPage {
             setAppUiStateValue(AppStorageKeys.OPEN_NEW_CHAT, Date.now())
           }
         })
+
+        IndexRecommendedPromptsCard({
+          prompts: getPresetPrompts(),
+          onPromptClick: (prompt: PresetPrompt): void => {
+            const bodyText = resolvePromptBody(prompt, getContext(this) as common.Context)
+            if (bodyText === '') {
+              return
+            }
+            setAppUiStateValue(AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT,
+              buildOpenNewChatWithPromptPayload(bodyText))
+          }
+        })
+          .margin({ bottom: 24 })
       }
       .width('100%')
       .height('100%')

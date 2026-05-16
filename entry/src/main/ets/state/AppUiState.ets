@@ -9,6 +9,7 @@ const APP_UI_STATE_KEY = 'chatbox_app_ui_state'
 @ObservedV2
 export class AppUiState {
   @Trace openNewChatTimestamp: number = 0
+  @Trace openNewChatWithPromptPayload: string = ''
   @Trace openSessionPayload: string = ''
   @Trace sessionListRefreshAt: number = 0
   @Trace assistantAvatarRefreshAt: number = 0
@@ -71,6 +72,9 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
   switch (key) {
     case AppStorageKeys.OPEN_NEW_CHAT:
       state.openNewChatTimestamp = value as number
+      return
+    case AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT:
+      state.openNewChatWithPromptPayload = value as string
       return
     case AppStorageKeys.OPEN_SESSION_PAYLOAD:
       state.openSessionPayload = value as string
@@ -224,6 +228,8 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
 function createAppUiStateFromStorage(): AppUiState {
   const state = new AppUiState()
   applyAppUiStateValue(state, AppStorageKeys.OPEN_NEW_CHAT, readStorageValue<number>(AppStorageKeys.OPEN_NEW_CHAT, 0))
+  applyAppUiStateValue(state, AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT,
+    readStorageValue<string>(AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT, ''))
   applyAppUiStateValue(state, AppStorageKeys.OPEN_SESSION_PAYLOAD,
     readStorageValue<string>(AppStorageKeys.OPEN_SESSION_PAYLOAD, ''))
   applyAppUiStateValue(state, AppStorageKeys.SESSION_LIST_REFRESH_AT,
@@ -330,6 +336,7 @@ export function syncAppUiStateFromStorage(): void {
   const state = getAppUiState()
   const freshState = createAppUiStateFromStorage()
   state.openNewChatTimestamp = freshState.openNewChatTimestamp
+  state.openNewChatWithPromptPayload = freshState.openNewChatWithPromptPayload
   state.openSessionPayload = freshState.openSessionPayload
   state.sessionListRefreshAt = freshState.sessionListRefreshAt
   state.assistantAvatarRefreshAt = freshState.assistantAvatarRefreshAt
@@ -410,6 +417,8 @@ function resolveAppUiStatePath(path: string): string {
   switch (path) {
     case AppStorageKeys.OPEN_NEW_CHAT:
       return 'openNewChatTimestamp'
+    case AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT:
+      return 'openNewChatWithPromptPayload'
     case AppStorageKeys.OPEN_SESSION_PAYLOAD:
       return 'openSessionPayload'
     case AppStorageKeys.SESSION_LIST_REFRESH_AT:

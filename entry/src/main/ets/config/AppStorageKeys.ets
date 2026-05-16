@@ -2,6 +2,7 @@
 export class AppStorageKeys {
   // 事件通知类键
   static readonly OPEN_NEW_CHAT: string = 'openNewChat'
+  static readonly OPEN_NEW_CHAT_WITH_PROMPT: string = 'openNewChatWithPrompt'
   static readonly OPEN_SESSION_PAYLOAD: string = 'openSessionPayload'
   static readonly SESSION_LIST_REFRESH_AT: string = 'session_list_refresh_at'
   static readonly ASSISTANT_AVATAR_REFRESH_AT: string = 'assistant_avatar_refresh_at'
