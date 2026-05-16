@@ -33,6 +33,7 @@ export struct ChatMessageListSection {
   @Param themeRenderKey: string = ''
   @Param contentMaxWidth: number = 99999
   @Param syncVersion: number = 0
+  @Param syncMessageId: string = ''
   @Event onRegenerate: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onDelete: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onEdit: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
@@ -66,7 +67,7 @@ export struct ChatMessageListSection {
 
   @Monitor('syncVersion')
   onSyncVersionChange(): void {
-    this.syncMessageRows()
+    this.syncMessageRows(false, this.syncMessageId)
   }
 
   @Monitor('selectedMessageIds')
@@ -210,7 +211,83 @@ export struct ChatMessageListSection {
     row.assistantAvatarCacheKey = assistantAvatarCacheKey
   }
 
-  private syncMessageRows(forceReload: boolean = false): void {
+  private syncSingleMessageRow(changedMessageId: string): boolean {
+    if (changedMessageId === '' || this.messageRows.length !== this.messages.length) {
+      return false
+    }
+    let changedIndex = -1
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id === changedMessageId) {
+        changedIndex = i
+        break
+      }
+    }
+    if (changedIndex < 0) {
+      return false
+    }
+    const existingRow = this.messageRows[changedIndex]
+    const message = this.messages[changedIndex]
+    if (existingRow === undefined || existingRow.stableId !== message.id) {
+      return false
+    }
+    const isSelected = this.selectedMessageIds.includes(message.id)
+    const isEditing = this.isEditingMessage && this.editingMessageId === message.id
+    const isDimmed = this.isEditingMessage && !isEditing
+    const showDateDivider = this.checkShouldShowDateDivider(message, changedIndex)
+    const showHeader = this.checkShouldShowMessageHeader(message, changedIndex)
+    const contentRenderSignature = buildChatMessageContentRenderSignature(
+      message,
+      isEditing,
+      this.currentModelId,
+      this.chatFontSize,
+      this.themeRenderKey,
+      this.inputText,
+      this.pendingAttachments
+    )
+    const renderSignature = buildChatMessageRowRenderSignature(
+      message,
+      showDateDivider,
+      showHeader,
+      this.isMultiSelectMode,
+      isSelected,
+      isEditing,
+      isDimmed,
+      this.currentModelId,
+      this.chatFontSize,
+      this.themeRenderKey,
+      this.inputText,
+      this.pendingAttachments,
+      this.assistantAvatarSymbol,
+      this.assistantAvatarColor,
+      this.assistantAvatarCacheKey,
+      contentRenderSignature
+    )
+    const rowChanged = existingRow.renderSignature !== renderSignature ||
+      existingRow.contentRenderSignature !== contentRenderSignature
+    this.updateMessageRowData(
+      existingRow,
+      message,
+      showDateDivider,
+      showHeader,
+      isSelected,
+      isEditing,
+      isDimmed,
+      renderSignature,
+      contentRenderSignature,
+      this.assistantAvatarSymbol,
+      this.assistantAvatarColor,
+      this.assistantAvatarCacheKey
+    )
+    if (rowChanged) {
+      this.messageRowDataSource.setItems(this.messageRows, false, [changedIndex])
+    }
+    return true
+  }
+
+  private syncMessageRows(forceReload: boolean = false, changedMessageId: string = ''): void {
+    if (!forceReload && this.syncSingleMessageRow(changedMessageId)) {
+      return
+    }
     const selectedMessageIdSet = new Set<string>(this.selectedMessageIds)
     const existingRowMap = new Map<string, ChatMessageRowData>()
     for (let i = 0; i < this.messageRows.length; i++) {
@@ -249,7 +326,8 @@ export struct ChatMessageListSection {
         this.pendingAttachments,
         this.assistantAvatarSymbol,
         this.assistantAvatarColor,
-        this.assistantAvatarCacheKey
+        this.assistantAvatarCacheKey,
+        contentRenderSignature
       )
       const existingRow = existingRowMap.get(message.id)
       if (existingRow !== undefined) {

@@ -9,7 +9,7 @@ export interface ChatStopFlowDependencies {
   getCurrentTaskId: () => string
   onSetCurrentTaskId: (taskId: string) => void
   onCancelWebSearchRequests: () => void
-  onSyncMessages: () => void
+  onSyncMessages: (changedMessageId?: string) => void
   onSetSending: (value: boolean) => void
   onSetLoading: (value: boolean) => void
   onClearForcedToolIds: () => void
@@ -76,5 +76,7 @@ export class ChatStopFlow {
     if (lastMessage.isSearching) {
       lastMessage.isSearching = false
     }
+    // 停止后不再有流式吐字，通知列表刷新该行以进入最终 Markdown 渲染态。
+    this.deps.onSyncMessages(lastMessage.id)
   }
 }

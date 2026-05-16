@@ -302,6 +302,7 @@ export struct ChatPage {
   @Local editingSelectedToolIds: string[] = []
   @Local editingReasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   @Local messageListSyncVersion: number = 0
+  @Local messageListSyncMessageId: string = ''
   private scroller: Scroller = new Scroller()
   private maxScrollOffset: number = 0
   private readonly floatingScrollButtonBottomOffsetVp: number = 128
@@ -581,7 +582,8 @@ export struct ChatPage {
     this.markMessageListChanged()
   }
 
-  private markMessageListChanged(): void {
+  private markMessageListChanged(changedMessageId: string = ''): void {
+    this.messageListSyncMessageId = changedMessageId
     this.messageListSyncVersion = this.messageListSyncVersion + 1
   }
 
@@ -1574,8 +1576,8 @@ export struct ChatPage {
       onSetCurrentTaskId: (taskId: string): void => {
         this.currentTaskId = taskId
       },
-      onSyncMessages: (): void => {
-        this.markMessageListChanged()
+      onSyncMessages: (changedMessageId?: string): void => {
+        this.markMessageListChanged(changedMessageId ?? '')
       },
       onScrollBottom: (): void => {
         this.getScrollUiFlow().alignToBottomIfPinned()
@@ -1620,8 +1622,8 @@ export struct ChatPage {
       onCancelWebSearchRequests: (): void => {
         this.webSearchService.cancelAllRequests()
       },
-      onSyncMessages: (): void => {
-        this.markMessageListChanged()
+      onSyncMessages: (changedMessageId?: string): void => {
+        this.markMessageListChanged(changedMessageId ?? '')
       },
       onSetSending: (value: boolean): void => {
         this.isSending = value
@@ -2164,6 +2166,7 @@ export struct ChatPage {
           chatFontSize: this.chatFontSize,
           themeRenderKey: this.messageThemeRenderKey,
           contentMaxWidth: this.getChatContentMaxWidth(),
+          syncMessageId: this.messageListSyncMessageId,
           onRegenerate: (message: ChatMessage): void => {
             this.handleRegenerate(message)
           },
@@ -2896,7 +2899,11 @@ export struct ChatPage {
     if (this.showAttachmentPicker) {
       return 0
     }
-    return this.px2vp(this.bottomAvoidHeight)
+    const systemBottomInset = this.px2vp(this.bottomAvoidHeight)
+    if (this.isChatSplitLayout()) {
+      return Math.min(Math.max(systemBottomInset, 0), 8)
+    }
+    return Math.max(systemBottomInset, 8)
   }
 
   private getFloatingOverlayBottomAvoidHeightVp(): number {
@@ -3054,7 +3061,7 @@ export struct ChatPage {
       return measuredHeight
     }
     return getListBottomPaddingForChat(this.pendingAttachments.length, this.isEditingMessage,
-      this.px2vp(this.bottomAvoidHeight))
+      this.getComposerBottomAvoidHeightVp())
   }
 
   // 获取预览气泡的时间文本

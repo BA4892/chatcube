@@ -216,6 +216,7 @@ export struct MessageBubble {
   private cachedPreviewImageGridRows: number[] = []
   private cachedMessageImageGridRows: number[] = []
   private derivedCacheSignature: string = ''
+  private finalizedMarkdownRenderTextCache: Map<string, string> = new Map()
 
   @Event onRegenerate: () => void = () => {}
   @Event onCopy: () => void = () => {}
@@ -416,6 +417,7 @@ export struct MessageBubble {
     this.currentTranslateLang = ''
     this.partMarkdownControllers.clear()
     this.partMarkdownControllerTexts.clear()
+    this.finalizedMarkdownRenderTextCache.clear()
   }
 
   // 流式拿到第一段 reasoning 时启动定时器,每 120ms 刷新已思考时长,驱动 UI 计数和 shimmer
@@ -553,8 +555,8 @@ export struct MessageBubble {
     this.cachedHasMessageTextContent = this.message.content.trim().length > 0
     this.cachedHasToolbarPayload = this.cachedHasMessageTextContent || this.message.hasAttachments()
     this.cachedCurrentMessageModelIconResourcePath = this.computeCurrentMessageModelIconResourcePath()
-    this.cachedReadonlyMessageContent = this.convertTaskListToReadonly(this.message.content)
-    this.cachedReadonlyReasoningContent = this.convertTaskListToReadonly(this.message.reasoningContent)
+    this.cachedReadonlyMessageContent = this.getMarkdownRenderText(this.message.content)
+    this.cachedReadonlyReasoningContent = this.getMarkdownRenderText(this.message.reasoningContent)
     this.cachedReadonlyTranslatedText = this.convertTaskListToReadonly(this.translatedText)
     this.cachedHasPreviewSegments = !this.message.isGenerating && this.hasPreviewableCodeBlocks(this.message.content)
     this.cachedContentSegments = this.cachedHasPreviewSegments ? this.splitContentToSegments(this.message.content) : []
@@ -1119,6 +1121,24 @@ export struct MessageBubble {
   private getReadonlyTranslatedText(): string {
     this.ensureDerivedRenderCaches()
     return this.cachedReadonlyTranslatedText
+  }
+
+  private isMarkdownOutputFinalized(): boolean {
+    // 手动停止会把 isGenerating 置为 false；只要不再吐字，就进入最终态规范化。
+    return !this.message.isGenerating
+  }
+
+  private getMarkdownRenderText(content: string): string {
+    if (!this.isMarkdownOutputFinalized()) {
+      return content
+    }
+    const cachedText = this.finalizedMarkdownRenderTextCache.get(content)
+    if (cachedText !== undefined) {
+      return cachedText
+    }
+    const renderText = this.convertTaskListToReadonly(content)
+    this.finalizedMarkdownRenderTextCache.set(content, renderText)
+    return renderText
   }
 
   private shouldShowUserToolbar(): boolean {
@@ -2477,8 +2497,8 @@ export struct MessageBubble {
 	          )
 	        } else {
 	          Markdown({
-	            controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.convertTaskListToReadonly(part.text)),
-	            text: this.convertTaskListToReadonly(part.text)
+	            controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.getMarkdownRenderText(part.text)),
+	            text: this.getMarkdownRenderText(part.text)
 	          })
 	            .width('100%')
 	            .backgroundColor(Color.Transparent)
@@ -2596,7 +2616,7 @@ export struct MessageBubble {
         Column() {
           Markdown({
             controller: this.reasoningMarkdownController,
-            text: this.convertTaskListToReadonly(step.text)
+            text: this.getMarkdownRenderText(step.text)
           })
             .constraintSize({ maxWidth: '100%' })
             .backgroundColor(Color.Transparent)

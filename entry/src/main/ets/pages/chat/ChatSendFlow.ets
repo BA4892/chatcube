@@ -61,7 +61,7 @@ export interface ChatSendFlowDependencies {
   onBeforeSend: () => void
   onSetSending: (value: boolean) => void
   onSetCurrentTaskId: (taskId: string) => void
-  onSyncMessages: () => void
+  onSyncMessages: (changedMessageId?: string) => void
   onScrollBottom: () => void
   onSetNewEmptySession: (value: boolean) => void
   onDraftCommitted: () => void
@@ -349,7 +349,7 @@ export class ChatSendFlow {
     // 在 LazyForEach 嵌套场景下也无法精确刷新 item 内部 - 第一轮 reasoning 之后 timeline
     // 看似"卡住"就是这条路径漏掉导致的(handleAIMessageAdded 调过一次 onSyncMessages,
     // 之后 streaming 全程只走 sync 不递增 version)。
-    this.deps.onSyncMessages()
+    this.deps.onSyncMessages(aiMessage.id)
     this.deps.onScrollBottom()
   }
 

@@ -69,6 +69,9 @@ export function toListScrollIndexForMessage(messageIndex: number): number {
 }
 
 export function syncChatMessageFromSource(target: ChatMessage, source: ChatMessage): void {
+  if (target === source) {
+    return
+  }
   target.id = source.id
   target.role = source.role
   target.content = source.content

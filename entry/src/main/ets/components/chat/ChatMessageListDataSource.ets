@@ -114,17 +114,19 @@ export function buildChatMessageRowRenderSignature(
   previewAttachments: MessageAttachment[] = [],
   assistantAvatarSymbol: string = '',
   assistantAvatarColor: string = '',
-  assistantAvatarCacheKey: number = 0
+  assistantAvatarCacheKey: number = 0,
+  contentRenderSignatureSeed: string = ''
 ): string {
-  const contentRenderSignature = buildChatMessageContentRenderSignature(
-    message,
-    isEditing,
-    currentModelId,
-    chatFontSize,
-    themeRenderKey,
-    previewContent,
-    previewAttachments
-  )
+  const contentRenderSignature = contentRenderSignatureSeed !== '' ? contentRenderSignatureSeed :
+    buildChatMessageContentRenderSignature(
+      message,
+      isEditing,
+      currentModelId,
+      chatFontSize,
+      themeRenderKey,
+      previewContent,
+      previewAttachments
+    )
   return [
     encodeValue(message.id),
     encodeBoolean(showDateDivider),
