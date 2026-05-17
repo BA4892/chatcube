@@ -20,7 +20,6 @@ export struct ScrollToBottomLoadingButton {
 
   @Local private btnPressed: boolean = false
   @Local private loadingAngle: number = 0
-  private rotationTimer: number = -1
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
@@ -37,41 +36,19 @@ export struct ScrollToBottomLoadingButton {
     return this.isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
   }
 
+  // 用 animateTo iterations:-1 让旋转走系统动画线程, 不再依赖 setInterval(16ms) JS 计时器
+  // 抢占主线程。组件 if(isVisible) 条件渲染, 销毁时动画自然停, 无需 cancel API。
+  // expectedFrameRateRange 在高刷屏 (120Hz) 上限制 expected 60 避免过度刷新。
   aboutToAppear(): void {
-    if (this.isVisible) {
-      this.startLoadingRotation()
-    }
-  }
-
-  aboutToDisappear(): void {
-    this.stopLoadingRotation()
-  }
-
-  @Monitor('isVisible')
-  onVisibleChange(): void {
-    if (this.isVisible) {
-      this.startLoadingRotation()
-      return
-    }
-    this.stopLoadingRotation()
-  }
-
-  private startLoadingRotation(): void {
-    if (this.rotationTimer !== -1) {
-      return
-    }
-    this.loadingAngle = 0
-    this.rotationTimer = setInterval(() => {
-      this.loadingAngle = (this.loadingAngle + 12) % 360
-    }, 16)
-  }
-
-  private stopLoadingRotation(): void {
-    if (this.rotationTimer !== -1) {
-      clearInterval(this.rotationTimer)
-      this.rotationTimer = -1
-    }
-    this.loadingAngle = 0
+    this.getUIContext()?.animateTo({
+      duration: 1000,
+      curve: Curve.Linear,
+      iterations: -1,
+      playMode: PlayMode.Normal,
+      expectedFrameRateRange: { min: 30, max: 120, expected: 60 }
+    }, () => {
+      this.loadingAngle = 360
+    })
   }
 
   build() {
