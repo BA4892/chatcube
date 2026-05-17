@@ -56,7 +56,7 @@ export struct ChatInputAreaSection {
   }
 
   private getBottomSpacerHeight(): number {
-    return this.bottomAvoidHeight
+    return Math.max(this.bottomAvoidHeight - 4, 0)
   }
 
   build() {
