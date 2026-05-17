@@ -305,7 +305,10 @@ export struct ChatPage {
   @Local messageListSyncMessageId: string = ''
   private scroller: Scroller = new Scroller()
   private maxScrollOffset: number = 0
-  private readonly floatingScrollButtonBottomOffsetVp: number = 128
+  // 浮动按钮"左上角距屏幕底"基线兜底,首屏 inputAreaHeightVp 尚未实测时使用
+  private readonly floatingScrollButtonFallbackVp: number = 128
+  // 浮动按钮基线上限,避免被推到手指难以触达的高度
+  private readonly floatingScrollButtonMaxBaselineVp: number = 220
   private readonly scrollOffsetUiSyncStepVp: number = 96
   private mcpToolAvailabilityRefreshTask: Promise<void> | null = null
   private chatViewModel: ChatViewModel = ServiceRegistry.chat()
@@ -2258,7 +2261,7 @@ export struct ChatPage {
         ScrollToBottomButton({
           isVisible: this.shouldShowScrollToTopButton(),
           bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
-          fixedBottomOffset: this.floatingScrollButtonBottomOffsetVp,
+          fixedBottomOffset: this.getScrollButtonBaselineVp(),
           buttonDirection: 1,
           progress: this.scrollProgress,
           extraOffsetY: this.shouldShowStandardScrollToBottomButton() ? -48 : 0,
@@ -2271,7 +2274,7 @@ export struct ChatPage {
         ScrollToBottomButton({
           isVisible: this.shouldShowStandardScrollToBottomButton(),
           bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
-          fixedBottomOffset: this.floatingScrollButtonBottomOffsetVp,
+          fixedBottomOffset: this.getScrollButtonBaselineVp(),
           buttonDirection: 0,
           onScrollToBottom: () => {
             this.scrollToBottomWithAnimation()
@@ -2281,7 +2284,7 @@ export struct ChatPage {
         // AI 生成中的底部中间 loading 回到底部按钮
         ScrollToBottomLoadingButton({
           isVisible: this.shouldShowScrollToBottomLoadingButton(),
-          isInputBarVisible: true,
+          fixedBottomOffset: this.getScrollButtonBaselineVp(),
           bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
           onScrollToBottom: () => {
             this.scrollToBottomWithAnimation()
@@ -2919,7 +2922,18 @@ export struct ChatPage {
   }
 
   private getFloatingOverlayBottomAvoidHeightVp(): number {
-    return this.px2vp(this.bottomAvoidHeight) + this.attachmentPanelHeightVp
+    // 按钮"距屏幕底"语义已下沉到 getScrollButtonBaselineVp 兜底里,
+    // 这里只剩附件面板高度(系统安全区已包含在 baseline fallback / inputAreaHeightVp 内)
+    return this.attachmentPanelHeightVp
+  }
+
+  // 浮动按钮的"左上角距屏幕底"基线
+  // 优先跟随实测 ChatInputAreaSection 高度,首屏 inputAreaHeightVp=0 时用 fallback 兜底,
+  // 极端场景(banner + 编辑提示 + 多行 + 附件叠加)封顶到 maxBaseline 避免按钮上漂过头
+  private getScrollButtonBaselineVp(): number {
+    const measured = this.inputAreaHeightVp + 12
+    const fallback = this.floatingScrollButtonFallbackVp + this.px2vp(this.bottomAvoidHeight)
+    return Math.min(Math.max(measured, fallback), this.floatingScrollButtonMaxBaselineVp)
   }
 
   private getMultiSelectToolbarBottomInsetVp(): number {

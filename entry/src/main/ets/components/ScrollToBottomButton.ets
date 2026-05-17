@@ -123,6 +123,10 @@ export struct ScrollToBottomButton {
         x: -56,
         y: -(this.fixedBottomOffset + this.bottomAvoidHeight) + this.extraOffsetY
       })
+      // translate.y 跟随 inputAreaHeightVp(ScreenshotBanner / 多行输入 / 附件预览出现时)变化时,
+      // 让按钮平滑滑到新位置, 避免"瞬移"。.animation 只影响布局/位移类属性, 与下面 .transition
+      // 的入退场动画作用域不重叠。
+      .animation({ duration: 200, curve: Curve.EaseOut })
       .zIndex(12)
       .transition(
         TransitionEffect.OPACITY.combine(

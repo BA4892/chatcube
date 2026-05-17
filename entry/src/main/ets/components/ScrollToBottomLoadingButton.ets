@@ -13,7 +13,8 @@ import { getAppUiState } from '../state/AppUiState'
 @ComponentV2
 export struct ScrollToBottomLoadingButton {
   @Param isVisible: boolean = false
-  @Param isInputBarVisible: boolean = true
+  // 按钮"左上角距屏幕底"基线(vp), 与 ScrollToBottomButton 共享同一基线
+  @Param fixedBottomOffset: number = 128
   @Param bottomAvoidHeight: number = 0
   @Event onScrollToBottom: () => void = () => {}
 
@@ -112,10 +113,10 @@ export struct ScrollToBottomLoadingButton {
       .position({ x: '50%', y: '100%' })
       .translate({
         x: '-50%',
-        y: this.isInputBarVisible
-          ? (-140 - this.bottomAvoidHeight)
-          : (-72 - this.bottomAvoidHeight)
+        y: -(this.fixedBottomOffset + this.bottomAvoidHeight)
       })
+      // 与 ScrollToBottomButton 同步, 跟随输入区高度变化时平滑过渡
+      .animation({ duration: 200, curve: Curve.EaseOut })
       .transition(
         TransitionEffect.OPACITY.combine(
           TransitionEffect.scale({ x: 0.8, y: 0.8 })
