@@ -23,6 +23,7 @@ import { ThemeMode, AppLanguage, PreferenceKeys } from '../services/PreferencesS
 import { dismissActiveSnackBarOnBack, showSnackBar, SnackBarDisplayOptions, SnackBarTone } from '../utils/ToastUtil'
 import { MultiSelectToolbar } from '../components/MultiSelectToolbar'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
+import { ProviderIconSmall } from '../components/ProviderIcon'
 import { ColorTheme, ThemeColorConfig } from '../models/ThemeColors'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import {
@@ -86,9 +87,13 @@ import { SessionListGroupViewModel, rebuildSessionListGroupViewModels } from './
 import {
   getFabOffsetXForIndex,
   getFabOffsetYForIndex,
+  getAssistantFabOffsetXForIndex,
+  getAssistantFabOffsetYForIndex,
   INDEX_NEW_CHAT_FAB_BOTTOM_SPACING,
   INDEX_NEW_CHAT_FAB_STACK_HEIGHT,
   INDEX_NEW_CHAT_FAB_SIZE,
+  INDEX_ASSISTANT_FAB_WIDTH,
+  INDEX_ASSISTANT_FAB_HEIGHT,
   isHandAdaptiveActiveForIndex,
   shouldPlaceFabOnLeftForIndex
 } from './index/IndexHandAdaptiveHelper'
@@ -1259,6 +1264,14 @@ struct Index {
     return getFabOffsetXForIndex(this.shouldPlaceFabOnLeft())
   }
 
+  private getAssistantFabOffsetX(): number {
+    return getAssistantFabOffsetXForIndex(this.shouldPlaceFabOnLeft())
+  }
+
+  private getAssistantFabOffsetY(): number {
+    return getAssistantFabOffsetYForIndex(this.getFabBaseBottomInset())
+  }
+
   private getFabBaseBottomInset(): number {
     if (!this.isExpandedLayout()) {
       return this.getCompactTabsBottomInset()
@@ -2083,10 +2096,15 @@ struct Index {
   }
 
   private getAssistantRenderKey(assistant: Assistant): string {
+    // 把会随会话变化的 sessionCount / 最近时间也纳入 key,符合 ForEach key 含内容指纹原则;
+    // lastChat 量化到分钟,避免 sessions 高频微更新触发整批 ForEach destroy/recreate。
+    const sessionCount = this.getAssistantSessionCount(assistant.id)
+    const lastChatMin = Math.floor(this.getAssistantLastChatTimestamp(assistant.id) / 60000)
     return `${assistant.id}:${assistant.name}:${assistant.avatarSymbol}:${assistant.color}:` +
       `${assistant.defaultProviderId}:${assistant.defaultModelId}:${assistant.defaultModelName}:` +
       `${assistant.systemPrompt}:${assistant.temperatureEnabled ? '1' : '0'}:${assistant.temperature}:` +
-      `${assistant.isDefault ? '1' : '0'}:${assistant.sortOrder}:${this.assistantAvatarRenderTick}`
+      `${assistant.isDefault ? '1' : '0'}:${assistant.sortOrder}:${this.assistantAvatarRenderTick}:` +
+      `${sessionCount}:${lastChatMin}`
   }
 
   private getAssistantAvatarRenderKey(symbol: string, color: string, size: number, radius: number,
@@ -2434,10 +2452,26 @@ struct Index {
     return assistant.defaultModelName !== '' ? assistant.defaultModelName : $r('app.string.assistant_model_follow_global')
   }
 
+  // 模型胶囊里渲染 provider 图标; ForEach 走 0/1 元素数组, 避免 @Builder 内 if/else 直接持有可空 ModelProvider。
+  private findAssistantProviderForChip(assistant: Assistant): ModelProvider[] {
+    if (assistant.defaultProviderId === '') {
+      return []
+    }
+    for (let i = 0; i < this.assistantProviders.length; i++) {
+      const provider = this.assistantProviders[i]
+      if (provider.id === assistant.defaultProviderId) {
+        return [provider]
+      }
+    }
+    return []
+  }
+
   private getAssistantTabBottomSpacerHeight(): number {
-    // 助手 tab 右下角浮着加号 FAB,列表底部要让出 FAB 高度+间距,
-    // 否则最后一张卡片的更多按钮会被遮住、且无法上滑避让。
-    return this.getChatListBottomSpacerHeight()
+    // 助手 tab 右下角是 Extended FAB(胶囊),独立按其实际高度算让位高度,
+    // 否则最后一张卡片可能被胶囊 FAB 遮住、且无法上滑避让。
+    const cardBottomBreathingRoom = 12
+    return this.getFabBaseBottomInset() + INDEX_ASSISTANT_FAB_HEIGHT +
+      INDEX_NEW_CHAT_FAB_BOTTOM_SPACING + cardBottomBreathingRoom
   }
 
   private getAssistantsListHorizontalPadding(): number {
@@ -2770,24 +2804,27 @@ struct Index {
   }
 
   @Builder
-  private AssistantStatusBadge(label: ResourceStr, color: ResourceColor) {
-    Row({ space: 5 }) {
-      Circle()
-        .width(6)
-        .height(6)
-        .fill(color)
+  private AssistantStatusBadge(label: ResourceStr, accentColor: ResourceColor) {
+    // 主题色填充的小药丸: 底层 accentColor 透明叠层做背景, 文字用 accentColor 实色, 深色/浅色下对比都够。
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(accentColor)
+        .opacity(0.18)
+        .borderRadius(11)
+
       Text(label)
         .fontSize(11)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(accentColor)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .padding({ left: 10, right: 10 })
     }
     .height(22)
-    .padding({ left: 8, right: 8 })
-    .backgroundColor(this.themeBackground)
     .borderRadius(11)
-    .border({ width: 1, color: $r('app.color.divider') })
+    .clip(true)
   }
 
   @Builder
@@ -2897,20 +2934,32 @@ struct Index {
 
   @Builder
   private AssistantFloatingActionButton() {
+    // Extended FAB(胶囊 + 文字 + plus 图标),与卡内圆形主按钮"+ 新建对话"做明显视觉区分,语义是"新建助手"。
     Button() {
-      SymbolGlyph($r('sys.symbol.plus'))
-        .fontSize(24)
-        .fontColor([Color.White])
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(20)
+          .fontColor([Color.White])
+
+        Text($r('app.string.new_assistant'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
     }
-    .width(INDEX_NEW_CHAT_FAB_SIZE)
-    .height(INDEX_NEW_CHAT_FAB_SIZE)
-    .borderRadius(INDEX_NEW_CHAT_FAB_SIZE / 2)
+    .width(INDEX_ASSISTANT_FAB_WIDTH)
+    .height(INDEX_ASSISTANT_FAB_HEIGHT)
+    .borderRadius(INDEX_ASSISTANT_FAB_HEIGHT / 2)
     .backgroundColor(this.themePrimary)
-    .type(ButtonType.Circle)
+    .type(ButtonType.Capsule)
     .stateEffect(false)
-    .padding(0)
+    .padding({ left: 16, right: 18 })
     .position({ x: this.shouldPlaceFabOnLeft() ? 0 : '100%', y: '100%' })
-    .translate({ x: this.getFabOffsetX(), y: this.getFabOffsetY() })
+    .translate({ x: this.getAssistantFabOffsetX(), y: this.getAssistantFabOffsetY() })
     .scale(getButtonScale(this.fabPressed))
     .animation({
       duration: 420,
@@ -2957,7 +3006,7 @@ struct Index {
       this.AssistantJumpCardContent(assistant, featured)
     }
     .width('100%')
-    .padding({ left: 14, right: 14, top: featured ? 14 : 12, bottom: featured ? 14 : 12 })
+    .padding({ left: 14, right: 14, top: featured ? 12 : 10, bottom: featured ? 12 : 10 })
     .backgroundColor(this.themeSurface)
     .borderRadius(16)
     .border({
@@ -2978,10 +3027,10 @@ struct Index {
 
   @Builder
   private AssistantJumpCardContent(assistant: Assistant, featured: boolean) {
-    Column({ space: 10 }) {
+    Column({ space: 8 }) {
       Row({ space: 12 }) {
-        this.AssistantAvatarBadge(assistant.avatarSymbol, this.getAssistantAvatarColor(assistant), featured ? 48 : 44,
-          featured ? 16 : 15, featured ? 25 : 23, assistant.defaultProviderId, assistant.defaultModelId,
+        this.AssistantAvatarBadge(assistant.avatarSymbol, this.getAssistantAvatarColor(assistant), featured ? 40 : 38,
+          featured ? 13 : 12, featured ? 20 : 19, assistant.defaultProviderId, assistant.defaultModelId,
           assistant.defaultModelName)
 
         Row({ space: 6 }) {
@@ -3021,21 +3070,18 @@ struct Index {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
+      this.AssistantModelChip(assistant)
+
       Text(this.getAssistantPromptPreviewText(assistant))
         .fontSize(13)
         .fontColor($r('app.color.text_tertiary'))
-        .maxLines(3)
+        .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .lineHeight(18)
         .width('100%')
 
       Row({ space: 8 }) {
         this.AssistantCardFooterMeta(assistant)
-
-        this.AssistantCardActionButton($r('sys.symbol.message'), $r('app.string.assistant_view_chats'), false,
-          (): void => {
-            this.openAssistantSessions(assistant)
-          })
 
         this.AssistantCardActionButton($r('sys.symbol.plus'), $r('app.string.new_chat'), true, (): void => {
           this.openAssistantNewChat(assistant)
@@ -3048,19 +3094,54 @@ struct Index {
   }
 
   @Builder
+  private AssistantModelChip(assistant: Assistant) {
+    Row() {
+      Row({ space: 6 }) {
+        this.AssistantModelChipIcon(assistant)
+
+        Text(this.getAssistantDefaultModelText(assistant))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+      }
+      .height(26)
+      .padding({ left: 6, right: 10 })
+      .backgroundColor(this.themeSurface)
+      .borderRadius(13)
+      .border({ width: 1, color: $r('app.color.divider') })
+      .constraintSize({ maxWidth: '100%' })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Start)
+  }
+
+  @Builder
+  private AssistantModelChipIcon(assistant: Assistant) {
+    if (this.findAssistantProviderForChip(assistant).length === 0) {
+      SymbolGlyph($r('sys.symbol.lightbulb'))
+        .fontSize(18)
+        .fontColor([$r('app.color.text_tertiary')])
+    } else {
+      ForEach(this.findAssistantProviderForChip(assistant), (provider: ModelProvider) => {
+        ProviderIconSmall({
+          iconPath: provider.iconPath,
+          iconSize: 18,
+          iconType: provider.iconType,
+          textIcon: provider.textIcon,
+          textIconBgColor: provider.textIconBgColor,
+          customImagePath: provider.customImagePath,
+          brandColor: provider.brandColor,
+          isDarkMode: this.isDarkMode
+        })
+      }, (provider: ModelProvider) => `${assistant.id}:${provider.id}:${provider.iconType}:${provider.iconPath}`)
+    }
+  }
+
+  @Builder
   private AssistantCardFooterMeta(assistant: Assistant) {
     Row() {
-      Text(this.getAssistantDefaultModelText(assistant))
-        .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-
-      Text(' · ')
-        .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
-
       Row({ space: 3 }) {
         Text(this.getAssistantSessionCount(assistant.id).toString())
           .fontSize(11)
