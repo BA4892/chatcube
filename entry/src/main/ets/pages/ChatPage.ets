@@ -802,7 +802,6 @@ export struct ChatPage {
   private cancelPendingInitialBottomAlignment(): void {
     this.pendingInitialBottomAlignment = false
     this.clearInitialBottomAlignmentRetries()
-    this.getScrollUiFlow().cancelBottomAlignments()
   }
 
   private resetScrollStateForSessionLoad(): void {
@@ -864,28 +863,26 @@ export struct ChatPage {
       return
     }
     this.clearInitialBottomAlignmentRetries()
-
-    // 单次触发: 让 ChatScrollUiFlow 内部状态机 (onScrollIndex/onScrollStop + 600ms 兜底) 接管收尾
-    // 不再用 0/80/180 三次重试矩阵 - 详见 chat/ChatScrollUiFlow.ets 的 alignToBottomAfterLayout
-    const triggerTimerId = setTimeout(() => {
-      if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
-        return
-      }
-      this.getScrollUiFlow().setIsAtBottom(true)
-      this.getScrollUiFlow().setIsAtTop(false)
-      this.getScrollUiFlow().alignToBottomAfterLayout()
-    }, 0)
-    this.initialBottomAlignmentRetryTimerIds.push(triggerTimerId)
-
-    // 外层兜底: 600ms 后清 pendingInitialBottomAlignment 标志位
-    // (ChatScrollUiFlow 内部兜底已经覆盖滚动收尾)
+    const delays: number[] = [0, 80, 180]
+    const completionDelay = delays[delays.length - 1] + 180
+    for (let i = 0; i < delays.length; i++) {
+      const timerId = setTimeout(() => {
+        if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
+          return
+        }
+        this.getScrollUiFlow().setIsAtBottom(true)
+        this.getScrollUiFlow().setIsAtTop(false)
+        this.getScrollUiFlow().alignToBottomAfterLayout()
+      }, delays[i])
+      this.initialBottomAlignmentRetryTimerIds.push(timerId)
+    }
     this.initialBottomAlignmentCompletionTimerId = setTimeout(() => {
       if (!this.pendingInitialBottomAlignment) {
         return
       }
       this.pendingInitialBottomAlignment = false
       this.clearInitialBottomAlignmentRetries()
-    }, 600)
+    }, completionDelay)
   }
 
   private refreshToolAvailabilityOnShown(): void {
@@ -2231,10 +2228,6 @@ export struct ChatPage {
           onScrollIndex: (firstIndex: number, lastIndex: number): void => {
             this.firstVisibleListIndex = firstIndex
             this.lastVisibleListIndex = lastIndex
-            this.getScrollUiFlow().handleScrollIndexChanged(firstIndex, lastIndex)
-          },
-          onScrollStop: (): void => {
-            this.getScrollUiFlow().handleScrollStopped()
           }
         })
           .width('100%')
