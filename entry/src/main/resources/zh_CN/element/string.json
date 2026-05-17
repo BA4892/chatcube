@@ -585,6 +585,26 @@
       "value": "删除对话"
     },
     {
+      "name": "message_map_menu_entry",
+      "value": "消息地图"
+    },
+    {
+      "name": "message_map_title",
+      "value": "消息地图"
+    },
+    {
+      "name": "message_map_search_placeholder",
+      "value": "搜索消息内容"
+    },
+    {
+      "name": "message_map_empty",
+      "value": "暂无消息"
+    },
+    {
+      "name": "message_map_no_match",
+      "value": "未找到匹配消息"
+    },
+    {
       "name": "generating_title",
       "value": "生成标题中..."
     },

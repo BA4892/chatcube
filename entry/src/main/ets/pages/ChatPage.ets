@@ -1,4 +1,4 @@
-import { KeyboardAvoidMode } from '@kit.ArkUI'
+import { KeyboardAvoidMode, LengthMetrics } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import {
   HdsNavDestination,
@@ -27,6 +27,7 @@ import { ImagePreview } from '../components/ImagePreview'
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton'
 import { ScrollToBottomLoadingButton } from '../components/ScrollToBottomLoadingButton'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
+import { MessageMapSheet } from '../components/MessageMapSheet'
 import { ChatViewModel, TitleGenerationCallbacks } from '../viewmodels/ChatViewModel'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { AppStateManager } from '../viewmodels/AppStateManager'
@@ -119,8 +120,8 @@ class EditedMessageToolContext {
 
 const HDS_NAV_DESTINATION_MINI_TITLE_BAR_HEIGHT: number = 56
 const HDS_NAV_TITLE_LEFT_ACTION_LANE_WIDTH: number = 44
-const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_SINGLE: number = 44
-const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_DOUBLE: number = 80
+const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_SINGLE: number = 80
+const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_DOUBLE: number = 116
 
 @ComponentV2
 export struct ChatPage {
@@ -282,6 +283,8 @@ export struct ChatPage {
   // 分享预览弹窗状态
   @Local showSharePreview: boolean = false
   @Local shareMessages: ChatMessage[] = []
+  // 消息地图弹窗状态
+  @Local showMessageMapSheet: boolean = false
   // 编辑消息相关状态（内联编辑模式）
   @Local isEditingMessage: boolean = false // 是否处于消息编辑模式
   @Local editingMessageId: string = '' // 正在编辑的消息ID
@@ -2131,6 +2134,9 @@ export struct ChatPage {
           console.error('ChatPage', `Failed to save inline title: ${JSON.stringify(error)}`)
           this.showError($r('app.string.action_failed_retry'))
         })
+      },
+      onOpenMessageMap: (): void => {
+        this.handleOpenMessageMap()
       }
     })
   }
@@ -2461,6 +2467,22 @@ export struct ChatPage {
             }
           })
 
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showMessageMapSheet, this.MessageMapBuilder(), {
+          height: SheetSize.LARGE,
+          detents: [SheetSize.LARGE],
+          dragBar: true,
+          showClose: false,
+          backgroundColor: this.themeBackground,
+          blurStyle: BlurStyle.Thick,
+          preferType: SheetType.BOTTOM,
+          onDisappear: () => {
+            this.showMessageMapSheet = false
+          }
+        })
+
         Column()
           .width(0)
           .height(0)
@@ -2711,6 +2733,41 @@ export struct ChatPage {
         this.showSharePreview = false
       }
     })
+  }
+
+  @Builder
+  MessageMapBuilder() {
+    MessageMapSheet({
+      messages: this.messages,
+      onClose: () => {
+        this.showMessageMapSheet = false
+      },
+      onJumpToMessage: (messageIndex: number) => {
+        this.handleJumpToMessageFromMap(messageIndex)
+      }
+    })
+  }
+
+  private handleOpenMessageMap(): void {
+    this.safeStopInputSession()
+    this.showMessageMapSheet = true
+  }
+
+  private handleJumpToMessageFromMap(messageIndex: number): void {
+    if (messageIndex < 0 || messageIndex >= this.messages.length) {
+      this.showMessageMapSheet = false
+      return
+    }
+    this.showMessageMapSheet = false
+    const topOffsetVp = this.getMessageListTopSpacerHeight()
+    setTimeout(() => {
+      this.scroller.scrollToIndex(
+        toListScrollIndexForMessage(messageIndex),
+        true,
+        ScrollAlign.START,
+        { extraOffset: LengthMetrics.vp(-(topOffsetVp + 14)) }
+      )
+    }, 120)
   }
 
   private handleToolSelectionToggle(toolId: string, enabled: boolean): void {

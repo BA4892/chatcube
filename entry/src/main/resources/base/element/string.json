@@ -585,6 +585,26 @@
       "value": "Delete Chat"
     },
     {
+      "name": "message_map_menu_entry",
+      "value": "Message Map"
+    },
+    {
+      "name": "message_map_title",
+      "value": "Message Map"
+    },
+    {
+      "name": "message_map_search_placeholder",
+      "value": "Search messages"
+    },
+    {
+      "name": "message_map_empty",
+      "value": "No messages yet"
+    },
+    {
+      "name": "message_map_no_match",
+      "value": "No matching messages"
+    },
+    {
       "name": "generating_title",
       "value": "Generating title..."
     },

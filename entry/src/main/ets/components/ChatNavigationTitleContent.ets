@@ -39,10 +39,12 @@ export struct ChatNavigationTitleContent {
   @Event onRegenerateTitle: () => void = () => {}
   @Event onWillEditTitle: () => void = () => {}
   @Event onTitleChanged: (newTitle: string) => void = (_newTitle: string): void => {}
+  @Event onOpenMessageMap: () => void = () => {}
 
   @Local private backBtnPressed: boolean = false
   @Local private newChatBtnPressed: boolean = false
   @Local private moreBtnPressed: boolean = false
+  @Local private messageMapBtnPressed: boolean = false
   @Local private isEditingTitle: boolean = false
   @Local private editingTitleInput: string = ''
   private readonly titleInputFocusId: string = 'chat_navigation_title_input'
@@ -276,6 +278,27 @@ export struct ChatNavigationTitleContent {
   }
 
   @Builder
+  private MessageMapButtonBuilder() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph($r('sys.symbol.map'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_primary')])
+    }
+    .width(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
+    .height(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
+    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
+    .backgroundColor(this.getNavigationActionButtonBackgroundColor())
+    .scale(getButtonScale(this.messageMapBtnPressed))
+    .animation(getButtonAnimation())
+    .onTouch(createButtonTouchHandler((pressed: boolean): void => {
+      this.messageMapBtnPressed = pressed
+    }))
+    .onClick(() => {
+      this.onOpenMessageMap()
+    })
+  }
+
+  @Builder
   private MoreButtonBuilder() {
     Button({ type: ButtonType.Circle }) {
       SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
@@ -462,6 +485,7 @@ export struct ChatNavigationTitleContent {
         if (this.showNewChatAction) {
           this.NewChatButtonBuilder()
         }
+        this.MessageMapButtonBuilder()
         this.MoreButtonBuilder()
       }
       .width(this.rightActionLaneWidth)
