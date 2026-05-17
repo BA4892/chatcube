@@ -1,6 +1,7 @@
 import { getDatabaseService, DatabaseService } from '../services/DatabaseService'
 import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
 import { createToolPart, ensureMessageParts } from '../utils/ChatMessagePartsHelper'
+import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 import {
   getAIApiService,
   AIApiService,
@@ -3365,7 +3366,7 @@ ${limitedSearchContext}
 
     for (let i = 0; i < provider.models.length; i++) {
       if (provider.models[i].id === modelId) {
-        return provider.models[i].capabilities.supportsReasoning
+        return getEffectiveCapabilities(provider.models[i]).supportsReasoning
       }
     }
 

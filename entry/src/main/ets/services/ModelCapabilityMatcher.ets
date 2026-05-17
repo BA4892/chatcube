@@ -1,7 +1,5 @@
 import { http } from '@kit.NetworkKit'
-import { ModelInfo, InputMode, OutputMode } from '../models/ChatModels'
 import { PreferenceKeys, getPreferencesService, DEFAULT_MODELS_DEV_BASE_URL } from './PreferencesService'
-import { lookupModelAbilities, ModelAbility, ModelModality } from './registry/ModelAbilityRegistry'
 
 // models.dev 单个模型的数据结构
 interface ModelsDevModalities {
@@ -70,44 +68,9 @@ export class ModelCapabilityMatcher {
     return ModelCapabilityMatcher.instance
   }
 
-  // 批量匹配并填充模型能力，返回成功匹配数量
-  async applyCapabilitiesBatch(models: ModelInfo[]): Promise<number> {
-    let matched = 0
-    const fallbackMatchedIndexes: Set<number> = new Set()
-    for (let i = 0; i < models.length; i++) {
-      if (this.applyKnownCapabilityFallback(models[i])) {
-        fallbackMatchedIndexes.add(i)
-        matched++
-      }
-    }
-
-    const prefs = getPreferencesService()
-    const enabled = await prefs.getBoolean(PreferenceKeys.MODELS_DEV_ENABLED, true)
-    if (!enabled) {
-      return matched
-    }
-
-    const loaded = await this.ensureCache()
-    if (!loaded) {
-      return matched
-    }
-
-    for (let i = 0; i < models.length; i++) {
-      const model = models[i]
-      const entry = this.findEntry(model.id)
-      if (entry !== null) {
-        this.applyEntry(model, entry)
-        if (!fallbackMatchedIndexes.has(i)) {
-          matched++
-        }
-      }
-      const logoUrl = this.getLogoUrlFromCache(model.id)
-      if (logoUrl !== '') {
-        this.recordModelLogo(model.id, logoUrl)
-      }
-    }
-    return matched
-  }
+  // 批量匹配并填充模型能力,返回成功匹配数量
+  // 已废弃:能力现在走 ModelInfo 派生(见 utils/ModelCapabilityDeriver.ets),不再写回 ModelInfo
+  // 本类保留 logo 相关方法供 ProviderIconUtils 使用
 
   // 启动时加载持久化的模型图标索引
   async loadPersistedLogoIndex(): Promise<void> {
@@ -465,71 +428,7 @@ export class ModelCapabilityMatcher {
   }
 
   // 将 models.dev 条目的能力映射到 ModelInfo
-  private applyEntry(model: ModelInfo, entry: ModelsDevEntry): void {
-    // tool_call → supportsTools
-    if (entry.tool_call) {
-      model.capabilities.supportsTools = true
-    }
-    // reasoning → supportsReasoning
-    if (entry.reasoning) {
-      model.capabilities.supportsReasoning = true
-    }
-    // modalities.input 含 "image" → supportsVision + inputMode
-    if (entry.modalities !== undefined && entry.modalities !== null &&
-      entry.modalities.input !== undefined && entry.modalities.input !== null) {
-      for (let i = 0; i < entry.modalities.input.length; i++) {
-        if (entry.modalities.input[i] === 'image') {
-          model.capabilities.supportsVision = true
-          model.inputMode = InputMode.VISION
-          break
-        }
-      }
-    }
-    // modalities.output 含 "image" → outputMode = IMAGE
-    if (entry.modalities !== undefined && entry.modalities !== null &&
-      entry.modalities.output !== undefined && entry.modalities.output !== null) {
-      for (let i = 0; i < entry.modalities.output.length; i++) {
-        if (entry.modalities.output[i] === 'image') {
-          model.outputMode = OutputMode.IMAGE
-          break
-        }
-      }
-    }
-    // limit.context → contextLength
-    if (entry.limit !== undefined && entry.limit !== null &&
-      entry.limit.context > 0) {
-      model.contextLength = entry.limit.context
-    }
-  }
-
-  private applyKnownCapabilityFallback(model: ModelInfo): boolean {
-    const result = lookupModelAbilities(model.id)
-    if (result.abilities.length === 0 && result.inputModalities.length <= 1 && result.outputModalities.length <= 1) {
-      return false
-    }
-
-    let changed = false
-
-    if (result.abilities.includes(ModelAbility.TOOL) && !model.capabilities.supportsTools) {
-      model.capabilities.supportsTools = true
-      changed = true
-    }
-    if (result.abilities.includes(ModelAbility.REASONING) && !model.capabilities.supportsReasoning) {
-      model.capabilities.supportsReasoning = true
-      changed = true
-    }
-    if (result.inputModalities.includes(ModelModality.IMAGE) && !model.capabilities.supportsVision) {
-      model.capabilities.supportsVision = true
-      model.inputMode = InputMode.VISION
-      changed = true
-    }
-    if (result.outputModalities.includes(ModelModality.IMAGE) && model.outputMode !== OutputMode.IMAGE) {
-      model.outputMode = OutputMode.IMAGE
-      changed = true
-    }
-
-    return changed
-  }
+  // 已废弃:能力走 ModelInfo 派生,不再写回 ModelInfo
 
   // 从模型 ID 推断原厂供应商 key，用于获取正确的 logo
   private findLogoProvider(modelId: string): string {
@@ -574,14 +473,15 @@ export class ModelCapabilityMatcher {
     return ''
   }
 
-  // 主动加载缓存（供外部调用）
-  async loadCache(): Promise<boolean> {
+  // 启动时后台预热 models.dev 缓存(供 logo 解析使用)
+  // 尊重 MODELS_DEV_ENABLED 偏好开关
+  async preloadCache(): Promise<boolean> {
+    const prefs = getPreferencesService()
+    const enabled = await prefs.getBoolean(PreferenceKeys.MODELS_DEV_ENABLED, true)
+    if (!enabled) {
+      return false
+    }
     return await this.ensureCache()
-  }
-
-  // 判断缓存是否已加载
-  isCacheLoaded(): boolean {
-    return this.cache.size > 0 && (Date.now() - this.cacheTimestamp) < this.CACHE_TTL
   }
 
   // 获取模型的 models.dev logo URL，优先实时缓存，失败回退本地持久化索引

@@ -20,8 +20,8 @@ import { applyPresetIconDefaults } from '../config/PresetProviders'
 import { ProviderIconEditSheet, ProviderIconEditConfig } from './ProviderIconEditSheet'
 import { ProviderShareSheet } from './provider/ProviderShareSheet'
 import { ServiceRegistry } from '../services/ServiceRegistry'
-import { ModelCapabilityMatcher } from '../services/ModelCapabilityMatcher'
 import { buildModelIconRenderData, ModelIconRenderData } from '../utils/ModelIconRenderUtils'
+import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 import {
   ApiStyleOption,
   OpenAITransportOption,
@@ -560,18 +560,7 @@ export struct ProviderDetailPanel {
       return
     }
 
-    const providerId = this.provider.id
-    const existingModelIds = new Set<string>()
-    for (let i = 0; i < this.provider.models.length; i++) {
-      existingModelIds.add(this.provider.models[i].id)
-    }
     const newModels = buildSelectedModelsWithPreservedConfig(this.provider.models, selectedIds)
-    const newlyAddedModelIds: string[] = []
-    for (let i = 0; i < selectedIds.length; i++) {
-      if (!existingModelIds.has(selectedIds[i])) {
-        newlyAddedModelIds.push(selectedIds[i])
-      }
-    }
 
     // 保留不在 API 列表中的已有模型（如手动添加的模型）
     const fetchedSet = new Set<string>(this.fetchedModels)
@@ -607,10 +596,6 @@ export struct ProviderDetailPanel {
         this.onClose()
       }, 200)
     }
-
-    if (newlyAddedModelIds.length > 0) {
-      this.applySelectedModelCapabilitiesAsync(providerId, newlyAddedModelIds)
-    }
   }
 
   // 手动添加模型
@@ -638,50 +623,10 @@ export struct ProviderDetailPanel {
     this.addModelIdText = ''
     this.getUIContext().getFocusController().clearFocus()
     this.notifyProviderChanged()
-    // 自动打开编辑面板
+    // 自动打开编辑面板,能力由派生路径自动给出
     this.editingModel = model
     this.activeSheet = 'edit'
     this.showSheet = true
-    // 异步匹配能力
-    this.applySelectedModelCapabilitiesAsync(this.provider.id, [modelId])
-  }
-
-  private applySelectedModelCapabilitiesAsync(providerId: string, modelIds: string[]): void {
-    this.applySelectedModelCapabilities(providerId, modelIds).catch((error: Object) => {
-      console.warn('ProviderDetailSheet', `[applySelectedModelCapabilitiesAsync] skipped: ${JSON.stringify(error)}`)
-    })
-  }
-
-  private async applySelectedModelCapabilities(providerId: string, modelIds: string[]): Promise<void> {
-    if (modelIds.length === 0) {
-      return
-    }
-    const provider = await this.providerViewModel.getProviderByIdAsync(providerId)
-    if (provider === null) {
-      return
-    }
-
-    const targetModels: ModelInfo[] = []
-    for (let i = 0; i < provider.models.length; i++) {
-      if (modelIds.includes(provider.models[i].id)) {
-        targetModels.push(provider.models[i])
-      }
-    }
-    if (targetModels.length === 0) {
-      return
-    }
-
-    const matchedCount = await ModelCapabilityMatcher.getInstance().applyCapabilitiesBatch(targetModels)
-    if (matchedCount <= 0) {
-      return
-    }
-
-    await this.providerViewModel.saveProvider(provider)
-    if (this.provider !== null && this.provider.id === providerId) {
-      this.provider = provider
-      this.refreshModelGroups()
-      this.notifyProviderChanged()
-    }
   }
 
   // 删除单个模型
@@ -3007,16 +2952,16 @@ export struct ModelItemCard {
 
           // 模型能力图标
           Row() {
-            if (this.model.capabilities.supportsReasoning) {
+            if (getEffectiveCapabilities(this.model).supportsReasoning) {
               this.CapabilityIcon('sys.symbol.AI_deep_thinking')
             }
-            if (this.model.capabilities.supportsVision) {
+            if (getEffectiveCapabilities(this.model).supportsVision) {
               this.CapabilityIcon('sys.symbol.ohos_photo')
             }
-            if (this.model.capabilities.supportsTools) {
+            if (getEffectiveCapabilities(this.model).supportsTools) {
               this.CapabilityIcon('sys.symbol.wrench_and_screwdriver')
             }
-            if (this.model.capabilities.supportsWebSearch) {
+            if (getEffectiveCapabilities(this.model).supportsWebSearch) {
               this.CapabilityIcon('sys.symbol.ohos_wifi')
             }
           }

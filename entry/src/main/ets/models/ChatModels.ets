@@ -562,6 +562,9 @@ export class ModelInfo {
   // 新增字段：能力配置
   @Trace capabilities: ModelCapabilities
 
+  // 用户是否手动覆盖过能力。false 时 capabilities 走派生,true 时尊重 capabilities 字段
+  @Trace capabilitiesUserModified: boolean
+
   constructor(
     id: string,
     name: string,
@@ -580,6 +583,7 @@ export class ModelInfo {
     this.inputMode = InputMode.TEXT
     this.outputMode = OutputMode.TEXT
     this.capabilities = new ModelCapabilities()
+    this.capabilitiesUserModified = false
   }
 
   // 从扩展 JSON 对象创建
@@ -608,6 +612,9 @@ export class ModelInfo {
       model.capabilities = ModelCapabilities.fromJson(json.capabilities)
     }
 
+    // 恢复用户覆盖标志。老数据缺失时保守视为 true(避免规则升级后能力被静默替换)
+    model.capabilitiesUserModified = json.capabilitiesUserModified ?? true
+
     return model
   }
 
@@ -622,7 +629,8 @@ export class ModelInfo {
       modelType: this.modelType,
       inputMode: this.inputMode,
       outputMode: this.outputMode,
-      capabilities: this.capabilities.toJson()
+      capabilities: this.capabilities.toJson(),
+      capabilitiesUserModified: this.capabilitiesUserModified
     }
     return json
   }
@@ -639,6 +647,7 @@ export interface ModelInfoExtendedJson {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
+  capabilitiesUserModified?: boolean
 }
 
 // 模型提供商类型

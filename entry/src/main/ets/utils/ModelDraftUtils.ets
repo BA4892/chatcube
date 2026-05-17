@@ -37,4 +37,6 @@ export function applyModelDraft(target: ModelInfo, draft: ModelInfoExtendedJson)
   if (draft.capabilities !== undefined) {
     target.capabilities = ModelCapabilities.fromJson(draft.capabilities)
   }
+  // 覆盖标志:draft 缺失视为 false(派生轨道)
+  target.capabilitiesUserModified = draft.capabilitiesUserModified ?? false
 }

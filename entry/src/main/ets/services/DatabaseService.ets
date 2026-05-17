@@ -47,6 +47,7 @@ interface ModelJsonData {
   inputMode?: string
   outputMode?: string
   capabilities?: CapabilitiesJsonData
+  capabilitiesUserModified?: boolean
 }
 
 // 能力配置 JSON 数据
@@ -2113,7 +2114,8 @@ export class DatabaseService {
         modelType: model.modelType,
         inputMode: model.inputMode,
         outputMode: model.outputMode,
-        capabilities: capabilitiesData
+        capabilities: capabilitiesData,
+        capabilitiesUserModified: model.capabilitiesUserModified
       }
       modelsArray.push(modelObj)
     }

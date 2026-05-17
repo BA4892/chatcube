@@ -9,6 +9,7 @@ import { ModelInfo, InputMode, OutputMode, ModelInfoExtendedJson } from '../mode
 import { LengthMetrics } from '@kit.ArkUI'
 import { getAppUiState } from '../state/AppUiState'
 import { lookupModelAbilities, ModelAbility, ModelModality } from '../services/registry/ModelAbilityRegistry'
+import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 
 @ComponentV2
 export struct ModelEditSheet {
@@ -27,6 +28,11 @@ export struct ModelEditSheet {
   @Local capSupportsVision: boolean = false
   @Local capSupportsStreaming: boolean = false
   @Local capOutputImage: boolean = false
+  // 派生覆盖跟踪
+  // userTouched: 本次进入 sheet 后用户是否动过任何开关
+  // originalUserModified: 进入 sheet 时 model.capabilitiesUserModified 的快照,用于保护"不改动直接保存"的场景
+  @Local userTouched: boolean = false
+  @Local originalUserModified: boolean = false
   // 回调函数
   @Event onSave: (draft: ModelInfoExtendedJson) => Promise<void> = async (_draft: ModelInfoExtendedJson): Promise<void> => {
   }
@@ -39,12 +45,16 @@ export struct ModelEditSheet {
 
   private syncDraftFromModel(): void {
     this.tempName = this.model.name
-    this.capSupportsTools = this.model.capabilities.supportsTools
-    this.capSupportsReasoning = this.model.capabilities.supportsReasoning
-    this.capSupportsWebSearch = this.model.capabilities.supportsWebSearch
-    this.capSupportsVision = this.model.capabilities.supportsVision
-    this.capSupportsStreaming = this.model.capabilities.supportsStreaming
+    // 读 effective 能力:override=false 时 UI 显示派生值,override=true 时显示持久化值
+    const effective = getEffectiveCapabilities(this.model)
+    this.capSupportsTools = effective.supportsTools
+    this.capSupportsReasoning = effective.supportsReasoning
+    this.capSupportsWebSearch = effective.supportsWebSearch
+    this.capSupportsVision = effective.supportsVision
+    this.capSupportsStreaming = effective.supportsStreaming
     this.capOutputImage = this.model.outputMode === OutputMode.IMAGE
+    this.originalUserModified = this.model.capabilitiesUserModified
+    this.userTouched = false
   }
 
   private resetCapabilities(): void {
@@ -55,6 +65,9 @@ export struct ModelEditSheet {
     this.capOutputImage = result.outputModalities.includes(ModelModality.IMAGE)
     this.capSupportsWebSearch = false
     this.capSupportsStreaming = true
+    // 强制清除覆盖标志:用户主动选择回到派生轨道
+    this.userTouched = false
+    this.originalUserModified = false
   }
 
   private buildDraft(): ModelInfoExtendedJson {
@@ -73,7 +86,8 @@ export struct ModelEditSheet {
         supportsWebSearch: this.capSupportsWebSearch,
         supportsVision: this.capSupportsVision,
         supportsStreaming: this.capSupportsStreaming
-      }
+      },
+      capabilitiesUserModified: this.userTouched || this.originalUserModified
     }
   }
 
@@ -240,6 +254,7 @@ export struct ModelEditSheet {
         .borderRadius(18)
         .onClick(() => {
           this.capSupportsTools = !this.capSupportsTools
+          this.userTouched = true
         })
 
         // 推理
@@ -258,6 +273,7 @@ export struct ModelEditSheet {
         .borderRadius(18)
         .onClick(() => {
           this.capSupportsReasoning = !this.capSupportsReasoning
+          this.userTouched = true
         })
 
         // 模型原生/内置联网搜索
@@ -277,6 +293,7 @@ export struct ModelEditSheet {
         .borderRadius(18)
         .onClick(() => {
           this.capSupportsWebSearch = !this.capSupportsWebSearch
+          this.userTouched = true
         })
 
         // 视觉理解
@@ -295,6 +312,7 @@ export struct ModelEditSheet {
         .borderRadius(18)
         .onClick(() => {
           this.capSupportsVision = !this.capSupportsVision
+          this.userTouched = true
         })
 
         // 图片生成
@@ -313,6 +331,7 @@ export struct ModelEditSheet {
         .borderRadius(18)
         .onClick(() => {
           this.capOutputImage = !this.capOutputImage
+          this.userTouched = true
         })
       }
       .width('100%')

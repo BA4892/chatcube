@@ -5,6 +5,7 @@ import { getProviderViewModel, ProviderViewModel } from '../viewmodels/ProviderV
 import { ReasoningRequestStrategy } from './registry/CompatibilityResolver'
 import { ModelRole } from '../models/ChatModels'
 import { getEffectiveApiKey } from '../config/PresetProviders'
+import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 
 // 翻译/标题生成结果
 export interface AITaskResult {
@@ -330,7 +331,7 @@ export class AITaskService {
     for (let i = 0; i < provider.models.length; i++) {
       if (provider.models[i].id === translateModel.modelId) {
         apiConfig.modelReasoningStrategyOverride = ''
-        apiConfig.modelSupportsReasoning = provider.models[i].capabilities.supportsReasoning
+        apiConfig.modelSupportsReasoning = getEffectiveCapabilities(provider.models[i]).supportsReasoning
         break
       }
     }

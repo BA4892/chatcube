@@ -9,8 +9,6 @@ import {
 } from '../components/ProviderDetailSheet'
 import { ProviderIcon, resolveProviderTextIconDisplayMode } from '../components/ProviderIcon'
 import { ServiceRegistry } from '../services/ServiceRegistry'
-import { ModelCapabilityMatcher } from '../services/ModelCapabilityMatcher'
-import { IconDownloadCache } from '../services/IconDownloadCache'
 import {
   HdsNavigation,
   HdsNavigationMenuItemOptions,
@@ -62,7 +60,6 @@ struct ModelManagePage {
   @Local currentTabKey: ProviderManageTabKey = ProviderManageTabKey.ENABLED
   @Local selectedProviderId: string = ''
   @Local detailCreateMode: boolean = false
-  @Local isMatchingIcons: boolean = false
   // QR 分享导入相关
   @Local pendingImportPayload: string = ''
   @Local showImportPreviewSheet: boolean = false
@@ -552,19 +549,6 @@ struct ModelManagePage {
           .layoutWeight(1)
 
         Button() {
-          SymbolGlyph($r('sys.symbol.wand_and_stars'))
-            .fontSize(18)
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.matchAllIcons()
-        })
-
-        Button() {
           SymbolGlyph($r('sys.symbol.plus_circle'))
             .fontSize(18)
             .fontColor([$r('app.color.text_primary')])
@@ -608,19 +592,6 @@ struct ModelManagePage {
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.wand_and_stars'))
-          .fontSize(18)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .type(ButtonType.Circle)
-      .width(36)
-      .height(36)
-      .backgroundColor($r('app.color.divider'))
-      .onClick(() => {
-        this.matchAllIcons()
-      })
 
       Button() {
         SymbolGlyph($r('sys.symbol.plus_circle'))
@@ -667,19 +638,6 @@ struct ModelManagePage {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.wand_and_stars'))
-            .fontSize(18)
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.matchAllIcons()
-        })
 
         Button() {
           SymbolGlyph($r('sys.symbol.plus_circle'))
@@ -1059,21 +1017,7 @@ struct ModelManagePage {
     addIcon.fontSize(20)
     addIcon.fontColor([$r('app.color.text_primary')])
 
-    const matchIconsIcon = new SymbolGlyphModifier($r('sys.symbol.wand_and_stars'))
-    matchIconsIcon.fontSize(20)
-    matchIconsIcon.fontColor([$r('app.color.text_primary')])
-
     const menus: Array<HdsNavigationMenuItemOptions> = [
-      {
-        content: {
-          label: $r('app.string.match_icons'),
-          icon: matchIconsIcon,
-          isEnabled: !this.isMatchingIcons,
-          action: () => {
-            this.matchAllIcons()
-          }
-        }
-      },
       {
         content: {
           label: $r('app.string.add_custom_provider'),
@@ -1133,64 +1077,6 @@ struct ModelManagePage {
     await this.providerViewModel.updateProviderEnabled(provider.id, newStatus)
 
     this.showManageToast(newStatus ? $r('app.string.provider_enabled') : $r('app.string.provider_disabled'))
-  }
-
-  // 一键同步模型能力并匹配图标
-  private async matchAllIcons(): Promise<void> {
-    if (this.isMatchingIcons) {
-      return
-    }
-    this.isMatchingIcons = true
-    this.showManageToast($r('app.string.matching_icons'))
-
-    const matcher = ModelCapabilityMatcher.getInstance()
-    const loaded = await matcher.loadCache()
-    if (!loaded) {
-      this.showManageToast($r('app.string.match_icons_failed'))
-      this.isMatchingIcons = false
-      return
-    }
-
-    const iconCache = IconDownloadCache.getInstance()
-    let matchedCount = 0
-    let capabilityMatchedCount = 0
-    let totalModels = 0
-    // 去重：同一 logoUrl 只下载一次
-    const downloadedUrls = new Set<string>()
-
-    for (let i = 0; i < this.allProviders.length; i++) {
-      const provider = this.allProviders[i]
-      const providerCapabilityMatched = await matcher.applyCapabilitiesBatch(provider.models)
-      capabilityMatchedCount += providerCapabilityMatched
-
-      for (let j = 0; j < provider.models.length; j++) {
-        totalModels++
-        const logoUrl = matcher.getLogoUrl(provider.models[j].id)
-        if (logoUrl !== '') {
-          matchedCount++
-          matcher.recordModelLogo(provider.models[j].id, logoUrl)
-          if (!downloadedUrls.has(logoUrl)) {
-            downloadedUrls.add(logoUrl)
-            const cached = iconCache.getCachedIconUri(logoUrl)
-            if (cached === '') {
-              await iconCache.downloadAndCache(logoUrl)
-            }
-          }
-        }
-      }
-
-      if (providerCapabilityMatched > 0) {
-        await this.providerViewModel.saveProvider(provider)
-      }
-    }
-
-    // 显式保存，确保冷启动后可直接恢复
-    await matcher.savePersistedLogoIndex()
-
-    // 触发 UI 刷新
-    this.allProviders = [...this.allProviders]
-    this.showManageToast(`已同步 ${capabilityMatchedCount}/${totalModels} 个模型能力，匹配 ${matchedCount}/${totalModels} 个模型图标`)
-    this.isMatchingIcons = false
   }
 }
 

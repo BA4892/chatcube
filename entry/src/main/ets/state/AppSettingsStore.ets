@@ -46,6 +46,7 @@ interface ModelJsonRow {
   inputMode?: string
   outputMode?: string
   capabilities?: ModelCapabilitiesJson
+  capabilitiesUserModified?: boolean
 }
 
 interface BalancePathTerm {
@@ -568,6 +569,8 @@ export class AppSettingsStore {
           if (modelObj.capabilities !== undefined) {
             modelInfo.capabilities = ModelCapabilities.fromJson(modelObj.capabilities)
           }
+          // 派生覆盖标志:JSON 缺失视为 true(老数据保守,不让规则升级静默替换用户已固化的能力)
+          modelInfo.capabilitiesUserModified = modelObj.capabilitiesUserModified ?? true
           provider.models.push(modelInfo)
         }
       } catch (error) {

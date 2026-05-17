@@ -100,6 +100,12 @@ export default class EntryAbility extends UIAbility {
       await ModelCapabilityMatcher.getInstance().loadPersistedLogoIndex();
       hilog.info(DOMAIN, 'testTag', 'Model logo index loaded successfully');
 
+      // 后台预热 models.dev 远程缓存(供 logo 解析使用),不阻塞启动
+      ModelCapabilityMatcher.getInstance().preloadCache()
+        .catch((err: Object) => {
+          hilog.warn(DOMAIN, 'testTag', `models.dev preload skipped: ${JSON.stringify(err)}`);
+        });
+
       // 初始化数据库服务
       await ServiceRegistry.database().initialize(this.context);
       hilog.info(DOMAIN, 'testTag', 'DatabaseService initialized successfully');

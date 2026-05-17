@@ -14,6 +14,7 @@ import { WebSearchService } from '../../services/WebSearchService'
 import { appendUniqueToolId } from './ChatToolIdHelper'
 import { syncChatMessageFromSource } from './ChatMessageActionHelper'
 import { validateProviderConfig } from '../../utils/ProviderValidationUtils'
+import { getEffectiveCapabilities } from '../../utils/ModelCapabilityDeriver'
 import {
   LEGACY_WEB_SEARCH_TOOL_ID,
   SCRAPE_WEB_TOOL_ID,
@@ -201,9 +202,10 @@ export class ChatSendFlow {
     for (let i = 0; i < currentProvider.models.length; i++) {
       const model = currentProvider.models[i]
       if (model.id === currentModelId) {
+        const supportsTools = getEffectiveCapabilities(model).supportsTools
         console.info('ChatSendFlow',
-          `[Function Calling] 当前模型 supportsTools=${model.capabilities.supportsTools}, modelId=${model.id}`)
-        return model.capabilities.supportsTools
+          `[Function Calling] 当前模型 supportsTools=${supportsTools}, modelId=${model.id}`)
+        return supportsTools
       }
     }
     console.info('ChatSendFlow',

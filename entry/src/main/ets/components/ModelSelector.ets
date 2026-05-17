@@ -11,6 +11,7 @@ import {
 import { FavoriteModelsService, getFavoriteModelsService } from '../services/FavoriteModelsService'
 import { ProviderIcon } from './ProviderIcon'
 import { buildModelIconRenderData, ModelIconRenderData } from '../utils/ModelIconRenderUtils'
+import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 import { getAppUiState } from '../state/AppUiState'
 
 @ComponentV2
@@ -382,16 +383,16 @@ export struct ModelSelectorContent {
               .fontColor($r('app.color.text_primary'))
 
             Row() {
-              if (row.model.capabilities.supportsReasoning) {
+              if (getEffectiveCapabilities(row.model).supportsReasoning) {
                 this.CapabilityIcon('sys.symbol.AI_deep_thinking')
               }
-              if (row.model.capabilities.supportsVision) {
+              if (getEffectiveCapabilities(row.model).supportsVision) {
                 this.CapabilityIcon('sys.symbol.ohos_photo')
               }
-              if (row.model.capabilities.supportsTools) {
+              if (getEffectiveCapabilities(row.model).supportsTools) {
                 this.CapabilityIcon('sys.symbol.wrench_and_screwdriver')
               }
-              if (row.model.capabilities.supportsWebSearch) {
+              if (getEffectiveCapabilities(row.model).supportsWebSearch) {
                 this.CapabilityIcon('sys.symbol.ohos_wifi')
               }
             }
