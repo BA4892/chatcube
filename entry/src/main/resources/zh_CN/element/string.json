@@ -1101,6 +1101,34 @@
       "value": "保存失败"
     },
     {
+      "name": "provider_add_menu_manual",
+      "value": "手动新增"
+    },
+    {
+      "name": "provider_add_menu_scan",
+      "value": "扫码导入"
+    },
+    {
+      "name": "provider_import_title",
+      "value": "导入服务商"
+    },
+    {
+      "name": "provider_import_password_hint",
+      "value": "已识别到 ChatCube 配置二维码,请输入对方告知的数字密码进行解密。"
+    },
+    {
+      "name": "provider_import_decrypt",
+      "value": "解密"
+    },
+    {
+      "name": "provider_import_confirm",
+      "value": "导入"
+    },
+    {
+      "name": "provider_import_custom_url_warning",
+      "value": "这是自定义 baseUrl,导入前请确认来源可信。"
+    },
+    {
       "name": "provider_balance_title",
       "value": "账户余额"
     },

@@ -1101,6 +1101,34 @@
       "value": "Failed to save"
     },
     {
+      "name": "provider_add_menu_manual",
+      "value": "Add Manually"
+    },
+    {
+      "name": "provider_add_menu_scan",
+      "value": "Import via QR"
+    },
+    {
+      "name": "provider_import_title",
+      "value": "Import Provider"
+    },
+    {
+      "name": "provider_import_password_hint",
+      "value": "Detected a ChatCube provider QR. Enter the password shared with you to decrypt."
+    },
+    {
+      "name": "provider_import_decrypt",
+      "value": "Decrypt"
+    },
+    {
+      "name": "provider_import_confirm",
+      "value": "Import"
+    },
+    {
+      "name": "provider_import_custom_url_warning",
+      "value": "Custom baseUrl. Confirm the source is trusted before importing."
+    },
+    {
       "name": "provider_balance_title",
       "value": "Account Balance"
     },

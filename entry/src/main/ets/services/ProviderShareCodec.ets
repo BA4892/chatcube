@@ -83,6 +83,29 @@ class ProviderShareCodec {
   }
 
   /**
+   * 仅校验 envelope JSON 结构和 v/src 头,**不**解密。
+   * 用于扫到 QR 后立即拦截非 ChatCube payload(URL QR / 名片 QR 等)。
+   */
+  peekEnvelope(envelopeJson: string): boolean {
+    try {
+      const parsed = JSON.parse(envelopeJson) as ProviderShareEnvelopeV1
+      if (parsed === null || typeof parsed !== 'object') {
+        return false
+      }
+      if (parsed.v !== ENVELOPE_VERSION || parsed.src !== ENVELOPE_SOURCE) {
+        return false
+      }
+      if (parsed.kdf === undefined || parsed.kdf === null
+        || typeof parsed.iv !== 'string' || typeof parsed.ct !== 'string') {
+        return false
+      }
+      return true
+    } catch (err) {
+      return false
+    }
+  }
+
+  /**
    * 解析 envelope JSON 字符串、校验来源、用密码解密、返回明文 data。
    * 校验失败 / 密码错 / JSON 损坏分别返回不同 error code。
    */

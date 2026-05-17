@@ -29,6 +29,10 @@ import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentati
 import { isSettingsPageExpandedLayout } from '../utils/SettingsPageLayoutHelper'
 import { getAppUiState, observeAppUiState } from '../state/AppUiState'
 import { ProviderDetailRouteParams } from './ProviderDetailPage'
+import { ProviderImportPreviewSheet } from '../components/provider/ProviderImportPreviewSheet'
+import { getProviderShareScanner } from '../services/ProviderShareScanner'
+import { getProviderShareCodec } from '../services/ProviderShareCodec'
+import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import {
   ProviderManageTabKey,
   filterProvidersByTab,
@@ -59,6 +63,10 @@ struct ModelManagePage {
   @Local selectedProviderId: string = ''
   @Local detailCreateMode: boolean = false
   @Local isMatchingIcons: boolean = false
+  // QR 分享导入相关
+  @Local pendingImportPayload: string = ''
+  @Local showImportPreviewSheet: boolean = false
+  @Local isScanning: boolean = false
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
@@ -208,6 +216,35 @@ struct ModelManagePage {
     }
     this.detailCreateMode = true
     this.selectedProviderId = ''
+  }
+
+  private async triggerScanImport(): Promise<void> {
+    if (this.isScanning) {
+      return
+    }
+    this.isScanning = true
+    try {
+      const result = await getProviderShareScanner().pickImageAndDecodeQr()
+      if (!result.ok) {
+        if (result.error === 'no_qr') {
+          showToast(this.getUIContext(),
+            pickLocalizedText('未识别到二维码', 'No QR detected'))
+        } else if (result.error === 'unknown') {
+          showToast(this.getUIContext(),
+            pickLocalizedText('扫描失败,请重试', 'Scan failed, please retry'))
+        }
+        return
+      }
+      if (!getProviderShareCodec().peekEnvelope(result.payload)) {
+        showToast(this.getUIContext(),
+          pickLocalizedText('不是有效的 ChatCube 配置', 'Not a valid ChatCube payload'))
+        return
+      }
+      this.pendingImportPayload = result.payload
+      this.showImportPreviewSheet = true
+    } finally {
+      this.isScanning = false
+    }
   }
 
   private openProviderDetailPage(providerId: string, isCreateMode: boolean): void {
@@ -454,6 +491,54 @@ struct ModelManagePage {
     .width('100%')
     .height('100%')
     .backgroundColor(getAppUiState().themeBackground)
+    .bindSheet($$this.showImportPreviewSheet, this.ImportPreviewSheetBuilder(), {
+      height: SheetSize.LARGE,
+      showClose: false,
+      dragBar: true,
+      blurStyle: BlurStyle.Regular,
+      shouldDismiss: (dismissAction: SheetDismiss) => {
+        dismissAction.dismiss()
+      },
+      onDisappear: () => {
+        this.pendingImportPayload = ''
+      }
+    })
+  }
+
+  @Builder
+  private AddProviderMenuBuilder() {
+    Menu() {
+      MenuItem({
+        startIcon: $r('sys.symbol.plus_circle'),
+        content: $r('app.string.provider_add_menu_manual')
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.openCreateProvider()
+        })
+      MenuItem({
+        startIcon: $r('sys.symbol.qrcode_viewfinder'),
+        content: $r('app.string.provider_add_menu_scan')
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          void this.triggerScanImport()
+        })
+    }
+  }
+
+  @Builder
+  private ImportPreviewSheetBuilder() {
+    ProviderImportPreviewSheet({
+      payload: this.pendingImportPayload,
+      onClose: () => {
+        this.showImportPreviewSheet = false
+        this.pendingImportPayload = ''
+      },
+      onImported: (_providerId: string) => {
+        this.refreshFromCache()
+      }
+    })
   }
 
   @Builder
@@ -488,9 +573,7 @@ struct ModelManagePage {
         .width(36)
         .height(36)
         .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.openCreateProvider()
-        })
+        .bindMenu(this.AddProviderMenuBuilder())
       }
       .width('100%')
       .height(64)
@@ -548,9 +631,7 @@ struct ModelManagePage {
       .width(36)
       .height(36)
       .backgroundColor($r('app.color.divider'))
-      .onClick(() => {
-        this.openCreateProvider()
-      })
+      .bindMenu(this.AddProviderMenuBuilder())
     }
     .width('100%')
     .height(56)
@@ -609,9 +690,7 @@ struct ModelManagePage {
         .width(36)
         .height(36)
         .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.openCreateProvider()
-        })
+        .bindMenu(this.AddProviderMenuBuilder())
       }
       .width('100%')
       .height(56)
