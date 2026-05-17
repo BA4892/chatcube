@@ -517,7 +517,7 @@ struct ModelManagePage {
           this.openCreateProvider()
         })
       MenuItem({
-        startIcon: $r('sys.symbol.qrcode_viewfinder'),
+        startIcon: $r('sys.symbol.qrcode'),
         content: $r('app.string.provider_add_menu_scan')
       })
         .contentFont({ size: 14 })

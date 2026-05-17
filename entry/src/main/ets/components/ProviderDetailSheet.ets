@@ -1362,7 +1362,7 @@ export struct ProviderDetailPanel {
 
       if (!this.isCreateMode && this.provider !== null) {
         Button() {
-          SymbolGlyph($r('sys.symbol.square_and_arrow_up'))
+          SymbolGlyph($r('sys.symbol.arrow_right_up_and_square'))
             .fontSize(18)
             .fontColor([$r('app.color.text_secondary')])
         }
@@ -1449,7 +1449,7 @@ export struct ProviderDetailPanel {
 
           if (!this.isCreateMode && this.provider !== null) {
             Button() {
-              SymbolGlyph($r('sys.symbol.square_and_arrow_up'))
+              SymbolGlyph($r('sys.symbol.arrow_right_up_and_square'))
                 .fontSize(18)
                 .fontColor([$r('app.color.text_secondary')])
             }
@@ -1532,7 +1532,7 @@ export struct ProviderDetailPanel {
 
           if (!this.isCreateMode && this.provider !== null) {
             Button() {
-              SymbolGlyph($r('sys.symbol.square_and_arrow_up'))
+              SymbolGlyph($r('sys.symbol.arrow_right_up_and_square'))
                 .fontSize(18)
                 .fontColor([$r('app.color.text_secondary')])
             }
@@ -1609,7 +1609,7 @@ export struct ProviderDetailPanel {
         // 分享按钮（非创建模式）
         if (!this.isCreateMode && this.provider !== null) {
           Button() {
-            SymbolGlyph($r('sys.symbol.square_and_arrow_up'))
+            SymbolGlyph($r('sys.symbol.arrow_right_up_and_square'))
               .fontSize(18)
               .fontColor([$r('app.color.text_secondary')])
           }
