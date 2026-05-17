@@ -865,17 +865,12 @@ export struct MessageBubble {
       }
     }
     .width('100%')
-    // 新消息入场动画：用户消息从右侧滑入，AI消息从左侧滑入
-    .transition(
-      TransitionEffect.asymmetric(
-        // 入场：滑入 + 淡入
-        TransitionEffect.translate({
-          x: this.message.role === MessageRole.USER ? 30 : -30
-        }).combine(TransitionEffect.OPACITY),
-        // 退场：仅淡出
-        TransitionEffect.OPACITY
-      ).animation({ duration: 250, curve: Curve.EaseOut })
-    )
+    // 入退场动画: 仅 opacity, 不再用方向性 translate。
+    // 原因: transition 是组件级, LazyForEach 复用未启用时, 滚出 cachedCount 后再
+    // 回到视野会重新构造组件并重播该动画, 让用户误以为"消息重新加载"。
+    // 缩到 150ms + 去掉 translate 让 GPU 走 compositor-only, 减少叠加可见性。
+    // 真正消除重建开销需要给 MessageBubble 加 @Reusable, 后续单独 PoC。
+    .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut }))
   }
 
   // 处理翻译
