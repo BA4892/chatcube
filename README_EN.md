@@ -46,18 +46,43 @@ These screenshots reflect the current HarmonyOS 6 (API 23) build:
   </tr>
 </table>
 
-## Highlights in 1.1.3
+## Highlights in 1.2.0
 
-- Added Huawei ID one-tap sign-in: a login page on first launch, with an avatar entry in Settings to sign out
-- Moved advanced generation parameters such as temperature and Top K into Assistant settings for per-assistant behavior control
-- Added an AI-generated content notice under the chat composer for release compliance
-- Improved attachment upload and parsing so more file types can inject readable content into chat context
-- Wide assistant bubbles now adapt for tables, code blocks, HTML, and Mermaid content
-- Mermaid diagrams can be previewed directly from `mermaid` code blocks, with source view, copy, and fullscreen preview
-- OpenAI Responses support is tighter, including tool calls, reasoning summaries, history encoding, and share exports
-- Web search, multi-session streaming, background tasks, and assistant-message avatars are more stable
-- The About section now includes a beta invite entry, and the README invite link points to a live redirect for the latest build
-- Fixed Markdown image saving, missing content in image sharing, Assistant tab overlap, and Responses edge cases
+### General
+- Added a first-launch Onboarding flow, with a "Replay onboarding" entry in Settings for revisiting it anytime
+- Empty state in tablet split view now shows curated prompt cards for one-tap conversation start
+- SnackBar immersive material now follows the user's material setting for visual consistency
+- Removed the Aifadian (爱发电) sponsorship entry
+
+### Chat
+- Reworked chat bubble rendering and message storage to natively support mixed flows of multi-round tool calls, deep reasoning, and web search
+- New "Message Map" entry in the chat top bar — browse the full conversation outline and jump with a flash highlight on the matched message
+- LaTeX formula fullscreen preview: tap a long formula to open the preview, with pinch-to-zoom and one-tap save to album
+- Web search upgrade: two new search services, web page crawling adapter, and a lightweight chip menu in chat showing the active search engine for quick switching
+
+### Assistants
+- Slimmer assistant cards, model chip moved up; the "New" button is now an Extended FAB for easier reach
+- Switched to a sectioned editor for a cleaner structure
+- Parameter panel completed: Temperature / TopP / Presence Penalty / Frequency Penalty / Context Message Count / Max Output Tokens
+
+### Tools Center & MCP
+- Tool whitelist is now managed per-assistant, replacing the global tool toggle
+- More granular MCP permission control: per-tool approval policies; the confirmation dialog supports collapse, remind-me-later, and double confirmation
+- Tool list is now persisted, and per-tool permissions are individually configurable
+- New AskUserCard: a dedicated interactive card for the `ask_user` tool, letting users reply directly inside the bubble
+
+### Provider Management
+- Provider QR sharing: securely encrypted end-to-end, one-tap export / import of provider configurations
+- Refined model icon and capability detection rules for more accurate matching
+
+### Tablet
+- Tablet chat split pane now supports drag-to-resize
+
+### Bug Fixes
+- Fixed max output tokens being silently capped at 4096 when not explicitly set
+- Fixed potential overlap between the loading icon and toolbar icons in the chat view
+- Fixed an unexpected top padding on the tablet chat title bar
+- Fixed interaction issues in chat edit mode
 
 ## Features
 
