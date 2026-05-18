@@ -147,3 +147,56 @@ export function buildHdsTopNavigationTitleBarOptionsForPage(materialType: number
   options.stackBuilder = stackBuilder
   return buildHdsTopNavigationTitleBarOptions(options)
 }
+
+/**
+ * 把设置中的高级材质档位 (materialType / materialLevel) 映射到 BlurStyle。
+ * 用于不支持 hdsMaterial.systemMaterialEffect 的组件 (如 HdsSnackBar、ChatToolbar
+ * 等使用 backgroundBlurStyle 的浮层) 跟随用户档位。
+ *
+ * 档位语义:
+ *   materialType: 0 = NONE(关闭) / 100 = ADAPTIVE / 101 = IMMERSIVE
+ *   materialLevel: 0 = 精致 / 1 = 温润 / 2 = 平滑 / 10 = 自适应
+ */
+export function getBlurStyleForMaterial(materialType: number, materialLevel: number): BlurStyle {
+  if (materialType === 0) {
+    return BlurStyle.NONE
+  }
+  if (materialLevel === 0) {
+    return BlurStyle.COMPONENT_ULTRA_THIN
+  }
+  if (materialLevel === 1) {
+    return BlurStyle.COMPONENT_THIN
+  }
+  if (materialLevel === 2) {
+    return BlurStyle.COMPONENT_REGULAR
+  }
+  // 10 = 自适应, 维持原 SnackBar 默认观感 (REGULAR)
+  return BlurStyle.COMPONENT_REGULAR
+}
+
+/**
+ * 与 getBlurStyleForMaterial 配套, 决定 BlurStrategy。
+ * materialType=NONE 时直接禁用模糊策略, 否则走 ADAPTIVE 让系统按性能/电量动态调节。
+ */
+export function getBlurStrategyForMaterial(materialType: number): BlurStrategy {
+  if (materialType === 0) {
+    return BlurStrategy.DISABLE
+  }
+  return BlurStrategy.ADAPTIVE
+}
+
+/**
+ * 直接读取当前 AppUiState 的高级材质档位并返回 BlurStyle, 调用方无需关心档位字段。
+ */
+export function getCurrentMaterialBlurStyle(): BlurStyle {
+  const state = getAppUiState()
+  return getBlurStyleForMaterial(state.materialType, state.materialLevel)
+}
+
+/**
+ * 直接读取当前 AppUiState 的高级材质档位并返回 BlurStrategy。
+ */
+export function getCurrentMaterialBlurStrategy(): BlurStrategy {
+  const state = getAppUiState()
+  return getBlurStrategyForMaterial(state.materialType)
+}

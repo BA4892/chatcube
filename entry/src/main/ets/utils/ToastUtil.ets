@@ -1,6 +1,5 @@
 import { PromptAction } from '@kit.ArkUI'
 import {
-  BlurStrategy,
   HdsSnackBar,
   SnackBarIconOptions,
   SnackBarIconType,
@@ -9,6 +8,10 @@ import {
   SnackBarOperationType,
   SnackBarStyleOptions
 } from '@kit.UIDesignKit'
+import {
+  getCurrentMaterialBlurStrategy,
+  getCurrentMaterialBlurStyle
+} from './HdsVisualEffectUtil'
 
 export enum SnackBarTone {
   DEFAULT = 0,
@@ -143,9 +146,10 @@ export function showSnackBar(context: UIContext, options: SnackBarDisplayOptions
       duration: options.duration,
       pressBackCallback: dismissCurrentSnackBar,
       isHeightAdaptive: true,
-      // API 23 高级材质效果 - 自适应沉浸式毛玻璃
-      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
-      blurStrategy: BlurStrategy.ADAPTIVE,
+      // API 23 高级材质效果 - 跟随设置界面 "外观 → 高级材质" 的档位
+      // (materialType = 0 时关闭模糊; materialLevel 决定模糊强度)
+      backgroundBlurStyle: getCurrentMaterialBlurStyle(),
+      blurStrategy: getCurrentMaterialBlurStrategy(),
       themeColorMode: ThemeColorMode.SYSTEM
     }
     snackBar.show(icon, messageOptions, operation, style)
