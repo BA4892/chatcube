@@ -1869,24 +1869,16 @@
       "value": "Your feature requests and bug reports get fast-tracked"
     },
     {
-      "name": "sponsor_perk_channel_title",
-      "value": "Dedicated channel"
-    },
-    {
-      "name": "sponsor_perk_channel_desc",
-      "value": "Join the sponsor-only chat to talk to the author directly"
-    },
-    {
       "name": "sponsor_perk_resource_title",
-      "value": "Shared API gateway resources"
+      "value": "Shared AI tokens"
     },
     {
       "name": "sponsor_perk_resource_desc",
-      "value": "Occasional sharing of self-hosted gateway keys for personal learning and testing — see plan details"
+      "value": "Occasional sharing of the author's personal AI service tokens for learning and testing"
     },
     {
       "name": "sponsor_qq_hint",
-      "value": "💡 Please leave your QQ number in the sponsorship note. The author will reach out via the QQ group to verify and grant perks (group number listed under About ChatCube)."
+      "value": "💡 When tipping via WeChat, leave your QQ number or other contact info in the note. The author will reach out via the QQ group to grant perks (group number listed under About ChatCube)."
     },
     {
       "name": "about_open_source",

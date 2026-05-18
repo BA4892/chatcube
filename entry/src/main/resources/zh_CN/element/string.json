@@ -1869,24 +1869,16 @@
       "value": "你提的需求 / Bug 进入优先处理队列"
     },
     {
-      "name": "sponsor_perk_channel_title",
-      "value": "专属交流通道"
-    },
-    {
-      "name": "sponsor_perk_channel_desc",
-      "value": "加入赞助者群,直接和作者沟通"
-    },
-    {
       "name": "sponsor_perk_resource_title",
-      "value": "API 中转资源"
+      "value": "自用 token 分享"
     },
     {
       "name": "sponsor_perk_resource_desc",
-      "value": "不定期分享作者自建中转代理的可用 Key,用于个人学习测试,具体见赞助方案说明"
+      "value": "不定期分享作者自用的 AI 服务 token,用于个人学习测试"
     },
     {
       "name": "sponsor_qq_hint",
-      "value": "💡 赞助时请在留言里写下你的 QQ 号,作者将通过 QQ 群联系你并兑现福利(群号见「关于 ChatCube」)"
+      "value": "💡 微信打赏时请在备注里写下你的 QQ 号或其他联系方式,作者会通过 QQ 群联系你并兑现福利(群号见「关于 ChatCube」)"
     },
     {
       "name": "about_open_source",

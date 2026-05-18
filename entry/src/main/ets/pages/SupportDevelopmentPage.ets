@@ -101,11 +101,6 @@ struct SupportDevelopmentPage {
         desc: $r('app.string.sponsor_perk_priority_desc')
       } as PerkItem,
       {
-        icon: $r('sys.symbol.message_fill'),
-        title: $r('app.string.sponsor_perk_channel_title'),
-        desc: $r('app.string.sponsor_perk_channel_desc')
-      } as PerkItem,
-      {
         icon: $r('sys.symbol.wand_and_stars'),
         title: $r('app.string.sponsor_perk_resource_title'),
         desc: $r('app.string.sponsor_perk_resource_desc')
