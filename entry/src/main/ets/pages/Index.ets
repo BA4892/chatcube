@@ -59,13 +59,6 @@ import {
 } from '../utils/TaskAlertUtils'
 import { IndexBottomTabItem } from '../components/index/IndexBottomTabItem'
 import { IndexEmptyStateCard } from '../components/index/IndexEmptyStateCard'
-import { IndexRecommendedPromptsCard } from '../components/index/IndexRecommendedPromptsCard'
-import {
-  getPresetPrompts,
-  parseOpenNewChatWithPromptPayload,
-  PresetPrompt,
-  resolvePromptBody
-} from '../config/PresetPrompts'
 import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay'
 import { getOnboardingViewModel } from '../viewmodels/OnboardingViewModel'
 import { IndexSettingsPanel } from '../components/index/IndexSettingsPanel'
@@ -4114,18 +4107,6 @@ struct Index {
               this.openChatRoute({} as ChatPageRouteParams)
             }
           })
-
-          IndexRecommendedPromptsCard({
-            prompts: getPresetPrompts(),
-            onPromptClick: (prompt: PresetPrompt): void => {
-              const bodyText = resolvePromptBody(prompt, getContext(this) as common.Context)
-              if (bodyText === '') {
-                return
-              }
-              this.openChatRoute({ initialDraft: bodyText } as ChatPageRouteParams)
-            }
-          })
-            .margin({ bottom: 24 })
         }
         .width('100%')
         .layoutWeight(1)

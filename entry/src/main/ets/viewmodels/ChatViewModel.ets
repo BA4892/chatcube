@@ -1222,18 +1222,23 @@ export class ChatViewModel {
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
 
-        if (snapshotSession !== null) {
-          await this.databaseService.addMessage(snapshotSessionId, aiMessage)
-          this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
-          this.markPendingAIMessagePersisted(aiMessage.id)
-          this.clearPendingAIMessageIfMatches(aiMessage.id)
+        try {
+          if (snapshotSession !== null) {
+            await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+            this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+            this.markPendingAIMessagePersisted(aiMessage.id)
+            this.clearPendingAIMessageIfMatches(aiMessage.id)
 
-          if (shouldAutoGenerateTitle) {
-            this.generateSmartTitle(snapshotSession)
+            if (shouldAutoGenerateTitle) {
+              this.generateSmartTitle(snapshotSession)
+            }
           }
+        } catch (persistError) {
+          console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
+        } finally {
+          this.unregisterActiveRequest(requestId)
+          onComplete()
         }
-        this.unregisterActiveRequest(requestId)
-        onComplete()
       },
       (error: string) => {
         if (cancelled) {
@@ -1526,17 +1531,22 @@ ${webContext.content}
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
-        if (snapshotSession !== null) {
-          await this.databaseService.addMessage(snapshotSessionId, aiMessage)
-          this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
-          this.markPendingAIMessagePersisted(aiMessage.id)
-          this.clearPendingAIMessageIfMatches(aiMessage.id)
-          if (shouldAutoGenerateTitle) {
-            this.generateSmartTitle(snapshotSession)
+        try {
+          if (snapshotSession !== null) {
+            await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+            this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+            this.markPendingAIMessagePersisted(aiMessage.id)
+            this.clearPendingAIMessageIfMatches(aiMessage.id)
+            if (shouldAutoGenerateTitle) {
+              this.generateSmartTitle(snapshotSession)
+            }
           }
+        } catch (persistError) {
+          console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
+        } finally {
+          this.unregisterActiveRequest(requestId)
+          onComplete()
         }
-        this.unregisterActiveRequest(requestId)
-        onComplete()
       },
       (error: string) => {
         if (cancelled) {
@@ -1861,17 +1871,22 @@ ${limitedSearchContext}
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
-        if (snapshotSession !== null) {
-          await this.databaseService.addMessage(snapshotSessionId, aiMessage)
-          this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
-          this.markPendingAIMessagePersisted(aiMessage.id)
-          this.clearPendingAIMessageIfMatches(aiMessage.id)
-          if (shouldAutoGenerateTitle) {
-            this.generateSmartTitle(snapshotSession)
+        try {
+          if (snapshotSession !== null) {
+            await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+            this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+            this.markPendingAIMessagePersisted(aiMessage.id)
+            this.clearPendingAIMessageIfMatches(aiMessage.id)
+            if (shouldAutoGenerateTitle) {
+              this.generateSmartTitle(snapshotSession)
+            }
           }
+        } catch (persistError) {
+          console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
+        } finally {
+          this.unregisterActiveRequest(requestId)
+          onComplete()
         }
-        this.unregisterActiveRequest(requestId)
-        onComplete()
       },
       (error: string) => {
         if (cancelled) {
@@ -2211,17 +2226,22 @@ ${limitedSearchContext}
     aiMessage.isSearching = false
     onAIMessageUpdated(aiMessage)
 
-    if (snapshotSession !== null) {
-      await this.databaseService.addMessage(snapshotSessionId, aiMessage)
-      this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
-      this.markPendingAIMessagePersisted(aiMessage.id)
-      this.clearPendingAIMessageIfMatches(aiMessage.id)
-      if (shouldAutoGenerateTitle) {
-        this.generateSmartTitle(snapshotSession)
+    try {
+      if (snapshotSession !== null) {
+        await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+        this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+        this.markPendingAIMessagePersisted(aiMessage.id)
+        this.clearPendingAIMessageIfMatches(aiMessage.id)
+        if (shouldAutoGenerateTitle) {
+          this.generateSmartTitle(snapshotSession)
+        }
       }
+    } catch (persistError) {
+      console.error('ChatViewModel', `Failed to persist AI message in finalizeAIMessage: ${JSON.stringify(persistError)}`)
+    } finally {
+      this.unregisterActiveRequest(requestId)
+      onComplete()
     }
-    this.unregisterActiveRequest(requestId)
-    onComplete()
   }
 
   private getCancelledToolResultMessage(toolResults: ToolResult[]): string {
@@ -2290,14 +2310,19 @@ ${limitedSearchContext}
     aiMessage.isSearching = false
     onAIMessageUpdated(aiMessage)
 
-    if (snapshotSession !== null) {
-      await this.databaseService.addMessage(snapshotSessionId, aiMessage)
-      this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
-      this.markPendingAIMessagePersisted(aiMessage.id)
+    try {
+      if (snapshotSession !== null) {
+        await this.databaseService.addMessage(snapshotSessionId, aiMessage)
+        this.appendMessageToSessionIfMissing(snapshotSession, aiMessage)
+        this.markPendingAIMessagePersisted(aiMessage.id)
+      }
+    } catch (persistError) {
+      console.error('ChatViewModel', `Failed to persist AI message in failAIMessage: ${JSON.stringify(persistError)}`)
+    } finally {
+      this.clearPendingAIMessageIfMatches(aiMessage.id)
+      this.unregisterActiveRequest(requestId)
+      onError(errorMessage)
     }
-    this.clearPendingAIMessageIfMatches(aiMessage.id)
-    this.unregisterActiveRequest(requestId)
-    onError(errorMessage)
   }
 
   // 工具调用循环

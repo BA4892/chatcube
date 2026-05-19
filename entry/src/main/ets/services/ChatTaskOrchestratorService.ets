@@ -44,6 +44,10 @@ export class ChatTaskOrchestratorService {
   }
 
   getRunningTaskCount(): number {
+    return this.countRunningTasks()
+  }
+
+  private countRunningTasks(): number {
     let count = 0
     this.tasks.forEach((runtime) => {
       if (runtime.info.status === ChatTaskStatus.RUNNING && !runtime.finalized) {
@@ -139,7 +143,7 @@ export class ChatTaskOrchestratorService {
   }
 
   private syncTaskCountAndStorage(): void {
-    const runningCount = this.getRunningTaskCount()
+    const runningCount = this.countRunningTasks()
     AppStorage.setOrCreate(AppStorageKeys.RUNNING_CHAT_TASK_COUNT, runningCount)
     this.backgroundGuard.updateRunningTaskCount(runningCount)
   }
@@ -195,6 +199,28 @@ export class ChatTaskOrchestratorService {
 
     for (let i = 0; i < maxRemove; i++) {
       this.tasks.delete(completedTaskIds[i])
+    }
+  }
+
+  // 终结指定 session 中所有未完成的 RUNNING 任务。
+  // 供 ChatPage.fixInconsistentState 在检测到"isSending=true 但无活跃请求"时调用，
+  // 确保 orchestrator 侧的任务计数同步下降。
+  failOrphanedTasksForSession(sessionId: string): void {
+    if (sessionId === '') {
+      return
+    }
+    const orphanedTaskIds: string[] = []
+    this.tasks.forEach((runtime: ChatTaskRuntime, key: string) => {
+      if (runtime.info.sessionId === sessionId &&
+        runtime.info.status === ChatTaskStatus.RUNNING &&
+        !runtime.finalized) {
+        orphanedTaskIds.push(key)
+      }
+    })
+    for (let i = 0; i < orphanedTaskIds.length; i++) {
+      console.warn('ChatTaskOrchestratorService',
+        `Failing orphaned task for session ${sessionId}: ${orphanedTaskIds[i]}`)
+      this.finishTaskInternal(orphanedTaskIds[i], ChatTaskStatus.FAILED, '任务异常终止')
     }
   }
 }

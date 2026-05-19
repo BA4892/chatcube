@@ -455,7 +455,10 @@ export struct ChatPage {
     if (this.isSending && !hasActiveRequestForCurrentSession) {
       this.isSending = false
       this.currentTaskId = ''
-      console.info('ChatPage', '[fixInconsistentState] 重置 isSending 状态')
+      // 同步清理 orchestrator 中该 session 的孤立 RUNNING 任务，
+      // 避免全局并行任务计数不下降导致「并行任务已达上限」。
+      this.chatTaskOrchestrator.failOrphanedTasksForSession(this.sessionId)
+      console.info('ChatPage', '[fixInconsistentState] 重置 isSending 状态并清理孤立任务')
     }
 
     // 检查最后一条消息的 isGenerating 和 isSearching 状态
