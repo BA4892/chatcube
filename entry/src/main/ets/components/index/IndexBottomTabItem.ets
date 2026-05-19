@@ -9,8 +9,25 @@ export struct IndexBottomTabItem {
   @Param label: Resource = $r('app.string.tab_chat')
   @Param badgeCount: number = 0
   @Local pressed: boolean = false
+  // 图标弹跳动画
+  @Local iconScale: number = 1
   private get themePrimary(): string {
     return getAppUiState().themePrimary
+  }
+
+  @Monitor('active')
+  onActiveChanged(): void {
+    if (this.active) {
+      // 选中时图标弹跳: 1 → 1.25 → 1
+      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.iconScale = 1.25
+      })
+      setTimeout((): void => {
+        this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+          this.iconScale = 1
+        })
+      }, 150)
+    }
   }
 
   build() {
@@ -19,6 +36,7 @@ export struct IndexBottomTabItem {
         SymbolGlyph(this.active ? this.activeIcon : this.inactiveIcon)
           .fontSize(22)
           .fontColor(this.active ? [this.themePrimary] : [$r('app.color.text_secondary')])
+          .scale({ x: this.iconScale, y: this.iconScale })
 
         if (this.badgeCount > 0) {
           Row() {
@@ -39,8 +57,9 @@ export struct IndexBottomTabItem {
 
       Text(this.label)
         .fontSize(10)
-        .fontWeight(FontWeight.Medium)
+        .fontWeight(this.active ? FontWeight.Bold : FontWeight.Medium)
         .fontColor(this.active ? this.themePrimary : $r('app.color.text_secondary'))
+        .animation({ duration: 200 })
     }
     .width('100%')
     .height('100%')
@@ -61,4 +80,3 @@ export struct IndexBottomTabItem {
     }))
   }
 }
-

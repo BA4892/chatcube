@@ -31,6 +31,7 @@ export struct IndexSessionListItem {
       session: this.item.session,
       enableAnimation: false,
       enableContextMenu: !this.isMultiSelectMode,
+      isActive: this.item.isActive,
       onTap: (): void => {
         this.handleTap()
       },
@@ -48,10 +49,10 @@ export struct IndexSessionListItem {
       }
     })
       .borderRadius(12)
-      .clip(true)
+      .clip(false)
       .border({
-        width: 2,
-        color: this.item.isSelected || this.item.isActive ? this.themePrimary : Color.Transparent
+        width: this.item.isSelected ? 2 : 0,
+        color: this.item.isSelected ? this.themePrimary : Color.Transparent
       })
       .opacity(this.isMultiSelectMode && !this.item.isSelected ? 0.5 : 1)
       .animation({ duration: 200 })

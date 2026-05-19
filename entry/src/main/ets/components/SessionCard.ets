@@ -13,6 +13,7 @@ export struct SessionCard {
   @Param session: ChatSession = new ChatSession('', '', '')
   @Param enableAnimation: boolean = true
   @Param enableContextMenu: boolean = true
+  @Param isActive: boolean = false
   @Local scaleValue: number = 1
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
@@ -262,10 +263,14 @@ export struct SessionCard {
       this.SuffixContent()
     }
     .width('100%')
-    .backgroundColor(this.themeSurface)
-    .border({ width: 1, color: this.themeDivider })
+    .backgroundColor(this.isActive ? this.themePrimaryLight : this.themeSurface)
+    .border({
+      width: this.isActive ? 1.5 : 1,
+      color: this.isActive ? this.themePrimary : this.themeDivider
+    })
     .borderRadius(12)
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .animation({ duration: 300, curve: Curve.EaseOut })
     .visualEffect(buildPointLightBorderEffect(this.uiVisualEnhanced))
     .onClick(() => {
       this.onTap()

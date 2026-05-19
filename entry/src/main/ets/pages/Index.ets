@@ -128,6 +128,7 @@ import { tryHandleProviderDetailInternalBack } from '../components/ProviderDetai
 import { tryHandleModelManageInternalBack } from './ModelManagePage'
 import { TRANSPARENT_BG_COLOR } from '../utils/IconGeneratorUtils'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
+import { withColorAlpha } from '../utils/ColorAlphaUtils'
 
 @Entry
 @ComponentV2
@@ -3011,48 +3012,66 @@ struct Index {
       this.AssistantJumpCardContent(assistant, featured)
     }
     .width('100%')
-    .padding({ left: 14, right: 14, top: featured ? 12 : 10, bottom: featured ? 12 : 10 })
     .backgroundColor(this.themeSurface)
-    .borderRadius(16)
+    .borderRadius(20)
     .border({
       width: assistant.id === this.currentAssistantId || this.openingAssistantId === assistant.id ? 1.5 : 1,
-      color: assistant.id === this.currentAssistantId || this.openingAssistantId === assistant.id ? this.themePrimary :
-      $r('app.color.divider')
+      color: assistant.id === this.currentAssistantId || this.openingAssistantId === assistant.id ?
+        this.getAssistantAccentColor(assistant) : $r('app.color.divider')
+    })
+    .shadow({
+      radius: assistant.id === this.currentAssistantId ? 12 : 4,
+      color: assistant.id === this.currentAssistantId ?
+        withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '30' : '18') : 'rgba(0,0,0,0.04)',
+      offsetX: 0,
+      offsetY: assistant.id === this.currentAssistantId ? 2 : 2
     })
     .scale({
       x: this.openingAssistantId === assistant.id ? 0.985 : 1,
       y: this.openingAssistantId === assistant.id ? 0.985 : 1
     })
     .opacity(this.openingAssistantId === assistant.id ? 0.92 : 1)
-    .animation({ duration: 180, curve: Curve.EaseOut })
+    .animation({ duration: 220, curve: Curve.EaseOut })
+    .clip(true)
     .onClick(() => {
       this.openAssistantSessions(assistant)
     })
   }
 
+  /**
+   * 助手英雄卡片内容: 分为渐变 Hero 头部 + 干净信息区
+   */
   @Builder
   private AssistantJumpCardContent(assistant: Assistant, featured: boolean) {
-    Column({ space: 8 }) {
-      Row({ space: 12 }) {
-        this.AssistantAvatarBadge(assistant.avatarSymbol, this.getAssistantAvatarColor(assistant), featured ? 40 : 38,
-          featured ? 13 : 12, featured ? 20 : 19, assistant.defaultProviderId, assistant.defaultModelId,
-          assistant.defaultModelName)
+    Column() {
+      // ========== Hero 头部: 助手色渐变背景 + 头像 + 名称 ==========
+      Row({ space: 14 }) {
+        this.AssistantAvatarBadge(assistant.avatarSymbol, this.getAssistantAvatarColor(assistant),
+          featured ? 52 : 48, featured ? 16 : 14, featured ? 26 : 24,
+          assistant.defaultProviderId, assistant.defaultModelId, assistant.defaultModelName)
 
-        Row({ space: 6 }) {
-          Text(assistant.name)
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+        Column({ space: 4 }) {
+          Row({ space: 6 }) {
+            Text(assistant.name)
+              .fontSize(featured ? 18 : 16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
 
-          if (assistant.id === this.currentAssistantId) {
-            this.AssistantStatusBadge($r('app.string.assistant_active_badge'), this.getAssistantAccentColor(assistant))
+            if (assistant.id === this.currentAssistantId) {
+              this.AssistantStatusBadge($r('app.string.assistant_active_badge'),
+                this.getAssistantAccentColor(assistant))
+            }
           }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          this.AssistantModelChip(assistant)
         }
         .layoutWeight(1)
-        .alignItems(VerticalAlign.Center)
+        .alignItems(HorizontalAlign.Start)
 
         Button() {
           SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
@@ -3073,27 +3092,39 @@ struct Index {
         })
       }
       .width('100%')
+      .padding({ left: 16, right: 12, top: 14, bottom: 12 })
       .alignItems(VerticalAlign.Center)
+      .linearGradient({
+        angle: 135,
+        colors: [
+          [withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '18' : '10'), 0.0],
+          [withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '08' : '05'), 0.6],
+          [Color.Transparent, 1.0]
+        ]
+      })
 
-      this.AssistantModelChip(assistant)
+      // ========== 信息区: 系统提示词预览 + 底部操作 ==========
+      Column({ space: 8 }) {
+        Text(this.getAssistantPromptPreviewText(assistant))
+          .fontSize(13)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .lineHeight(18)
+          .width('100%')
 
-      Text(this.getAssistantPromptPreviewText(assistant))
-        .fontSize(13)
-        .fontColor($r('app.color.text_tertiary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .lineHeight(18)
+        Row({ space: 8 }) {
+          this.AssistantCardFooterMeta(assistant)
+
+          this.AssistantCardActionButton($r('sys.symbol.plus'), $r('app.string.new_chat'), true, (): void => {
+            this.openAssistantNewChat(assistant)
+          })
+        }
         .width('100%')
-
-      Row({ space: 8 }) {
-        this.AssistantCardFooterMeta(assistant)
-
-        this.AssistantCardActionButton($r('sys.symbol.plus'), $r('app.string.new_chat'), true, (): void => {
-          this.openAssistantNewChat(assistant)
-        })
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
+      .padding({ left: 16, right: 14, top: 2, bottom: 12 })
     }
     .width('100%')
   }
