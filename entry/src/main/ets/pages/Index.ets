@@ -122,6 +122,7 @@ import { tryHandleModelManageInternalBack } from './ModelManagePage'
 import { TRANSPARENT_BG_COLOR } from '../utils/IconGeneratorUtils'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { parseOpenNewChatWithPromptPayload } from '../config/PresetPrompts'
 
 @Entry
 @ComponentV2

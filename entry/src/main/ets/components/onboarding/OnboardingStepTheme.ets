@@ -34,50 +34,56 @@ export struct OnboardingStepTheme {
   }
 
   build() {
-    Column({ space: 24 }) {
-      Column({ space: 8 }) {
-        Text($r('app.string.onboarding_step1_title'))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Text($r('app.string.onboarding_step1_desc'))
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-
-      Column({ space: 12 }) {
-        ForEach(THEME_OPTIONS, (option: ThemeOption) => {
-          this.ThemeRow(option)
-        }, (option: ThemeOption) => option.mode)
-      }
-      .width('100%')
-
-      Column({ space: 12 }) {
-        Text($r('app.string.onboarding_step1_color_label'))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-
-        Scroll() {
-          Row({ space: 14 }) {
-            ForEach(ALL_THEMES, (theme: ThemeInfo) => {
-              this.ColorSwatch(theme)
-            }, (theme: ThemeInfo) => theme.id)
-          }
-          .padding({ left: 2, right: 2, top: 4, bottom: 4 })
+    Scroll() {
+      Column({ space: 24 }) {
+        Column({ space: 8 }) {
+          Text($r('app.string.onboarding_step1_title'))
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text($r('app.string.onboarding_step1_desc'))
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+
+        Column({ space: 12 }) {
+          ForEach(THEME_OPTIONS, (option: ThemeOption) => {
+            this.ThemeRow(option)
+          }, (option: ThemeOption) => option.mode)
+        }
+        .width('100%')
+
+        Column({ space: 12 }) {
+          Text($r('app.string.onboarding_step1_color_label'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+
+          Scroll() {
+            Row({ space: 14 }) {
+              ForEach(ALL_THEMES, (theme: ThemeInfo) => {
+                this.ColorSwatch(theme)
+              }, (theme: ThemeInfo) => theme.id)
+            }
+            .padding({ left: 2, right: 2, top: 4, bottom: 4 })
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+        }
+        .alignItems(HorizontalAlign.Start)
         .width('100%')
       }
-      .alignItems(HorizontalAlign.Start)
       .width('100%')
+      .padding({ left: 24, right: 24, bottom: 16 })
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .padding({ left: 24, right: 24 })
-    .alignItems(HorizontalAlign.Start)
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   @Builder

@@ -148,6 +148,7 @@ export struct MessageBubble {
   @Local flashScale: number = 1.0
   @Local flashAlpha: number = 0
   @Local lastConsumedFlashTick: number = 0
+
   // 深色模式状态（用于主题适配）
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode

@@ -98,6 +98,7 @@ export struct ThemeAppearanceSettingsView {
 
   @Local currentTabIndex: number = TAB_INDEX_THEME
   @Local previewTabIndex: number = PREVIEW_TAB_INDEX_CHAT
+  @Local showPreview: boolean = false
 
   private settingsManager = ServiceRegistry.settings()
   private themeScroller: Scroller = new Scroller()
@@ -923,47 +924,86 @@ export struct ThemeAppearanceSettingsView {
   }
 
   @Builder
+  private PreviewFab() {
+    Column() {
+      SymbolGlyph(this.showPreview ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'))
+        .fontSize(22)
+        .fontColor([Color.White])
+    }
+    .width(52)
+    .height(52)
+    .borderRadius(26)
+    .backgroundColor(this.themePrimary)
+    .justifyContent(FlexAlign.Center)
+    .shadow({
+      radius: 16,
+      color: '#33000000',
+      offsetX: 0,
+      offsetY: 4
+    })
+    .onClick(() => {
+      animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+        this.showPreview = !this.showPreview
+      })
+    })
+  }
+
+  @Builder
   private PageBody() {
-    Column({ space: 12 }) {
-      Row() {
-        Column() {
-          this.LivePreviewSection()
+    Stack() {
+      Column({ space: 12 }) {
+        if (this.showPreview) {
+          Row() {
+            Column() {
+              this.LivePreviewSection()
+            }
+            .width('100%')
+            .constraintSize({ maxWidth: this.getContentMaxWidth() })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .padding({ left: 16, right: 16, top: 8 })
+          .transition(TransitionEffect.OPACITY
+            .combine(TransitionEffect.translate({ y: -20 }))
+            .animation({ duration: 300, curve: Curve.EaseOut }))
         }
-        .width('100%')
-        .constraintSize({ maxWidth: this.getContentMaxWidth() })
+
+        HdsTabs({ barPosition: BarPosition.Start, index: this.currentTabIndex }) {
+          TabContent() {
+            this.ThemeTabContent()
+          }
+          .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_theme'), TAB_INDEX_THEME))
+
+          TabContent() {
+            this.FontTabContent()
+          }
+          .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_font'), TAB_INDEX_FONT))
+
+          TabContent() {
+            this.MaterialTabContent()
+          }
+          .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_material'), TAB_INDEX_MATERIAL))
+        }
+        .barMode(BarMode.Fixed)
+        .barHeight(48)
+        .scrollable(true)
+        .layoutWeight(1)
+        .animationDuration(280)
+        .onChange((idx: number) => {
+          if (this.currentTabIndex !== idx) {
+            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+              this.currentTabIndex = idx
+            })
+          }
+        })
       }
       .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .padding({ left: 16, right: 16, top: 8 })
-
-      HdsTabs({ barPosition: BarPosition.Start, index: this.currentTabIndex }) {
-        TabContent() {
-          this.ThemeTabContent()
-        }
-        .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_theme'), TAB_INDEX_THEME))
-
-        TabContent() {
-          this.FontTabContent()
-        }
-        .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_font'), TAB_INDEX_FONT))
-
-        TabContent() {
-          this.MaterialTabContent()
-        }
-        .tabBar(this.TopTabBarBuilder($r('app.string.appearance_tab_material'), TAB_INDEX_MATERIAL))
-      }
-      .barMode(BarMode.Fixed)
-      .barHeight(48)
-      .scrollable(true)
       .layoutWeight(1)
-      .animationDuration(280)
-      .onChange((idx: number) => {
-        if (this.currentTabIndex !== idx) {
-          animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
-            this.currentTabIndex = idx
-          })
-        }
-      })
+
+      Column() {
+        this.PreviewFab()
+      }
+      .position({ right: 20, bottom: this.isDetailPaneMode() ? 20 : 20 + this.px2vp(this.bottomAvoidHeight) })
     }
     .width('100%')
     .layoutWeight(1)

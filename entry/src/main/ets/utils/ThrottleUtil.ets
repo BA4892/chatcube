@@ -4,20 +4,32 @@ const DOMAIN = 0x0002
 const TAG = 'ThrottleUtil'
 
 /**
- * 节流工具类
- * 用于减少高频事件的触发频率，如流式输出时的 UI 更新
+ * 节流与打字机平滑差值工具类
+ * 用于实现大模型流式输出（SSE）的字字平滑渲染，提升用户视觉上的流畅度。
  */
 export class ThrottleUtil {
-  // 上次执行时间
+  // 上次执行时间（非打字机节流模式使用）
   private lastExecuteTime: number = 0
-  // 待执行的内容缓存
+  // 待执行的内容缓存（非打字机节流模式使用）
   private pendingContent: string = ''
-  // 定时器 ID
+  // 节流定时器 ID
   private timerId: number = -1
   // 节流间隔（毫秒）
   private readonly interval: number
   // 是否已启用
   private enabled: boolean = true
+
+  // ============ 打字机平滑差值相关属性 ============
+  // 是否开启打字机效果，默认开启，可实现真正的逐字平滑渲染
+  private useTypewriter: boolean = true
+  // 打字机待输出的字符缓冲区
+  private typewriterBuffer: string = ''
+  // 打字机定时器 ID
+  private typewriterTimerId: number = -1
+  // 打字机输出间隔（毫秒），一般 20ms - 30ms。20ms 即 1 秒打 50 个字，极度流畅且无卡顿。
+  private readonly typewriterInterval: number = 20
+  // 当前执行的回调函数
+  private activeCallback: ((content: string) => void) | null = null
 
   constructor(interval: number = 150) {
     this.interval = interval
@@ -25,43 +37,85 @@ export class ThrottleUtil {
   }
 
   /**
-   * 节流执行
-   * @param content 新增的内容
-   * @param callback 执行回调，参数为累积的内容
+   * 节流与打字机执行入口
+   * @param content 新到达的流式文本片段
+   * @param callback 触发 UI 更新的回调，参数为本次输出的字符片段
    */
   throttle(content: string, callback: (content: string) => void): void {
     if (!this.enabled) {
-      // 节流禁用时，直接执行回调
       callback(content)
       return
     }
 
-    const now = Date.now()
+    if (!this.useTypewriter) {
+      // 普通非打字机节流逻辑
+      this.pendingContent += content
+      const now = Date.now()
 
-    // 累积待执行内容
-    this.pendingContent += content
+      if (this.timerId !== -1) {
+        clearTimeout(this.timerId)
+        this.timerId = -1
+      }
 
-    // 清除之前的定时器
-    if (this.timerId !== -1) {
-      clearTimeout(this.timerId)
-      this.timerId = -1
-    }
-
-    // 检查是否可以立即执行
-    if (now - this.lastExecuteTime >= this.interval) {
-      // 立即执行
-      this.execute(callback)
-    } else {
-      // 设置定时器延迟执行
-      const delay = this.interval - (now - this.lastExecuteTime)
-      this.timerId = setTimeout(() => {
+      if (now - this.lastExecuteTime >= this.interval) {
         this.execute(callback)
-      }, delay)
+      } else {
+        const delay = this.interval - (now - this.lastExecuteTime)
+        this.timerId = setTimeout(() => {
+          this.execute(callback)
+        }, delay)
+      }
+      return
     }
+
+    // 打字机平滑差值逻辑：直接送入打字机队列，零延迟立即开始逐字打出！
+    if (content === '') {
+      return
+    }
+    this.typewriterBuffer += content
+    this.startTypewriter(callback)
   }
 
   /**
-   * 执行回调并重置状态
+   * 启动/运行打字机定时器循环
+   */
+  private startTypewriter(callback: (content: string) => void): void {
+    this.activeCallback = callback
+    if (this.typewriterTimerId !== -1) {
+      return
+    }
+
+    const tick = () => {
+      if (this.typewriterBuffer.length === 0) {
+        this.typewriterTimerId = -1
+        return
+      }
+
+      // 精确的逐字控制：默认每次只输出 1 个字符，实现真正平滑的逐字流动感。
+      // 只有在积压过多时（比如网络抖动导致大批字符瞬间到达），才自适应增加步长以追赶进度，避免视觉延迟。
+      let step = 1
+      const bufLen = this.typewriterBuffer.length
+      if (bufLen > 50) {
+        step = Math.ceil(bufLen / 10) // 严重积压（大于50字），快速追赶
+      } else if (bufLen > 20) {
+        step = 2 // 中度积压，每次打出 2 个字
+      }
+
+      const chunk = this.typewriterBuffer.substring(0, step)
+      this.typewriterBuffer = this.typewriterBuffer.substring(step)
+
+      if (this.activeCallback !== null) {
+        this.activeCallback(chunk)
+      }
+
+      this.typewriterTimerId = setTimeout(tick, this.typewriterInterval)
+    }
+
+    this.typewriterTimerId = setTimeout(tick, this.typewriterInterval)
+  }
+
+  /**
+   * 执行回调并重置状态 (普通非打字机模式使用)
    */
   private execute(callback: (content: string) => void): void {
     if (this.pendingContent === '') {
@@ -77,17 +131,28 @@ export class ThrottleUtil {
   }
 
   /**
-   * 立即刷新（强制执行待处理内容）
-   * 用于确保在操作完成时所有内容都被处理
+   * 立即刷新（强制执行所有待处理内容）
+   * 用于流式结束时，确保所有内容同步落盘，避免异步打字导致保存时数据不完整
    */
   flush(callback: (content: string) => void): void {
     if (this.timerId !== -1) {
       clearTimeout(this.timerId)
       this.timerId = -1
     }
+    if (this.typewriterTimerId !== -1) {
+      clearTimeout(this.typewriterTimerId)
+      this.typewriterTimerId = -1
+    }
 
-    if (this.pendingContent !== '') {
-      this.execute(callback)
+    // 立即合并剩余的所有字符
+    const remaining = this.pendingContent + this.typewriterBuffer
+    this.pendingContent = ''
+    this.typewriterBuffer = ''
+    this.lastExecuteTime = Date.now()
+    this.activeCallback = null
+
+    if (remaining !== '') {
+      callback(remaining)
     }
   }
 
@@ -99,9 +164,15 @@ export class ThrottleUtil {
       clearTimeout(this.timerId)
       this.timerId = -1
     }
+    if (this.typewriterTimerId !== -1) {
+      clearTimeout(this.typewriterTimerId)
+      this.typewriterTimerId = -1
+    }
     this.pendingContent = ''
+    this.typewriterBuffer = ''
     this.lastExecuteTime = 0
-    hilog.debug(DOMAIN, TAG, '🔄 节流器已重置')
+    this.activeCallback = null
+    hilog.debug(DOMAIN, TAG, '🔄 节流器与打字机已重置')
   }
 
   /**
@@ -124,7 +195,7 @@ export class ThrottleUtil {
    * 检查是否有待处理的内容
    */
   hasPending(): boolean {
-    return this.pendingContent !== '' || this.timerId !== -1
+    return this.pendingContent !== '' || this.typewriterBuffer !== '' || this.timerId !== -1 || this.typewriterTimerId !== -1
   }
 }
 
@@ -136,52 +207,3 @@ export class ThrottleUtil {
 export function createThrottle(interval: number = 150): ThrottleUtil {
   return new ThrottleUtil(interval)
 }
-
-/**
- * 滚动节流器（专门用于滚动操作）
- * 滚动操作可以使用更长的节流间隔
- */
-export class ScrollThrottle {
-  private lastExecuteTime: number = 0
-  private readonly interval: number
-  private timerId: number = -1
-  private enabled: boolean = true
-
-  constructor(interval: number = 100) {
-    this.interval = interval
-  }
-
-  throttle(callback: () => void): void {
-    if (!this.enabled) {
-      callback()
-      return
-    }
-
-    const now = Date.now()
-
-    if (this.timerId !== -1) {
-      clearTimeout(this.timerId)
-      this.timerId = -1
-    }
-
-    if (now - this.lastExecuteTime >= this.interval) {
-      this.lastExecuteTime = now
-      callback()
-    } else {
-      const delay = this.interval - (now - this.lastExecuteTime)
-      this.timerId = setTimeout(() => {
-        this.lastExecuteTime = Date.now()
-        callback()
-      }, delay)
-    }
-  }
-
-  reset(): void {
-    if (this.timerId !== -1) {
-      clearTimeout(this.timerId)
-      this.timerId = -1
-    }
-    this.lastExecuteTime = 0
-  }
-}
-

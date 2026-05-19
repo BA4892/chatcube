@@ -1133,8 +1133,8 @@ export class ChatViewModel {
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localFirstChunkThrottle = createThrottle(50)
     const localContentThrottle = createThrottle(150)
+    const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
 
@@ -1447,8 +1447,8 @@ ${webContext.content}
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localFirstChunkThrottle = createThrottle(50)
     const localContentThrottle = createThrottle(150)
+    const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
 
@@ -1787,8 +1787,8 @@ ${limitedSearchContext}
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localFirstChunkThrottle = createThrottle(50)
     const localContentThrottle = createThrottle(150)
+    const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
 
@@ -2134,8 +2134,8 @@ ${limitedSearchContext}
     let userCancelled = false
     let toolExecutionCancelled = false
     let hasReceivedFirstChunk = false
-    const localFirstChunkThrottle = createThrottle(50)
     const localContentThrottle = createThrottle(150)
+    const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
 
