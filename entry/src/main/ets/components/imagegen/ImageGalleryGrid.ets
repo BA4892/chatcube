@@ -1,12 +1,11 @@
 import { GeneratedMedia } from '../../models/ImageGenerationModels'
 import { getAppUiState } from '../../state/AppUiState'
+import { getImageGenerationPreviewId } from './ImageGenerationPreviewUtil'
 
 @ComponentV2
 export struct ImageGalleryGrid {
   @Param items: GeneratedMedia[] = []
   @Param columns: number = 2
-  @Param activePreviewTransitionId: string = ''
-  @Param previewSourceVisible: boolean = true
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
@@ -105,33 +104,16 @@ export struct ImageGalleryGrid {
 
   @Builder
   private PreviewImage(item: GeneratedMedia) {
-    if (this.shouldHidePreviewImage(item)) {
-      Stack()
-        .width('100%')
-        .aspectRatio(1)
-    } else if (this.shouldUseActiveTransition(item)) {
-      Image('file://' + item.filePath)
-        .width('100%')
-        .aspectRatio(1)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
-        .geometryTransition(this.getPreviewTransitionId(item))
-        .transition(TransitionEffect.opacity(0.99))
-        .onClick(() => {
-          this.onPreview(this.indexOfItem(item.id))
-        })
-    } else {
-      Image('file://' + item.filePath)
-        .width('100%')
-        .aspectRatio(1)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
-        .onClick(() => {
-          this.onPreview(this.indexOfItem(item.id))
-        })
-    }
+    Image('file://' + item.filePath)
+      .width('100%')
+      .aspectRatio(1)
+      .objectFit(ImageFit.Cover)
+      .borderRadius(8)
+      .clip(true)
+      .id(this.getPreviewSourceId(item))
+      .onClick(() => {
+        this.onPreview(this.indexOfItem(item.id))
+      })
   }
 
   @Builder
@@ -170,19 +152,7 @@ export struct ImageGalleryGrid {
     return 0
   }
 
-  private getPreviewTransitionId(item: GeneratedMedia): string {
-    if (item.id === '') {
-      return ''
-    }
-    return `image_generation_preview_${item.id}`
-  }
-
-  private shouldUseActiveTransition(item: GeneratedMedia): boolean {
-    const transitionId = this.getPreviewTransitionId(item)
-    return transitionId !== '' && transitionId === this.activePreviewTransitionId
-  }
-
-  private shouldHidePreviewImage(item: GeneratedMedia): boolean {
-    return this.shouldUseActiveTransition(item) && !this.previewSourceVisible
+  private getPreviewSourceId(item: GeneratedMedia): string {
+    return getImageGenerationPreviewId(item)
   }
 }

@@ -1,6 +1,11 @@
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
+import {
+  DefaultMediaModel,
+  MediaPreview,
+  MediaPreviewOptions
+} from '@lyb/media-preview'
 import { ModelProvider } from '../models/ChatModels'
 import { GeneratedMedia, ImageAspectRatio } from '../models/ImageGenerationModels'
 import { ImageGenerationViewModel } from '../viewmodels/ImageGenerationViewModel'
@@ -9,13 +14,17 @@ import { ImageResultGrid } from '../components/imagegen/ImageResultGrid'
 import { ImageGalleryGrid } from '../components/imagegen/ImageGalleryGrid'
 import { ImageGenerationSettingsSheet } from '../components/imagegen/ImageGenerationSettingsSheet'
 import { ImageGenerationModelSheet } from '../components/imagegen/ImageGenerationModelSheet'
-import { ImageGenerationPreviewRouteParams } from './ImageGenerationPreviewPage'
+import {
+  createImageGenerationPreviewModel,
+  getImageGenerationPreviewFallbackId,
+  getImageGenerationPreviewId,
+  hasGeneratedMediaImage
+} from '../components/imagegen/ImageGenerationPreviewUtil'
 import { getAppUiState } from '../state/AppUiState'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { saveFileImageToAlbum } from '../utils/RawfileImageSaveUtil'
 import { showToast } from '../utils/ToastUtil'
 
-const IMAGE_GENERATION_PREVIEW_ROUTE = 'ImageGenerationPreviewPage'
 let imageGenerationPagePathStack: NavPathStack | null = null
 let imageGenerationBackHandler: (() => boolean) | null = null
 
@@ -29,9 +38,11 @@ struct ImageGenerationPage {
   @Local showDeleteSheet: boolean = false
   @Local showCancelSheet: boolean = false
   @Local pendingDeleteId: string = ''
-  @Local activePreviewTransitionId: string = ''
-  @Local previewSourceVisible: boolean = true
-  @Local isPreviewRouteOpen: boolean = false
+  @Local isPreviewOpen: boolean = false
+  @Local previewCurrentIndex: number = 0
+  @Local isPreviewSaving: boolean = false
+  private previewDialogId: string = ''
+  private previewSourceItems: GeneratedMedia[] = []
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -63,6 +74,7 @@ struct ImageGenerationPage {
 
   aboutToDisappear(): void {
     AppStorage.setOrCreate(AppStorageKeys.ACTIVE_IMAGE_GENERATION_PAGE, false)
+    this.closeActivePreviewWithoutAnimation()
     if (imageGenerationBackHandler !== null) {
       imageGenerationBackHandler = null
     }
@@ -126,6 +138,10 @@ struct ImageGenerationPage {
   }
 
   private handleBack(): void {
+    if (this.isPreviewOpen && this.previewDialogId !== '') {
+      MediaPreview.close({ dialogId: this.previewDialogId, animated: true })
+      return
+    }
     // 允许用户离开页面，任务在后台继续运行（ViewModel 是单例）
     // 想真正取消任务，请使用 prompt bar 上的取消按钮
     if (this.viewModel.isGenerating) {
@@ -160,83 +176,113 @@ struct ImageGenerationPage {
   }
 
   private openPreview(items: GeneratedMedia[], index: number): void {
-    const images: string[] = []
-    const transitionIds: string[] = []
-    const aspectRatios: number[] = []
+    const mediaModels: DefaultMediaModel[] = []
+    const previewSourceIds: string[] = []
+    const sourceItems: GeneratedMedia[] = []
     let previewIndex = 0
     let clickedItemHasImage = false
     for (let i = 0; i < items.length; i++) {
-      if (items[i].filePath !== '') {
+      if (hasGeneratedMediaImage(items[i])) {
         if (i === index) {
-          previewIndex = images.length
+          previewIndex = mediaModels.length
           clickedItemHasImage = true
         }
-        images.push('file://' + items[i].filePath)
-        transitionIds.push(this.getPreviewTransitionId(items[i]))
-        aspectRatios.push(this.getMediaAspectRatioValue(items[i].aspectRatio))
+        mediaModels.push(createImageGenerationPreviewModel(items[i]))
+        previewSourceIds.push(getImageGenerationPreviewId(items[i]))
+        sourceItems.push(items[i])
       }
     }
-    if (imageGenerationPagePathStack === null || images.length === 0 ||
+    if (mediaModels.length === 0 ||
       (index >= 0 && index < items.length && !clickedItemHasImage)) {
       return
     }
 
-    const routeParams = new ImageGenerationPreviewRouteParams()
-    routeParams.images = images
-    routeParams.selectedIndex = previewIndex
-    routeParams.transitionIds = transitionIds
-    routeParams.aspectRatios = aspectRatios
-    routeParams.topSafeAreaVp = this.getTopPadding()
-    routeParams.bottomSafeAreaVp = this.px2vp(getAppUiState().bottomAvoidHeight)
-    routeParams.onIndexChange = (previewListIndex: number): void => {
-      this.syncPreviewSource(transitionIds, previewListIndex)
-    }
-    routeParams.onBackToSource = (): void => {
-      this.previewSourceVisible = true
-    }
-    routeParams.onPreviewClosed = (): void => {
-      this.isPreviewRouteOpen = false
-      setTimeout(() => {
-        if (!this.isPreviewRouteOpen) {
-          this.activePreviewTransitionId = ''
-          this.previewSourceVisible = true
-        }
-      }, 40)
-    }
+    const previewOptions = new MediaPreviewOptions<DefaultMediaModel>()
+      .setMedias(mediaModels)
+      .setInitIndex(previewIndex)
+      .setIdBuilder((_item: DefaultMediaModel, mediaIndex: number): string => {
+        return this.getPreviewDialogSourceId(previewSourceIds, mediaIndex)
+      })
+      .setThumbBuilder((item: DefaultMediaModel, mediaIndex: number): void => {
+        this.PreviewThumbBuilder(item, mediaIndex)
+      })
+      .setPageChangedListener((_item: DefaultMediaModel, mediaIndex: number): void => {
+        this.previewCurrentIndex = mediaIndex
+      })
+      .setBackListener((): void => {
+        this.handlePreviewClosed()
+      })
+      .setLongPressListener((_item: DefaultMediaModel, mediaIndex: number): void => {
+        this.previewCurrentIndex = mediaIndex
+        this.saveCurrentPreviewMedia()
+      })
+      .setToolBuilder((): void => {
+        this.PreviewToolBuilder()
+      })
+      .setShowPageText(mediaModels.length > 1)
+      .setIndicator(false)
+      .setBackgroundColor(Color.Black)
+      .setDismissOnTap(true)
+      .setDismissOnDrag(true)
+      .setMaxScale(4)
+      .setDuration(260)
 
-    this.isPreviewRouteOpen = true
-    this.previewSourceVisible = true
-    this.activePreviewTransitionId = transitionIds[previewIndex]
-    this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseIn }, () => {
-      if (imageGenerationPagePathStack !== null) {
-        imageGenerationPagePathStack.pushPath({ name: IMAGE_GENERATION_PREVIEW_ROUTE, param: routeParams }, false)
-        this.previewSourceVisible = false
-      }
-    })
+    this.previewSourceItems = sourceItems
+    this.previewCurrentIndex = previewIndex
+    this.isPreviewOpen = true
+    this.previewDialogId = MediaPreview.open(this.getUIContext(), previewOptions)
   }
 
-  private syncPreviewSource(transitionIds: string[], previewListIndex: number): void {
-    if (previewListIndex >= 0 && previewListIndex < transitionIds.length) {
-      this.activePreviewTransitionId = transitionIds[previewListIndex]
-      this.previewSourceVisible = false
+  private handlePreviewClosed(): void {
+    this.isPreviewOpen = false
+    this.previewDialogId = ''
+    this.isPreviewSaving = false
+    this.previewCurrentIndex = 0
+    this.previewSourceItems = []
+  }
+
+  private closeActivePreviewWithoutAnimation(): void {
+    if (this.previewDialogId !== '') {
+      MediaPreview.close({ dialogId: this.previewDialogId, animated: false })
+    }
+    this.previewDialogId = ''
+    this.isPreviewOpen = false
+    this.previewCurrentIndex = 0
+    this.previewSourceItems = []
+    this.isPreviewSaving = false
+  }
+
+  private hasCurrentPreviewMedia(): boolean {
+    return this.previewCurrentIndex >= 0 && this.previewCurrentIndex < this.previewSourceItems.length
+  }
+
+  private async saveCurrentPreviewMedia(): Promise<void> {
+    if (this.isPreviewSaving || !this.hasCurrentPreviewMedia()) {
+      return
+    }
+    this.isPreviewSaving = true
+    try {
+      await this.saveMedia(this.previewSourceItems[this.previewCurrentIndex])
+    } finally {
+      this.isPreviewSaving = false
     }
   }
 
-  private getPreviewTransitionId(item: GeneratedMedia): string {
-    if (item.id === '') {
-      return ''
+  private getPreviewDialogSourceId(previewSourceIds: string[], mediaIndex: number): string {
+    if (mediaIndex >= 0 && mediaIndex < previewSourceIds.length && previewSourceIds[mediaIndex] !== '') {
+      return previewSourceIds[mediaIndex]
     }
-    return `image_generation_preview_${item.id}`
+    return getImageGenerationPreviewFallbackId(mediaIndex)
   }
 
-  private getMediaAspectRatioValue(aspectRatio: string): number {
-    if (aspectRatio === ImageAspectRatio.LANDSCAPE) {
-      return 16 / 9
+  private getPreviewModelImageSrc(item: DefaultMediaModel): ResourceStr {
+    if (item.thumbSrc !== undefined) {
+      return item.thumbSrc
     }
-    if (aspectRatio === ImageAspectRatio.PORTRAIT) {
-      return 9 / 16
+    if (item.sourceSrc !== undefined) {
+      return item.sourceSrc
     }
-    return 1
+    return ''
   }
 
   private async saveMedia(media: GeneratedMedia): Promise<void> {
@@ -253,8 +299,14 @@ struct ImageGenerationPage {
   private copyPrompt(media: GeneratedMedia): void {
     try {
       const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, media.prompt)
-      pasteboard.getSystemPasteboard().setData(pasteboardData)
-      showToast(this.getUIContext(), $r('app.string.image_generation_copy_prompt_success'))
+      const systemPasteboard = pasteboard.getSystemPasteboard()
+      systemPasteboard.setData(pasteboardData)
+        .then((): void => {
+          showToast(this.getUIContext(), $r('app.string.image_generation_copy_prompt_success'))
+        })
+        .catch((error: Error): void => {
+          console.error('ImageGenerationPage', `Copy prompt failed: ${JSON.stringify(error)}`)
+        })
     } catch (error) {
       console.error('ImageGenerationPage', `Copy prompt failed: ${JSON.stringify(error)}`)
     }
@@ -375,6 +427,46 @@ struct ImageGenerationPage {
   }
 
   @Builder
+  private PreviewThumbBuilder(item: DefaultMediaModel, _index: number) {
+    Image(this.getPreviewModelImageSrc(item))
+      .width('100%')
+      .height('100%')
+      .objectFit(ImageFit.Cover)
+      .borderRadius(8)
+      .clip(true)
+      .draggable(false)
+  }
+
+  @Builder
+  private PreviewToolBuilder() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        if (this.isPreviewSaving) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color('rgba(255, 255, 255, 0.86)')
+        } else {
+          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            .fontSize(20)
+            .fontColor(['rgba(255, 255, 255, 0.9)'])
+        }
+      }
+      .width(48)
+      .height(48)
+      .margin({ bottom: 24 + this.px2vp(getAppUiState().bottomAvoidHeight) })
+      .backgroundColor('rgba(8, 12, 18, 0.62)')
+      .enabled(!this.isPreviewSaving && this.hasCurrentPreviewMedia())
+      .onClick(() => {
+        this.saveCurrentPreviewMedia()
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
+  @Builder
   private TabBar() {
     Row({ space: 8 }) {
       this.TabButton(0, $r('app.string.image_generation_tab_generate'))
@@ -415,8 +507,6 @@ struct ImageGenerationPage {
         isGenerating: this.viewModel.isGenerating,
         isEditing: this.isEditingMode(),
         items: this.viewModel.currentImages,
-        activePreviewTransitionId: this.activePreviewTransitionId,
-        previewSourceVisible: this.previewSourceVisible,
         onPreview: (index: number): void => {
           this.openPreview(this.viewModel.currentImages, index)
         },
@@ -479,8 +569,6 @@ struct ImageGenerationPage {
       ImageGalleryGrid({
         items: this.viewModel.galleryItems,
         columns: this.getGalleryColumns(),
-        activePreviewTransitionId: this.activePreviewTransitionId,
-        previewSourceVisible: this.previewSourceVisible,
         onPreview: (index: number): void => {
           this.openPreview(this.viewModel.galleryItems, index)
         },
@@ -611,7 +699,7 @@ struct ImageGenerationPage {
 }
 
 @Builder
-export function ImageGenerationPageBuilder(name: string, param: Object) {
+export function ImageGenerationPageBuilder(_name: string, _param: Object) {
   NavDestination() {
     ImageGenerationPage()
   }

@@ -76,11 +76,6 @@
       "buildFunction": "ImageGenerationPageBuilder"
     },
     {
-      "name": "ImageGenerationPreviewPage",
-      "pageSourceFile": "src/main/ets/pages/ImageGenerationPreviewPage.ets",
-      "buildFunction": "ImageGenerationPreviewPageBuilder"
-    },
-    {
       "name": "ExportDataPage",
       "pageSourceFile": "src/main/ets/pages/ExportDataPage.ets",
       "buildFunction": "ExportDataPageBuilder"
