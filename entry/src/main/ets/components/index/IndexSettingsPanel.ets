@@ -38,6 +38,7 @@ export struct IndexSettingsPanel {
   @Param highlightSelection: boolean = false
   @Event onOpenModelManage: () => void = () => {}
   @Event onOpenDefaultModel: () => void = () => {}
+  @Event onOpenImageGeneration: () => void = () => {}
   @Event onOpenToolsCenter: () => void = () => {}
   @Event onOpenSystemPrompt: () => void = () => {}
   @Event onOpenChatInput: () => void = () => {}
@@ -91,6 +92,13 @@ export struct IndexSettingsPanel {
             title: $r('app.string.settings_default_model'),
             subtitle: $r('app.string.settings_default_model_desc'),
             action: (): void => { this.onOpenDefaultModel() }
+          } as SettingsListItemModel,
+          {
+            key: SettingsRouteName.IMAGE_GENERATION,
+            icon: $r('sys.symbol.picture'),
+            title: $r('app.string.image_generation_title'),
+            subtitle: $r('app.string.image_generation_settings_entry_desc'),
+            action: (): void => { this.onOpenImageGeneration() }
           } as SettingsListItemModel
         ]
       } as SettingsGroupModel,

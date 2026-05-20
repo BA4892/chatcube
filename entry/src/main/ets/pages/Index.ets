@@ -54,6 +54,7 @@ import {
 } from '../utils/SelectionHelper'
 import { ChatTaskStatus } from '../models/ChatTaskModels'
 import {
+  parseImageGenerationAlertPayload,
   parseInAppTaskAlertPayload,
   parseOpenSessionPayload
 } from '../utils/TaskAlertUtils'
@@ -260,6 +261,9 @@ struct Index {
   private get openSessionPayload(): string {
     return getAppUiState().openSessionPayload
   }
+  private get openImageGenerationTick(): number {
+    return getAppUiState().openImageGenerationTick
+  }
   private get taskEventTick(): number {
     return getAppUiState().taskEventTick
   }
@@ -271,6 +275,11 @@ struct Index {
     return getAppUiState().inAppTaskAlertPayload
   }
 
+  @Computed
+  get inAppImageGenerationAlertPayload(): string {
+    return getAppUiState().inAppImageGenerationAlertPayload
+  }
+
   @Monitor('inAppTaskAlertPayload')
   onInAppAlertPayloadMonitor(): void {
     const payload = this.inAppTaskAlertPayload
@@ -278,6 +287,15 @@ struct Index {
       return
     }
     this.handleInAppTaskAlertPayload(payload)
+  }
+
+  @Monitor('inAppImageGenerationAlertPayload')
+  onImageGenerationAlertPayloadMonitor(): void {
+    const payload = this.inAppImageGenerationAlertPayload
+    if (payload === '') {
+      return
+    }
+    this.handleImageGenerationAlertPayload(payload)
   }
   @Local filteredSessionCount: number = 0
   @Local sessionListGroups: SessionListGroupViewModel[] = []
@@ -687,6 +705,10 @@ struct Index {
     this.handleOpenSessionPayload(this.openSessionPayload)
   }
 
+  onOpenImageGenerationChanged(): void {
+    this.handleOpenImageGeneration()
+  }
+
   onActiveChatSessionIdChanged(): void {
     this.refreshSessionListProjection()
   }
@@ -738,6 +760,7 @@ struct Index {
       observeAppUiState(AppStorageKeys.OPEN_NEW_CHAT, (): void => this.onOpenNewChat()),
       observeAppUiState(AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT, (): void => this.onOpenNewChatWithPrompt()),
       observeAppUiState(AppStorageKeys.OPEN_SESSION_PAYLOAD, (): void => this.onOpenSessionPayloadChanged()),
+      observeAppUiState(AppStorageKeys.OPEN_IMAGE_GENERATION, (): void => this.onOpenImageGenerationChanged()),
       observeAppUiState(AppStorageKeys.ACTIVE_CHAT_SESSION_ID, (): void => this.onActiveChatSessionIdChanged()),
       observeAppUiState(AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT,
         (): void => this.onAssistantAvatarRefreshMonitor()),
@@ -818,6 +841,8 @@ struct Index {
     this.registerSettingsCallback()
     this.handleOpenSessionPayload(this.openSessionPayload)
     this.handleInAppTaskAlertPayload(this.inAppTaskAlertPayload)
+    this.handleOpenImageGeneration()
+    this.handleImageGenerationAlertPayload(this.inAppImageGenerationAlertPayload)
     this.processPendingToolInteractionAlert(false)
     this.initializeOnboarding()
   }
@@ -1386,6 +1411,17 @@ struct Index {
     setAppUiStateValue(AppStorageKeys.OPEN_SESSION_PAYLOAD, '')
   }
 
+  private handleOpenImageGeneration(): void {
+    if (this.openImageGenerationTick <= 0) {
+      return
+    }
+    if (!(this.currentTabIndex === Index.TAB_SETTINGS &&
+      this.currentSettingsRouteName === SettingsRouteName.IMAGE_GENERATION)) {
+      this.openSettingsDestination(SettingsRouteName.IMAGE_GENERATION)
+    }
+    setAppUiStateValue(AppStorageKeys.OPEN_IMAGE_GENERATION, 0)
+  }
+
   private handleInAppTaskAlertPayload(payloadText: string): void {
     if (payloadText === '') {
       return
@@ -1416,6 +1452,36 @@ struct Index {
     }
     this.enqueueSnackBar(opts)
     setAppUiStateValue(AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD, '')
+  }
+
+  private handleImageGenerationAlertPayload(payloadText: string): void {
+    if (payloadText === '') {
+      return
+    }
+    if (this.isImageGenerationPageActive()) {
+      setAppUiStateValue(AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD, '')
+      return
+    }
+    const payload = parseImageGenerationAlertPayload(payloadText)
+    if (payload === null) {
+      console.error('Index', 'Failed to parse image generation alert payload')
+      return
+    }
+    const opts = new SnackBarDisplayOptions()
+    opts.message = payload.message
+    opts.duration = 5000
+    opts.tone = payload.status === 'failed' ? SnackBarTone.ERROR : SnackBarTone.SUCCESS
+    opts.actionText = $r('app.string.task_alert_view')
+    opts.onAction = (): void => {
+      this.openSettingsDestination(SettingsRouteName.IMAGE_GENERATION)
+    }
+    this.enqueueSnackBar(opts)
+    setAppUiStateValue(AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD, '')
+  }
+
+  private isImageGenerationPageActive(): boolean {
+    const active = AppStorage.get<boolean>(AppStorageKeys.ACTIVE_IMAGE_GENERATION_PAGE)
+    return active === true
   }
 
   private buildPendingToolInteractionMessage(interaction: PendingToolInteractionSnapshot): string {
@@ -4354,6 +4420,9 @@ struct Index {
       },
       onOpenDefaultModel: (): void => {
         this.openSettingsDestination(SettingsRouteName.DEFAULT_MODEL)
+      },
+      onOpenImageGeneration: (): void => {
+        this.openSettingsDestination(SettingsRouteName.IMAGE_GENERATION)
       },
       onOpenToolsCenter: (): void => {
         this.openSettingsDestination(SettingsRouteName.TOOLS_CENTER)

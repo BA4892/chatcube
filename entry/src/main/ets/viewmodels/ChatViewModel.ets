@@ -102,9 +102,6 @@ interface ImageDownloadResult {
   mimeType: string
 }
 
-// 助手未启用 temperature 时的全局回退值
-const DEFAULT_FALLBACK_TEMPERATURE: number = 0.7
-
 // 聊天状态管理
 export class ChatViewModel {
   private databaseService: DatabaseService
@@ -191,16 +188,16 @@ export class ChatViewModel {
 	    return this.assistantService.combineSystemPrompts(basePrompt, extraPrompt)
 	  }
 
-	  private async getRequestTemperature(): Promise<number> {
+	  private async getRequestTemperature(): Promise<number | undefined> {
 	    const assistantConfig = await this.getAssistantRuntimeConfig()
 	    if (assistantConfig.temperatureEnabled) {
 	      return assistantConfig.temperature
 	    }
-	    return DEFAULT_FALLBACK_TEMPERATURE
+	    return undefined
 	  }
 
-	  // 助手未启用相应开关时返回 undefined,让 AIApiService 走"非默认值才下发"逻辑(等价于不发字段)。
-	  // 这样既不会把 1.0 / 0 强行塞进请求体,也避免对推理模型(gpt-5/o-系列)等触发不支持参数的报错。
+	  // 助手未启用相应开关时返回 undefined,让 AIApiService 不下发对应采样参数。
+	  // 显式打开覆盖时即使是 1.0 / 0 这类默认值也保留用户意图。
 	  private async getRequestTopP(): Promise<number | undefined> {
 	    const assistantConfig = await this.getAssistantRuntimeConfig()
 	    return assistantConfig.topPEnabled ? assistantConfig.topP : undefined
@@ -1137,6 +1134,7 @@ export class ChatViewModel {
     const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
+    const pendingImageSaves: Promise<void>[] = []
 
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1218,6 +1216,7 @@ export class ChatViewModel {
           this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
 
+        await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
@@ -1300,15 +1299,11 @@ export class ChatViewModel {
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      async (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string) => {
         if (cancelled) {
           return
         }
-        try {
-          await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
-        } catch (error) {
-          console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-        }
+        this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
       },
       reasoningLevel
     )
@@ -1451,6 +1446,7 @@ ${webContext.content}
     const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
+    const pendingImageSaves: Promise<void>[] = []
 
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1528,6 +1524,7 @@ ${webContext.content}
           )
           this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
+        await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
@@ -1608,15 +1605,11 @@ ${webContext.content}
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      async (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string) => {
         if (cancelled) {
           return
         }
-        try {
-          await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
-        } catch (error) {
-          console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-        }
+        this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
       }
     )
 
@@ -1791,6 +1784,7 @@ ${limitedSearchContext}
     const localFirstChunkThrottle = localContentThrottle
     const localReasoningThrottle = createThrottle(150)
     const requestId = this.generateId()
+    const pendingImageSaves: Promise<void>[] = []
 
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1868,6 +1862,7 @@ ${limitedSearchContext}
           )
           this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
         })
+        await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
@@ -1948,15 +1943,11 @@ ${limitedSearchContext}
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      async (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string) => {
         if (cancelled) {
           return
         }
-        try {
-          await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
-        } catch (error) {
-          console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-        }
+        this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
       },
       reasoningLevel
     )
@@ -2218,8 +2209,10 @@ ${limitedSearchContext}
     snapshotSessionId: string,
     snapshotSession: ChatSession | null,
     shouldAutoGenerateTitle: boolean,
-    requestId: string
+    requestId: string,
+    pendingImageSaves: Promise<void>[] = []
   ): Promise<void> {
+    await this.waitForAIGeneratedImageSaves(pendingImageSaves)
     this.fillFallbackFromSearchSummaryIfNeeded(aiMessage)
     this.fillEmptyAIContentPlaceholder(aiMessage)
     aiMessage.isGenerating = false
@@ -2241,6 +2234,26 @@ ${limitedSearchContext}
     } finally {
       this.unregisterActiveRequest(requestId)
       onComplete()
+    }
+  }
+
+  private trackAIGeneratedImageSave(
+    pendingImageSaves: Promise<void>[],
+    imageData: string,
+    mimeType: string,
+    aiMessage: ChatMessage,
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    const task = this.saveAIGeneratedImage(imageData, mimeType, aiMessage, onAIMessageUpdated)
+      .catch((error: Object): void => {
+        console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
+      })
+    pendingImageSaves.push(task)
+  }
+
+  private async waitForAIGeneratedImageSaves(pendingImageSaves: Promise<void>[]): Promise<void> {
+    for (let i = 0; i < pendingImageSaves.length; i++) {
+      await pendingImageSaves[i]
     }
   }
 
@@ -2344,7 +2357,7 @@ ${limitedSearchContext}
     tools: ToolDefinition[],
     toolCallbacks: ToolCallCallbacks | undefined,
     reasoningLevel: ReasoningLevel,
-    requestTemperature: number,
+    requestTemperature: number | undefined,
     initialToolStepIndex: number,
     snapshotSessionId: string,
     snapshotSession: ChatSession | null,
@@ -2361,6 +2374,7 @@ ${limitedSearchContext}
     localReasoningThrottle: ThrottleUtil
   ): Promise<void> {
     let toolStepIndex = initialToolStepIndex
+    const pendingImageSaves: Promise<void>[] = []
     while (true) {
       if (isCancelledFn()) {
         return
@@ -2585,15 +2599,11 @@ ${limitedSearchContext}
               appendRoundReasoning(throttledContent)
             })
           },
-          async (base64Data: string, mimeType: string) => {
+          (base64Data: string, mimeType: string) => {
             if (isCancelledFn()) {
               return
             }
-            try {
-              await this.saveAIGeneratedImage(base64Data, mimeType, aiMessage, onAIMessageUpdated)
-            } catch (error) {
-              console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-            }
+            this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
           },
           reasoningLevel,
           toolsEnabledInThisRound ? tools : undefined,
@@ -2669,7 +2679,8 @@ ${limitedSearchContext}
           snapshotSessionId,
           snapshotSession,
           shouldAutoGenerateTitle,
-          requestId
+          requestId,
+          pendingImageSaves
         )
         return
       }

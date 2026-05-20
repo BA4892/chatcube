@@ -16,6 +16,7 @@
     "pages/ExportDataPage",
     "pages/ImportDataPage",
     "pages/ToolsCenterPage",
+    "pages/ImageGenerationPage",
     "pages/AboutPage"
   ]
 }

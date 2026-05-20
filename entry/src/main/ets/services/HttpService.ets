@@ -49,9 +49,13 @@ interface DataReceiveProgressInfo {
   totalSize: number
 }
 
+// 通用可取消任务接口（兼容 RCP 等非 http.HttpRequest 的请求）
+export type CancelableTask = () => void
+
 // 可取消 HTTP 请求控制器
 export class HttpRequestController {
   private requestMap: Map<string, http.HttpRequest> = new Map()
+  private cancelableMap: Map<string, CancelableTask> = new Map()
   private cancelled: boolean = false
   private seq: number = 0
 
@@ -79,6 +83,27 @@ export class HttpRequestController {
     this.requestMap.delete(requestId)
   }
 
+  // 注册任意可取消任务（如 RCP session.cancel(request)）
+  registerCancelable(task: CancelableTask): string {
+    if (this.cancelled) {
+      try {
+        task()
+      } catch (_error) {}
+      return ''
+    }
+    this.seq += 1
+    const cancelId = `cancel_${Date.now()}_${this.seq}`
+    this.cancelableMap.set(cancelId, task)
+    return cancelId
+  }
+
+  unregisterCancelable(cancelId: string): void {
+    if (cancelId === '') {
+      return
+    }
+    this.cancelableMap.delete(cancelId)
+  }
+
   cancelAll(): void {
     this.cancelled = true
     this.requestMap.forEach((request: http.HttpRequest) => {
@@ -87,6 +112,12 @@ export class HttpRequestController {
       } catch (_error) {}
     })
     this.requestMap.clear()
+    this.cancelableMap.forEach((task: CancelableTask) => {
+      try {
+        task()
+      } catch (_error) {}
+    })
+    this.cancelableMap.clear()
   }
 }
 
@@ -210,7 +241,7 @@ export class HttpService {
         method: this.convertMethod(config.method),
         header: config.headers,
         extraData: config.body,
-        connectTimeout: config.timeout,
+        connectTimeout: Math.min(config.timeout, 15000),  // 连接超时最多 15 秒（断网场景更快响应）
         readTimeout: config.timeout
       }
 

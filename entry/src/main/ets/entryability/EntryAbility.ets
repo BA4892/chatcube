@@ -22,6 +22,7 @@ export default class EntryAbility extends UIAbility {
   private settingsCallback: SettingsChangeCallback | null = null;
   private pendingNewChat: boolean = false;
   private pendingOpenSessionPayload: string = '';
+  private pendingOpenImageGeneration: boolean = false;
   private readonly windowSizeChangeCallback = (size: window.Size): void => {
     this.updateLayoutProfile(size.width, size.height);
   };
@@ -54,6 +55,8 @@ export default class EntryAbility extends UIAbility {
             timestamp: Date.now()
           })
         }
+      } else if (action === 'openImageGeneration') {
+        this.pendingOpenImageGeneration = true;
       }
     }
 
@@ -83,6 +86,8 @@ export default class EntryAbility extends UIAbility {
             timestamp: Date.now()
           }))
         }
+      } else if (action === 'openImageGeneration') {
+        setAppUiStateValue(AppStorageKeys.OPEN_IMAGE_GENERATION, Date.now());
       }
     }
   }
@@ -313,6 +318,10 @@ export default class EntryAbility extends UIAbility {
       if (this.pendingOpenSessionPayload !== '') {
         setAppUiStateValue(AppStorageKeys.OPEN_SESSION_PAYLOAD, this.pendingOpenSessionPayload)
         this.pendingOpenSessionPayload = ''
+      }
+      if (this.pendingOpenImageGeneration) {
+        setAppUiStateValue(AppStorageKeys.OPEN_IMAGE_GENERATION, Date.now())
+        this.pendingOpenImageGeneration = false
       }
       });
     };

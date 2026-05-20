@@ -32,6 +32,7 @@ import {
 import { AppSettingsState, getAppSettingsState } from './AppSettingsState'
 import { MigrationContext } from './migrations/MigrationContext'
 import { runProviderMigrations } from './migrations/ProviderMigrations'
+import { applyDerivedModelDefaults } from '../utils/ModelCapabilityDeriver'
 
 /**
  * 模型 JSON 中的扩展字段（跟 ProviderViewModel 里原先的 ModelData 同构）
@@ -571,6 +572,7 @@ export class AppSettingsStore {
           }
           // 派生覆盖标志:JSON 缺失视为 true(老数据保守,不让规则升级静默替换用户已固化的能力)
           modelInfo.capabilitiesUserModified = modelObj.capabilitiesUserModified ?? true
+          applyDerivedModelDefaults(modelInfo)
           provider.models.push(modelInfo)
         }
       } catch (error) {
@@ -817,11 +819,13 @@ export class AppSettingsStore {
       return s.defaultTitleModel
     } else if (role === ModelRole.TRANSLATE) {
       return s.defaultTranslateModel
+    } else if (role === ModelRole.IMAGE) {
+      return s.defaultImageModel
     }
     return new DefaultModelConfig()
   }
 
-  /** 启动时加载三个 role 的 default model（幂等，多次调用合并为一个 promise） */
+  /** 启动时加载四个 role 的 default model（幂等，多次调用合并为一个 promise） */
   async ensureDefaultModelsInitialized(): Promise<void> {
     if (getAppSettingsState().defaultModelsInitialized) {
       return
@@ -872,11 +876,19 @@ export class AppSettingsStore {
       DefaultPrompts.SILICONFLOW_TRANSLATE_MODEL,
       '硅基流动'
     )
+    const image = await this.loadDefaultModelFromPreferences(
+      PreferenceKeys.DEFAULT_IMAGE_MODEL_ID,
+      PreferenceKeys.DEFAULT_IMAGE_PROVIDER_ID,
+      PreferenceKeys.DEFAULT_IMAGE_MODEL_NAME,
+      PreferenceKeys.DEFAULT_IMAGE_PROVIDER_NAME,
+      '', '', '', ''
+    )
 
     const s = getAppSettingsState()
     s.defaultChatModel = chat
     s.defaultTitleModel = title
     s.defaultTranslateModel = translate
+    s.defaultImageModel = image
     s.defaultModelsVersion = s.defaultModelsVersion + 1
     s.defaultModelsInitialized = true
   }
@@ -910,6 +922,8 @@ export class AppSettingsStore {
       s.defaultTitleModel = config
     } else if (role === ModelRole.TRANSLATE) {
       s.defaultTranslateModel = config
+    } else if (role === ModelRole.IMAGE) {
+      s.defaultImageModel = config
     }
     s.defaultModelsVersion = s.defaultModelsVersion + 1
   }
@@ -935,6 +949,13 @@ export class AppSettingsStore {
         providerIdKey: PreferenceKeys.DEFAULT_TRANSLATE_PROVIDER_ID,
         modelNameKey: PreferenceKeys.DEFAULT_TRANSLATE_MODEL_NAME,
         providerNameKey: PreferenceKeys.DEFAULT_TRANSLATE_PROVIDER_NAME
+      }
+    } else if (role === ModelRole.IMAGE) {
+      return {
+        modelIdKey: PreferenceKeys.DEFAULT_IMAGE_MODEL_ID,
+        providerIdKey: PreferenceKeys.DEFAULT_IMAGE_PROVIDER_ID,
+        modelNameKey: PreferenceKeys.DEFAULT_IMAGE_MODEL_NAME,
+        providerNameKey: PreferenceKeys.DEFAULT_IMAGE_PROVIDER_NAME
       }
     }
     return null

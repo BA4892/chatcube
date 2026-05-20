@@ -6,19 +6,31 @@ import { showToast } from '../utils/ToastUtil'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { http } from '@kit.NetworkKit'
 
+interface ImagePreviewSourceSize {
+  width: number
+  height: number
+}
+
+interface ImagePreviewFittedSize {
+  width: number
+  height: number
+}
+
 /**
  * 图片预览组件
- * 支持：全屏查看、双指缩放、双击缩放、Swiper 多图滑动切换、下拉关闭
+ * 支持：全屏查看、单击关闭、长按保存、双指缩放、双击缩放、Swiper 多图滑动切换、下拉关闭
  *
- * 架构：使用 Swiper 原生处理水平滑动切换，手势绑定在根 Stack 上处理缩放/拖拽/点击。
+ * 架构：使用 Swiper 原生处理水平滑动切换，手势绑定在 Swiper 上处理缩放/拖拽/点击。
+ * 缩放和平移只作用于当前图片，避免整体 Swiper 变换导致多图切换和边界计算异常。
  * 不能在 bindContentCover 内使用（模态层会拦截连续手势），
  * 应作为条件渲染的全屏覆盖层直接嵌入页面 Stack 中。
  * 需在宿主页面的 onBackPress() 中拦截返回键。
  *
- * 手势架构（绑定在根 Stack 上，子组件按钮优先）：
- * .parallelGesture(PinchGesture)  → 双指缩放，始终可用，与其他手势并行
- * .gesture(Exclusive: PanGesture | TapGesture)  → 拖动和点击互斥
+ * 手势架构（绑定在 Swiper 上，长按操作栏内按钮优先）：
+ * .parallelGesture(Exclusive: PinchGesture | PanGesture | LongPressGesture | TapGesture)
+ *   PinchGesture：双指缩放
  *   PanGesture：放大时全向拖动，未放大时仅处理垂直下拉关闭
+ *   LongPressGesture：弹出临时保存操作栏
  *   TapGesture：单击关闭，双击缩放
  */
 
@@ -28,6 +40,8 @@ export struct ImagePreview {
   @Param currentIndex: number = 0
   @Param topSafeAreaVp: number = 0
   @Param bottomSafeAreaVp: number = 0
+  @Param transitionId: string = ''
+  @Param transitionIndex: number = -1
   @Event onClose: () => void = () => {}
 
   // 缩放状态
@@ -46,6 +60,16 @@ export struct ImagePreview {
   // 背景透明度（下拉退出时渐变）
   @Local backgroundOpacity: number = 1
 
+  // 共享元素转场时，目标大图首帧需要隐藏，避免先按全屏布局闪一下
+  @Local previewImageOpacity: number = 1
+
+  // geometryTransition 只在打开/关闭瞬间启用，预览浏览期间解绑，避免 Swiper 切回初始图时重复匹配出残影
+  @Local sharedTransitionActive: boolean = false
+
+  // 正常预览内容与共享元素转场层分离：Swiper 不参与 geometryTransition
+  @Local previewContentVisible: boolean = true
+  @Local transitionLayerVisible: boolean = false
+
   // 下拉关闭时的缩放（"抽离"效果）
   @Local dragScale: number = 1
 
@@ -55,22 +79,47 @@ export struct ImagePreview {
   // 保存状态
   @Local isSaving: boolean = false
 
+  // 长按后显示临时操作栏
+  @Local showActionBar: boolean = false
+
+  // Swiper 手势禁用状态：缩放/下拉时禁用翻页，避免手势冲突
+  @Local disableSwiperSwipe: boolean = false
+
+  // 预览容器尺寸，用于按 ImageFit.Contain 后的可视尺寸计算拖动边界
+  @Local containerWidth: number = 0
+  @Local containerHeight: number = 0
+
   // 拖动方向锁定
   private panDirection: string = 'none'
+  private sourceImageSizes: ImagePreviewSourceSize[] = []
   private cachedRemoteImageUris: Map<string, string> = new Map()
   private cachedRemoteImagePaths: string[] = []
   private pendingRemoteImageDownloads: Map<string, Promise<string>> = new Map()
   private isPreviewDisposed: boolean = false
-  private readonly overlayHorizontalMarginVp: number = 16
-  private readonly overlayBottomMarginVp: number = 20
-  private readonly overlayTopMarginVp: number = 12
-  private readonly saveButtonWidthVp: number = 104
-  private readonly saveButtonHeightVp: number = 48
+  private readonly overlayHorizontalMarginVp: number = 18
+  private readonly overlayBottomMarginVp: number = 18
+  private readonly overlayTopMarginVp: number = 10
+  private readonly actionBarHeightVp: number = 48
+  private readonly sharedTransitionReleaseDelayMs: number = 320
+  private readonly sharedTransitionImageShowDelayMs: number = 90
 
   aboutToAppear(): void {
     this.isPreviewDisposed = false
-    this.displayIndex = this.currentIndex
+    this.backgroundOpacity = 1
+    this.previewImageOpacity = this.transitionId !== '' ? 0 : 1
+    this.sharedTransitionActive = this.transitionId !== ''
+    this.previewContentVisible = this.transitionId === ''
+    this.transitionLayerVisible = this.transitionId !== ''
+    this.displayIndex = this.normalizeImageIndex(this.currentIndex)
     this.prefetchRemoteImage(this.images[this.displayIndex])
+    if (this.transitionId !== '') {
+      setTimeout(() => {
+        this.revealPreviewImageAfterOpen()
+      }, this.sharedTransitionImageShowDelayMs)
+      setTimeout(() => {
+        this.finishSharedTransitionAfterOpen()
+      }, this.sharedTransitionReleaseDelayMs)
+    }
   }
 
   aboutToDisappear(): void {
@@ -85,6 +134,11 @@ export struct ImagePreview {
   private dismiss(): void {
     if (this.isDismissing) return
     this.isDismissing = true
+    this.hideSaveActionBar()
+    if (this.canCloseWithSharedTransition()) {
+      this.closeWithSharedTransition()
+      return
+    }
     this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.backgroundOpacity = 0
     })
@@ -95,72 +149,296 @@ export struct ImagePreview {
     showToast(this.getUIContext(), message, duration)
   }
 
-  private getOverlayControlBackgroundColor(): string {
-    return 'rgba(12, 16, 24, 0.72)'
-  }
-
   private getOverlayControlBorderColor(): string {
-    return 'rgba(255, 255, 255, 0.16)'
+    return 'rgba(255, 255, 255, 0.10)'
   }
 
   private getOverlayControlShadowColor(): string {
-    return 'rgba(0, 0, 0, 0.34)'
+    return 'rgba(0, 0, 0, 0.20)'
   }
 
-  private getSaveButtonTranslateX(): number {
-    return -(this.saveButtonWidthVp + this.overlayHorizontalMarginVp)
+  private normalizeImageIndex(index: number): number {
+    if (this.images.length === 0) {
+      return 0
+    }
+    if (index < 0) {
+      return 0
+    }
+    if (index >= this.images.length) {
+      return this.images.length - 1
+    }
+    return index
   }
 
-  private getSaveButtonTranslateY(): number {
-    return -(this.saveButtonHeightVp + this.overlayBottomMarginVp + this.bottomSafeAreaVp)
+  private getActiveImageScale(index: number): number {
+    if (index !== this.displayIndex) {
+      return 1
+    }
+    return this.imageScale * this.dragScale
   }
 
-  private getIndicatorTranslateY(): number {
-    return -(this.saveButtonHeightVp + this.overlayBottomMarginVp + this.bottomSafeAreaVp + 28)
+  private getActiveImageOffsetX(index: number): number {
+    if (index !== this.displayIndex) {
+      return 0
+    }
+    return this.offsetX
+  }
+
+  private getActiveImageOffsetY(index: number): number {
+    if (index !== this.displayIndex) {
+      return 0
+    }
+    return this.offsetY
+  }
+
+  private shouldUseSharedTransitionForIndex(index: number): boolean {
+    return this.sharedTransitionActive && this.transitionId !== '' && index === this.displayIndex &&
+      index === this.transitionIndex
+  }
+
+  private canCloseWithSharedTransition(): boolean {
+    return this.transitionId !== '' && this.displayIndex === this.transitionIndex
+  }
+
+  private finishSharedTransitionAfterOpen(): void {
+    if (this.isPreviewDisposed || this.isDismissing) {
+      return
+    }
+    this.previewContentVisible = true
+    this.sharedTransitionActive = false
+    this.previewImageOpacity = 1
+    setTimeout(() => {
+      if (!this.isPreviewDisposed && !this.isDismissing) {
+        this.transitionLayerVisible = false
+      }
+    }, 34)
+  }
+
+  private revealPreviewImageAfterOpen(): void {
+    if (this.isPreviewDisposed || this.isDismissing) {
+      return
+    }
+    this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseOut }, () => {
+      this.previewImageOpacity = 1
+    })
+  }
+
+  private closeWithSharedTransition(): void {
+    this.transitionLayerVisible = true
+    this.previewContentVisible = false
+    this.sharedTransitionActive = true
+    this.previewImageOpacity = 1
+    this.backgroundOpacity = 0
+    this.disableSwiperSwipe = true
+    setTimeout(() => {
+      if (!this.isPreviewDisposed) {
+        this.onClose()
+      }
+    }, 0)
+  }
+
+  private rememberSourceImageSize(index: number, width: number, height: number): void {
+    if (index < 0 || Number.isNaN(width) || Number.isNaN(height) || width <= 0 || height <= 0) {
+      return
+    }
+    this.sourceImageSizes[index] = { width: width, height: height }
+  }
+
+  private getFittedImageSize(index: number): ImagePreviewFittedSize {
+    const fallbackWidth = this.containerWidth > 0 ? this.containerWidth : 1
+    const fallbackHeight = this.containerHeight > 0 ? this.containerHeight : 1
+    const sourceSize = this.sourceImageSizes[index]
+    if (sourceSize === undefined || Number.isNaN(sourceSize.width) || Number.isNaN(sourceSize.height) ||
+      sourceSize.width <= 0 || sourceSize.height <= 0 ||
+      this.containerWidth <= 0 || this.containerHeight <= 0) {
+      return { width: fallbackWidth, height: fallbackHeight }
+    }
+
+    const imageRatio = sourceSize.width / sourceSize.height
+    const containerRatio = this.containerWidth / this.containerHeight
+    if (imageRatio >= containerRatio) {
+      return {
+        width: this.containerWidth,
+        height: this.containerWidth / imageRatio
+      }
+    }
+    return {
+      width: this.containerHeight * imageRatio,
+      height: this.containerHeight
+    }
+  }
+
+  private getMaxOffsetX(): number {
+    const fittedSize = this.getFittedImageSize(this.displayIndex)
+    return Math.max(0, (fittedSize.width * this.imageScale - this.containerWidth) / 2)
+  }
+
+  private getMaxOffsetY(): number {
+    const fittedSize = this.getFittedImageSize(this.displayIndex)
+    return Math.max(0, (fittedSize.height * this.imageScale - this.containerHeight) / 2)
+  }
+
+  private clampValue(value: number, min: number, max: number): number {
+    if (value < min) {
+      return min
+    }
+    if (value > max) {
+      return max
+    }
+    return value
+  }
+
+  private clampImageOffset(): void {
+    const maxOffsetX = this.getMaxOffsetX()
+    const maxOffsetY = this.getMaxOffsetY()
+    this.offsetX = this.clampValue(this.offsetX, -maxOffsetX, maxOffsetX)
+    this.offsetY = this.clampValue(this.offsetY, -maxOffsetY, maxOffsetY)
+    this.lastOffsetX = this.offsetX
+    this.lastOffsetY = this.offsetY
+  }
+
+  private getDismissDistance(): number {
+    if (this.containerHeight <= 0) {
+      return 120
+    }
+    return this.clampValue(this.containerHeight * 0.18, 110, 180)
+  }
+
+  private areaLengthToNumber(value: Length): number {
+    if (typeof value === 'number') {
+      return value
+    }
+    if (typeof value !== 'string') {
+      return 0
+    }
+    const numericValue = Number(value)
+    if (Number.isNaN(numericValue)) {
+      return 0
+    }
+    return numericValue
   }
 
   @Builder
-  private SaveActionButtonBuilder() {
-    Button({ type: ButtonType.Capsule, stateEffect: false }) {
-      Row({ space: 8 }) {
-        if (this.isSaving) {
-          LoadingProgress()
-            .width(18)
-            .height(18)
-            .color(Color.White)
-        } else {
-          Stack({ alignContent: Alignment.Center }) {
-            Column()
-              .width(28)
-              .height(28)
-              .borderRadius(14)
-              .backgroundColor('rgba(255, 255, 255, 0.10)')
-
+  private PreviewActionBarBuilder() {
+    Row() {
+      Button({ type: ButtonType.Normal, stateEffect: false }) {
+        Row({ space: 8 }) {
+          if (this.isSaving) {
+            LoadingProgress()
+              .width(18)
+              .height(18)
+              .color('rgba(255, 255, 255, 0.84)')
+          } else {
             SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
-              .fontSize(16)
-              .fontColor([Color.White])
+              .fontSize(18)
+              .fontColor(['rgba(255, 255, 255, 0.88)'])
           }
-          .width(28)
-          .height(28)
-        }
 
-        Text($r('app.string.save'))
-          .fontSize(14)
-          .fontColor(Color.White)
-          .fontWeight(FontWeight.Medium)
+          Text($r('app.string.save'))
+            .fontSize(14)
+            .fontColor('rgba(255, 255, 255, 0.88)')
+            .fontWeight(FontWeight.Medium)
+        }
       }
+      .height(38)
+      .padding({ left: 14, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .enabled(!this.isSaving)
+      .onClick(() => {
+        this.saveCurrentImage()
+      })
     }
-    .width(this.saveButtonWidthVp)
-    .height(this.saveButtonHeightVp)
-    .padding({ left: 12, right: 14 })
-    .backgroundColor(this.getOverlayControlBackgroundColor())
-    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
+    .height(this.actionBarHeightVp)
+    .padding({ left: 6, right: 6 })
+    .backgroundColor('rgba(8, 12, 18, 0.58)')
+    .borderRadius(24)
     .border({ width: 0.8, color: this.getOverlayControlBorderColor() })
-    .shadow({ radius: 22, color: this.getOverlayControlShadowColor(), offsetX: 0, offsetY: 8 })
-    .enabled(!this.isSaving)
+    .shadow({ radius: 14, color: this.getOverlayControlShadowColor(), offsetX: 0, offsetY: 5 })
+  }
+
+  @Builder
+  private PageIndicatorBuilder() {
+    if (this.images.length > 1) {
+      Text(`${this.displayIndex + 1}/${this.images.length}`)
+        .fontSize(18)
+        .fontColor('rgba(255, 255, 255, 0.86)')
+        .fontWeight(FontWeight.Medium)
+    }
+  }
+
+  @Builder
+  private CloseButtonBuilder() {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(34)
+        .fontColor(['rgba(255, 255, 255, 0.82)'])
+    }
+    .width(52)
+    .height(52)
+    .backgroundColor(Color.Transparent)
     .onClick(() => {
-      this.saveCurrentImage()
+      this.dismiss()
     })
+  }
+
+  @Builder
+  private SavingInlineIndicatorBuilder() {
+    if (this.isSaving) {
+      LoadingProgress()
+        .width(22)
+        .height(22)
+        .color('rgba(255, 255, 255, 0.84)')
+        .position({ x: '50%', y: '100%' })
+        .translate({ x: -11, y: -(this.overlayBottomMarginVp + this.bottomSafeAreaVp + 24) })
+    }
+  }
+
+  @Builder
+  private PreviewImageBuilder(image: string, index: number) {
+    Image(image)
+      .objectFit(ImageFit.Contain)
+      .width('100%')
+      .height('100%')
+      .draggable(false)
+      .scale({
+        x: this.getActiveImageScale(index),
+        y: this.getActiveImageScale(index)
+      })
+      .offset({
+        x: this.getActiveImageOffsetX(index),
+        y: this.getActiveImageOffsetY(index)
+      })
+      .onComplete((event) => {
+        if (event?.loadingStatus) {
+          this.rememberSourceImageSize(index, Number(event.contentWidth), Number(event.contentHeight))
+        }
+      })
+  }
+
+  @Builder
+  private SharedTransitionImageBuilder() {
+    if (this.transitionLayerVisible && this.shouldUseSharedTransitionForIndex(this.transitionIndex)) {
+      Image(this.images[this.transitionIndex])
+        .objectFit(ImageFit.Contain)
+        .width('100%')
+        .height('100%')
+        .draggable(false)
+        .opacity(this.previewImageOpacity)
+        .geometryTransition(this.transitionId)
+        .onComplete((event) => {
+          if (event?.loadingStatus) {
+            this.rememberSourceImageSize(this.transitionIndex, Number(event.contentWidth), Number(event.contentHeight))
+          }
+        })
+    }
+  }
+
+  private showSaveActionBar(): void {
+    this.showActionBar = true
+  }
+
+  private hideSaveActionBar(): void {
+    this.showActionBar = false
   }
 
   build() {
@@ -172,216 +450,260 @@ export struct ImagePreview {
         .backgroundColor(Color.Black)
         .opacity(this.backgroundOpacity)
 
-      // Swiper 多图切换
-      Swiper() {
-        ForEach(this.images, (image: string, index: number) => {
-          Image(image)
-            .objectFit(ImageFit.Contain)
-            .width('100%')
-            .height('100%')
-            .draggable(false)
-        }, (image: string, index: number): string => index.toString())
+      if (this.transitionLayerVisible) {
+        this.SharedTransitionImageBuilder()
       }
-      .index(this.displayIndex)
-      .loop(false)
-      .disableSwipe(this.imageScale > 1)
-      .indicator(false)
-      .duration(300)
-      .curve(Curve.EaseOut)
-      .onChange((index: number) => {
-        this.displayIndex = index
-        this.resetGestureState()
-        this.prefetchRemoteImage(this.images[index])
-      })
-      .width('100%')
-      .height('100%')
-      .scale({ x: this.imageScale * this.dragScale, y: this.imageScale * this.dragScale })
-      .translate({ x: this.offsetX, y: this.offsetY })
 
-      // 底部圆点指示器
-      if (this.images.length > 1) {
-        Row({ space: 6 }) {
-          ForEach(this.images, (item: string, index: number) => {
-            Column()
-              .width(index === this.displayIndex ? 16 : 6)
-              .height(6)
-              .borderRadius(3)
-              .backgroundColor(index === this.displayIndex ? '#FFFFFF' : 'rgba(255, 255, 255, 0.5)')
-              .animation({ duration: 200, curve: Curve.EaseOut })
-          }, (item: string, index: number): string => index.toString())
+      if (this.previewContentVisible) {
+        // Swiper 多图切换。Swiper 内图片不绑定 geometryTransition，只负责浏览交互。
+        Swiper() {
+          ForEach(this.images, (image: string, index: number) => {
+            this.PreviewImageBuilder(image, index)
+          }, (image: string, index: number): string => index.toString())
         }
-        .justifyContent(FlexAlign.Center)
-        .width('100%')
-        .position({ x: 0, y: '100%' })
-        .translate({ y: this.getIndicatorTranslateY() })
-      }
-
-      // 右下角保存按钮
-      Stack() {
-        this.SaveActionButtonBuilder()
-      }
-        .position({ x: '100%', y: '100%' })
-        .translate({ x: this.getSaveButtonTranslateX(), y: this.getSaveButtonTranslateY() })
-
-      // 顶部关闭按钮 + 页码
-      Row() {
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(20)
-            .fontColor([Color.White])
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(this.getOverlayControlBackgroundColor())
-        .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-        .border({ width: 0.8, color: this.getOverlayControlBorderColor() })
-        .shadow({ radius: 18, color: this.getOverlayControlShadowColor(), offsetX: 0, offsetY: 6 })
-        .onClick(() => {
-          this.dismiss()
+        .index(this.displayIndex)
+        .loop(false)
+        .disableSwipe(this.disableSwiperSwipe || this.imageScale > 1)
+        .indicator(false)
+        .duration(300)
+        .curve(Curve.EaseOut)
+        .onChange((index: number) => {
+          this.sharedTransitionActive = false
+          this.previewImageOpacity = 1
+          this.displayIndex = index
+          this.resetGestureState()
+          this.prefetchRemoteImage(this.images[index])
         })
+        .width('100%')
+        .height('100%')
+        // 图片预览组合手势绑定在 Swiper 上，避免根容器 Pan 与 Swiper 内建翻页互相抢占。
+        .parallelGesture(
+          GestureGroup(GestureMode.Exclusive,
+            PinchGesture({ fingers: 2 })
+              .onActionStart(() => {
+                this.hideSaveActionBar()
+                this.lastImageScale = this.imageScale
+                this.disableSwiperSwipe = true
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                let newScale = this.lastImageScale * event.scale
+                if (newScale < 1) {
+                  newScale = 1
+                } else if (newScale > 4) {
+                  newScale = 4
+                }
+                if (this.imageScale > 1) {
+                  this.offsetX = this.offsetX / (this.imageScale - 1) * (newScale - 1) || 0
+                  this.offsetY = this.offsetY / (this.imageScale - 1) * (newScale - 1) || 0
+                } else {
+                  this.offsetX = 0
+                  this.offsetY = 0
+                }
+                this.imageScale = newScale
+                this.dragScale = 1
+                this.backgroundOpacity = 1
+                this.clampImageOffset()
+              })
+              .onActionEnd(() => {
+                if (this.imageScale <= 1) {
+                  this.resetGestureState()
+                } else {
+                  this.clampImageOffset()
+                  this.disableSwiperSwipe = false
+                }
+                this.lastImageScale = this.imageScale
+              })
+              .onActionCancel(() => {
+                if (this.imageScale <= 1) {
+                  this.resetGestureState()
+                } else {
+                  this.clampImageOffset()
+                  this.disableSwiperSwipe = false
+                }
+              }),
+            // PanGesture 距离阈值保持很低，下拉从第一段移动就驱动图片位置和背景透明度。
+            PanGesture({ fingers: 1, distance: 1 })
+              .onActionStart(() => {
+                this.hideSaveActionBar()
+                this.lastOffsetX = this.offsetX
+                this.lastOffsetY = this.offsetY
+                this.panDirection = 'none'
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                if (this.imageScale > 1) {
+                  const nextOffsetX = this.lastOffsetX + event.offsetX
+                  const nextOffsetY = this.lastOffsetY + event.offsetY
+                  const maxOffsetX = this.getMaxOffsetX()
+                  const maxOffsetY = this.getMaxOffsetY()
+                  this.offsetX = this.clampValue(nextOffsetX, -maxOffsetX, maxOffsetX)
+                  this.offsetY = this.clampValue(nextOffsetY, -maxOffsetY, maxOffsetY)
+                  return
+                }
 
-        Blank()
+                if (this.panDirection === 'none') {
+                  if (Math.abs(event.offsetX) > 4 || Math.abs(event.offsetY) > 4) {
+                    if (Math.abs(event.offsetX) > Math.abs(event.offsetY)) {
+                      this.panDirection = 'horizontal'
+                      this.disableSwiperSwipe = false
+                    } else {
+                      this.panDirection = 'vertical'
+                      this.disableSwiperSwipe = true
+                    }
+                  }
+                }
 
-        if (this.images.length > 1) {
-          Text(`${this.displayIndex + 1} / ${this.images.length}`)
-            .fontSize(16)
-            .fontColor(Color.White)
-            .fontWeight(FontWeight.Medium)
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor('rgba(12, 16, 24, 0.58)')
-            .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-            .borderRadius(999)
-            .border({ width: 0.8, color: this.getOverlayControlBorderColor() })
-        }
+                if (this.panDirection !== 'vertical') {
+                  return
+                }
+
+                const rawY = event.offsetY
+                const dismissDistance = this.getDismissDistance()
+                if (rawY > 0) {
+                  this.offsetY = rawY
+                  const dragRatio = Math.min(rawY / dismissDistance, 1)
+                  this.dragScale = 1 - dragRatio * 0.18
+                  this.backgroundOpacity = Math.max(0.05, 1 - dragRatio * 0.92)
+                } else {
+                  this.offsetY = rawY * 0.25
+                  this.dragScale = 1
+                  this.backgroundOpacity = 1
+                }
+              })
+              .onActionEnd(() => {
+                if (this.imageScale > 1) {
+                  this.clampImageOffset()
+                  return
+                }
+
+                if (this.panDirection === 'vertical' && this.offsetY > this.getDismissDistance()) {
+                  this.isDismissing = true
+                  this.hideSaveActionBar()
+                  this.disableSwiperSwipe = true
+                  if (this.canCloseWithSharedTransition()) {
+                    this.closeWithSharedTransition()
+                    return
+                  }
+                  this.getUIContext().animateTo({ duration: 220, curve: Curve.FastOutLinearIn }, () => {
+                    this.offsetY = this.containerHeight > 0 ? this.containerHeight : 720
+                    this.dragScale = 0.78
+                    this.backgroundOpacity = 0
+                  })
+                  setTimeout(() => this.onClose(), 230)
+                  return
+                }
+
+                this.getUIContext().animateTo({ duration: 240, curve: Curve.FastOutSlowIn }, () => {
+                  this.offsetX = 0
+                  this.offsetY = 0
+                  this.dragScale = 1
+                  this.backgroundOpacity = 1
+                  this.disableSwiperSwipe = false
+                })
+              })
+              .onActionCancel(() => {
+                if (this.imageScale > 1) {
+                  this.clampImageOffset()
+                  return
+                }
+                this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+                  this.offsetX = 0
+                  this.offsetY = 0
+                  this.dragScale = 1
+                  this.backgroundOpacity = 1
+                  this.disableSwiperSwipe = false
+                })
+              }),
+            LongPressGesture({ duration: 500 })
+              .onAction(() => {
+                if (!this.isDismissing) {
+                  this.showSaveActionBar()
+                }
+              }),
+            GestureGroup(GestureMode.Exclusive,
+              TapGesture({ count: 2 })
+                .onAction(() => {
+                  this.hideSaveActionBar()
+                  this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+                    if (this.imageScale > 1) {
+                      this.imageScale = 1
+                      this.lastImageScale = 1
+                      this.offsetX = 0
+                      this.offsetY = 0
+                      this.lastOffsetX = 0
+                      this.lastOffsetY = 0
+                      this.disableSwiperSwipe = false
+                    } else {
+                      this.imageScale = 2
+                      this.lastImageScale = 2
+                      this.disableSwiperSwipe = true
+                    }
+                    this.dragScale = 1
+                    this.backgroundOpacity = 1
+                    this.clampImageOffset()
+                  })
+                }),
+              TapGesture({ count: 1 })
+                .onAction(() => {
+                  this.dismiss()
+                })
+            )
+          )
+        )
       }
-      .width('100%')
-      .padding({
-        left: this.overlayHorizontalMarginVp,
-        right: this.overlayHorizontalMarginVp,
-        top: this.topSafeAreaVp + this.overlayTopMarginVp
-      })
-      .position({ x: 0, y: 0 })
+
+      if (this.previewContentVisible && this.showActionBar) {
+        Row() {
+          this.PreviewActionBarBuilder()
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .position({ x: 0, y: '100%' })
+        .translate({ y: -(this.actionBarHeightVp + this.overlayBottomMarginVp + this.bottomSafeAreaVp) })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+      }
+
+      if (this.previewContentVisible && this.isSaving && !this.showActionBar) {
+        this.SavingInlineIndicatorBuilder()
+      }
+
+      // 顶部参考系统相册预览：中间页码，左侧裸关闭图标
+      if (this.previewContentVisible) {
+        Row() {
+          this.PageIndicatorBuilder()
+        }
+        .width('100%')
+        .height(52)
+        .justifyContent(FlexAlign.Center)
+        .padding({
+          left: this.overlayHorizontalMarginVp,
+          right: this.overlayHorizontalMarginVp,
+          top: this.topSafeAreaVp + this.overlayTopMarginVp
+        })
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+
+        Row() {
+          this.CloseButtonBuilder()
+        }
+        .width('100%')
+        .padding({
+          left: this.overlayHorizontalMarginVp,
+          right: this.overlayHorizontalMarginVp,
+          top: this.topSafeAreaVp + this.overlayTopMarginVp
+        })
+        .position({ x: 0, y: 0 })
+      }
     }
     .width('100%')
     .height('100%')
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-    // 双指缩放：parallelGesture 使其与其他手势并行，互不干扰
-    .parallelGesture(
-      PinchGesture({ fingers: 2 })
-        .onActionStart(() => {
-          this.lastImageScale = this.imageScale
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          let newScale = this.lastImageScale * event.scale
-          if (newScale < 0.5) {
-            newScale = 0.5
-          } else if (newScale > 4) {
-            newScale = 4
-          }
-          this.imageScale = newScale
-        })
-        .onActionEnd(() => {
-          if (this.imageScale < 1) {
-            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-              this.imageScale = 1
-              this.lastImageScale = 1
-              this.offsetX = 0
-              this.offsetY = 0
-            })
-          }
-          this.lastImageScale = this.imageScale
-        })
-    )
-    // 拖动和点击互斥：手指动了就是拖动，没动就是点击，不会同时触发
-    .gesture(
-      GestureGroup(GestureMode.Exclusive,
-        // PanGesture 在前：手指移动超过阈值时胜出，TapGesture 被取消
-        PanGesture({ fingers: 1, distance: 12 })
-          .onActionStart(() => {
-            this.lastOffsetX = this.offsetX
-            this.lastOffsetY = this.offsetY
-            this.panDirection = 'none'
-          })
-          .onActionUpdate((event: GestureEvent) => {
-            if (this.imageScale > 1) {
-              this.offsetX = this.lastOffsetX + event.offsetX
-              this.offsetY = this.lastOffsetY + event.offsetY
-            } else {
-              // 方向锁定
-              if (this.panDirection === 'none') {
-                if (Math.abs(event.offsetX) > 10 || Math.abs(event.offsetY) > 10) {
-                  if (Math.abs(event.offsetX) > Math.abs(event.offsetY)) {
-                    this.panDirection = 'horizontal'
-                  } else {
-                    this.panDirection = 'vertical'
-                  }
-                }
-              }
-
-              if (this.panDirection === 'vertical' && event.offsetY > 0) {
-                const rawY = event.offsetY
-                // 橡皮筋阻尼：阻力随距离递增，自然减速
-                this.offsetY = rawY * 0.55 / (1 + rawY / 500)
-                // 同步缩小图片，营造"抽离"效果
-                this.dragScale = 1 - Math.min(rawY / 600, 0.2)
-                // 背景同步淡出
-                this.backgroundOpacity = Math.max(0.15, 1 - rawY / 450)
-              }
-            }
-          })
-          .onActionEnd((event: GestureEvent) => {
-            if (this.imageScale > 1) {
-              // 放大状态：保持当前拖动位置，不回弹
-              this.lastOffsetX = this.offsetX
-              this.lastOffsetY = this.offsetY
-              return
-            }
-
-            // 未放大：下拉关闭
-            if (this.panDirection === 'vertical' && this.offsetY > 70) {
-              this.isDismissing = true
-              this.getUIContext().animateTo({ duration: 280, curve: Curve.FastOutLinearIn }, () => {
-                this.offsetY = 2000
-                this.dragScale = 0.6
-                this.backgroundOpacity = 0
-              })
-              setTimeout(() => this.onClose(), 300)
-              return
-            }
-
-            // 回弹归位
-            this.getUIContext().animateTo({ duration: 300, curve: Curve.FastOutSlowIn }, () => {
-              this.offsetX = 0
-              this.offsetY = 0
-              this.dragScale = 1
-              this.backgroundOpacity = 1
-            })
-          }),
-        // TapGesture 组：手指没移动时才会触发（PanGesture 未识别）
-        GestureGroup(GestureMode.Exclusive,
-          TapGesture({ count: 2 })
-            .onAction(() => {
-              this.getUIContext().animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
-                if (this.imageScale > 1) {
-                  this.imageScale = 1
-                  this.lastImageScale = 1
-                  this.offsetX = 0
-                  this.offsetY = 0
-                } else {
-                  this.imageScale = 2
-                  this.lastImageScale = 2
-                }
-              })
-            }),
-          TapGesture({ count: 1 })
-            .onAction(() => {
-              if (this.imageScale <= 1) {
-                this.dismiss()
-              }
-            })
-        )
-      )
-    )
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      this.containerWidth = this.areaLengthToNumber(newArea.width)
+      this.containerHeight = this.areaLengthToNumber(newArea.height)
+      if (this.imageScale > 1) {
+        this.clampImageOffset()
+      }
+    })
   }
 
   private async saveCurrentImage(): Promise<void> {
@@ -405,6 +727,7 @@ export struct ImagePreview {
         await this.saveFromFileUri(imageUri)
       }
       this.showImageToast($r('app.string.image_saved_to_album'))
+      this.hideSaveActionBar()
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       hilog.error(0x0000, 'ImagePreview', 'Save image failed: %{public}s', errorMessage)
@@ -420,10 +743,16 @@ export struct ImagePreview {
       throw new Error('UI context is unavailable')
     }
     const context = hostContext as common.UIAbilityContext
+    let srcFile: fileIo.File | null = null
+    let desFile: fileIo.File | null = null
     try {
-      const srcUri = imageUri.startsWith('file://') ? imageUri : fileUri.getUriFromPath(imageUri)
+      const srcPath = this.resolveLocalFilePath(imageUri)
+      if (srcPath === '') {
+        throw new Error('Image path is empty')
+      }
+      const srcUri = fileUri.getUriFromPath(srcPath)
 
-      const ext = this.getExtensionFromUri(imageUri)
+      const ext = this.getExtensionFromUri(srcPath)
       const config: photoAccessHelper.PhotoCreationConfig = {
         title: `IMG_${Date.now()}`,
         fileNameExtension: ext,
@@ -437,13 +766,14 @@ export struct ImagePreview {
         throw new Error('No target file uri selected')
       }
 
-      const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY)
-      const desFile = fileIo.openSync(desFileUris[0], fileIo.OpenMode.WRITE_ONLY)
-      fileIo.copyFileSync(srcFile.fd, desFile.fd)
-      fileIo.closeSync(srcFile)
-      fileIo.closeSync(desFile)
+      srcFile = fileIo.openSync(srcPath, fileIo.OpenMode.READ_ONLY)
+      desFile = fileIo.openSync(desFileUris[0], fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE)
+      await fileIo.copyFile(srcFile.fd, desFile.fd)
     } catch (error) {
       throw new Error(`Save from file uri failed: ${this.formatSaveError(error)}`)
+    } finally {
+      this.closeFileQuietly(srcFile)
+      this.closeFileQuietly(desFile)
     }
   }
 
@@ -607,16 +937,44 @@ export struct ImagePreview {
   }
 
   private getExtensionFromUri(uri: string): string {
-    const dotIndex = uri.lastIndexOf('.')
+    const queryIndex = uri.indexOf('?')
+    const fragmentIndex = uri.indexOf('#')
+    let cleanUri = uri
+    if (queryIndex >= 0) {
+      cleanUri = cleanUri.substring(0, queryIndex)
+    }
+    if (fragmentIndex >= 0) {
+      cleanUri = cleanUri.substring(0, fragmentIndex)
+    }
+    const dotIndex = cleanUri.lastIndexOf('.')
     if (dotIndex >= 0) {
-      let ext = uri.substring(dotIndex + 1).toLowerCase()
-      const queryIndex = ext.indexOf('?')
-      if (queryIndex >= 0) {
-        ext = ext.substring(0, queryIndex)
+      const ext = cleanUri.substring(dotIndex + 1).toLowerCase()
+      if (ext === 'jpeg') {
+        return 'jpg'
       }
       return ext
     }
     return 'jpg'
+  }
+
+  private resolveLocalFilePath(uri: string): string {
+    let cleanUri = uri.trim()
+    const queryIndex = cleanUri.indexOf('?')
+    if (queryIndex >= 0) {
+      cleanUri = cleanUri.substring(0, queryIndex)
+    }
+    const fragmentIndex = cleanUri.indexOf('#')
+    if (fragmentIndex >= 0) {
+      cleanUri = cleanUri.substring(0, fragmentIndex)
+    }
+    if (!cleanUri.toLowerCase().startsWith('file://')) {
+      return cleanUri
+    }
+    try {
+      return new fileUri.FileUri(cleanUri).path
+    } catch (_error) {
+      return cleanUri.substring(7)
+    }
   }
 
   private getExtensionForRemoteImage(uri: string, contentType?: string): string {
@@ -648,6 +1006,17 @@ export struct ImagePreview {
     return JSON.stringify(error)
   }
 
+  private closeFileQuietly(file: fileIo.File | null): void {
+    if (file === null) {
+      return
+    }
+    try {
+      fileIo.closeSync(file)
+    } catch (error) {
+      hilog.error(0x0000, 'ImagePreview', 'Close image file failed: %{public}s', this.formatSaveError(error))
+    }
+  }
+
   private resetGestureState(): void {
     this.imageScale = 1
     this.lastImageScale = 1
@@ -658,5 +1027,7 @@ export struct ImagePreview {
     this.backgroundOpacity = 1
     this.dragScale = 1
     this.panDirection = 'none'
+    this.disableSwiperSwipe = false
+    this.showActionBar = false
   }
 }

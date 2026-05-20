@@ -2655,6 +2655,174 @@
     {
       "name": "preset_prompt_summary_long_body",
       "value": "Please summarize the following long text into key points under 200 words, preserving the core conclusions:\n\n[content]"
+    },
+    {
+      "name": "image_generation_title",
+      "value": "图像生成"
+    },
+    {
+      "name": "image_generation_settings_entry_desc",
+      "value": "文生图、图生图和生成历史"
+    },
+    {
+      "name": "image_generation_tab_generate",
+      "value": "生成"
+    },
+    {
+      "name": "image_generation_tab_gallery",
+      "value": "图库"
+    },
+    {
+      "name": "image_generation_prompt_placeholder",
+      "value": "描述你想生成的图片..."
+    },
+    {
+      "name": "image_generation_generate",
+      "value": "生成图片"
+    },
+    {
+      "name": "image_generation_edit",
+      "value": "编辑图片"
+    },
+    {
+      "name": "image_generation_cancel",
+      "value": "取消生成"
+    },
+    {
+      "name": "image_generation_cancel_edit",
+      "value": "取消编辑"
+    },
+    {
+      "name": "image_generation_new_session",
+      "value": "新建"
+    },
+    {
+      "name": "image_generation_model",
+      "value": "图像模型"
+    },
+    {
+      "name": "image_generation_no_model",
+      "value": "请先选择图像生成模型"
+    },
+    {
+      "name": "image_generation_no_available_model",
+      "value": "暂无可用图像生成模型"
+    },
+    {
+      "name": "image_generation_no_available_model_hint",
+      "value": "请在模型管理中启用模型,并在模型编辑里打开“图片生成”能力"
+    },
+    {
+      "name": "image_generation_settings",
+      "value": "生成设置"
+    },
+    {
+      "name": "image_generation_count",
+      "value": "生成数量"
+    },
+    {
+      "name": "image_generation_aspect_ratio",
+      "value": "图片比例"
+    },
+    {
+      "name": "image_generation_aspect_square",
+      "value": "1:1 正方形"
+    },
+    {
+      "name": "image_generation_aspect_landscape",
+      "value": "16:9 横图"
+    },
+    {
+      "name": "image_generation_aspect_portrait",
+      "value": "9:16 竖图"
+    },
+    {
+      "name": "image_generation_add_reference",
+      "value": "添加参考图"
+    },
+    {
+      "name": "image_generation_reference_limit",
+      "value": "最多添加 4 张参考图"
+    },
+    {
+      "name": "image_generation_reference_failed",
+      "value": "参考图添加失败"
+    },
+    {
+      "name": "image_generation_gallery_empty",
+      "value": "暂无生成图片"
+    },
+    {
+      "name": "image_generation_gallery_empty_desc",
+      "value": "生成的图片会保存在这里"
+    },
+    {
+      "name": "image_generation_empty_prompt",
+      "value": "描述你想生成的图片"
+    },
+    {
+      "name": "image_generation_generating",
+      "value": "正在生成图片"
+    },
+    {
+      "name": "image_generation_editing",
+      "value": "正在编辑图片"
+    },
+    {
+      "name": "image_generation_save_success",
+      "value": "图片已保存"
+    },
+    {
+      "name": "image_generation_save_failed",
+      "value": "图片保存失败"
+    },
+    {
+      "name": "image_generation_copy_prompt_success",
+      "value": "Prompt 已复制"
+    },
+    {
+      "name": "image_generation_delete_title",
+      "value": "删除图片?"
+    },
+    {
+      "name": "image_generation_delete_message",
+      "value": "删除后无法恢复"
+    },
+    {
+      "name": "image_generation_cancel_title",
+      "value": "取消生成?"
+    },
+    {
+      "name": "image_generation_cancel_message",
+      "value": "取消后将停止当前生成任务,已生成的图片不会保留。"
+    },
+    {
+      "name": "image_generation_cancel_edit_title",
+      "value": "取消编辑?"
+    },
+    {
+      "name": "image_generation_cancel_edit_message",
+      "value": "取消后将停止当前编辑任务,已生成的图片不会保留。"
+    },
+    {
+      "name": "image_generation_running_in_background",
+      "value": "图片正在后台生成,可稍后回来查看"
+    },
+    {
+      "name": "image_generation_editing_in_background",
+      "value": "图片正在后台编辑,可稍后回来查看"
+    },
+    {
+      "name": "default_model_role_image_generation",
+      "value": "图像生成"
+    },
+    {
+      "name": "default_model_desc_image_generation",
+      "value": "用于文生图和图生图"
+    },
+    {
+      "name": "default_model_select_image_model",
+      "value": "选择图像生成模型"
     }
   ]
 }

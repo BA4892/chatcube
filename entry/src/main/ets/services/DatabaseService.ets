@@ -10,6 +10,7 @@ import {
   SearchReference
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID, createDefaultAssistant } from '../models/AssistantModels'
+import { GeneratedMedia } from '../models/ImageGenerationModels'
 import { deserializeMessageParts, serializeMessageParts } from '../models/MessageParts'
 import { ensureMessageParts, buildMessagePartsFromLegacy } from '../utils/ChatMessagePartsHelper'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
@@ -33,6 +34,7 @@ export class TableNames {
 	  static readonly ATTACHMENTS: string = 'message_attachments'
 	  static readonly TOOL_EVENTS: string = 'tool_events'
 	  static readonly ASSISTANTS: string = 'assistants'
+  static readonly GENERATED_MEDIA: string = 'generated_media'
 	}
 
 // 模型数据接口（用于 JSON 序列化，兼容扩展格式）
@@ -287,6 +289,23 @@ export class DatabaseService {
       )
     `
 
+    const createGeneratedMediaTable = `
+      CREATE TABLE IF NOT EXISTS ${TableNames.GENERATED_MEDIA} (
+        id TEXT PRIMARY KEY,
+        type TEXT,
+        prompt TEXT,
+        provider_id TEXT,
+        provider_name TEXT,
+        model_id TEXT,
+        model_name TEXT,
+        file_path TEXT,
+        mime_type TEXT,
+        aspect_ratio TEXT,
+        source_paths_json TEXT,
+        created_at INTEGER
+      )
+    `
+
     try {
       await this.rdbStore.executeSql(createSessionsTable)
 	      await this.rdbStore.executeSql(createMessagesTable)
@@ -294,6 +313,10 @@ export class DatabaseService {
       await this.rdbStore.executeSql(createProvidersTable)
       await this.rdbStore.executeSql(createAttachmentsTable)
       await this.rdbStore.executeSql(createToolEventsTable)
+      await this.rdbStore.executeSql(createGeneratedMediaTable)
+      await this.rdbStore.executeSql(
+        `CREATE INDEX IF NOT EXISTS idx_generated_media_created_at ON ${TableNames.GENERATED_MEDIA}(created_at DESC)`
+      )
       // 尝试添加 sort_order 字段（如果表已存在但没有该字段）
       await this.addSortOrderColumnIfNeeded()
       // 尝试添加 reasoning_content 字段（用于推理模型）
@@ -2073,6 +2096,92 @@ export class DatabaseService {
     } catch (error) {
       console.error('DatabaseService', `Failed to update message attachments: ${JSON.stringify(error)}`)
     }
+  }
+
+  // ============ 生成图片图库 ============
+
+  async insertGeneratedMedia(media: GeneratedMedia): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null) {
+      return
+    }
+    const valueBucket: relationalStore.ValuesBucket = {
+      id: media.id,
+      type: media.type,
+      prompt: media.prompt,
+      provider_id: media.providerId,
+      provider_name: media.providerName,
+      model_id: media.modelId,
+      model_name: media.modelName,
+      file_path: media.filePath,
+      mime_type: media.mimeType,
+      aspect_ratio: media.aspectRatio,
+      source_paths_json: media.sourcePathsJson,
+      created_at: media.createdAt
+    }
+    try {
+      await this.rdbStore.insert(TableNames.GENERATED_MEDIA, valueBucket)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to insert generated media: ${JSON.stringify(error)}`)
+    }
+  }
+
+  async getGeneratedMediaList(limit: number = 200): Promise<GeneratedMedia[]> {
+    await this.waitForInitialization()
+    const result: GeneratedMedia[] = []
+    if (this.rdbStore === null) {
+      return result
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.GENERATED_MEDIA)
+    predicates.orderByDesc('created_at')
+    if (limit > 0) {
+      predicates.limitAs(limit)
+    }
+    try {
+      const resultSet = await this.rdbStore.query(predicates)
+      while (resultSet.goToNextRow()) {
+        result.push(this.buildGeneratedMediaFromResultSet(resultSet))
+      }
+      resultSet.close()
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get generated media: ${JSON.stringify(error)}`)
+    }
+    return result
+  }
+
+  async deleteGeneratedMedia(id: string): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null || id === '') {
+      return
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.GENERATED_MEDIA)
+    predicates.equalTo('id', id)
+    try {
+      await this.rdbStore.delete(predicates)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to delete generated media: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private buildGeneratedMediaFromResultSet(resultSet: relationalStore.ResultSet): GeneratedMedia {
+    const media = new GeneratedMedia()
+    media.id = this.safeGetString(resultSet, 'id')
+    media.type = this.safeGetString(resultSet, 'type')
+    media.prompt = this.safeGetString(resultSet, 'prompt')
+    media.providerId = this.safeGetString(resultSet, 'provider_id')
+    media.providerName = this.safeGetString(resultSet, 'provider_name')
+    media.modelId = this.safeGetString(resultSet, 'model_id')
+    media.modelName = this.safeGetString(resultSet, 'model_name')
+    media.filePath = this.safeGetString(resultSet, 'file_path')
+    media.mimeType = this.safeGetString(resultSet, 'mime_type', 'image/png')
+    media.aspectRatio = this.safeGetString(resultSet, 'aspect_ratio')
+    media.sourcePathsJson = this.safeGetString(resultSet, 'source_paths_json')
+    try {
+      media.createdAt = resultSet.getLong(resultSet.getColumnIndex('created_at'))
+    } catch (_error) {
+      media.createdAt = 0
+    }
+    return media
   }
 
   // ============ 服务商操作 ============

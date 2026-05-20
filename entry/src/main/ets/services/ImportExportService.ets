@@ -33,6 +33,7 @@ import { getPreferencesService, PreferenceKeys } from './PreferencesService'
 import { getThemeService } from './ThemeService'
 import { getSettingsManager } from '../viewmodels/SettingsManager'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
+import { applyDerivedModelDefaults } from '../utils/ModelCapabilityDeriver'
 import { getAppStateManager } from '../viewmodels/AppStateManager'
 import { getProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { buildProviderImportOrder } from '../config/ProviderOrderUtils'
@@ -1185,7 +1186,9 @@ export class ImportExportService {
     try {
       const modelsArray = JSON.parse(providerData.modelsJson) as ModelInfoExtendedJson[]
       for (const m of modelsArray) {
-        models.push(ModelInfo.fromExtendedJson(m))
+        const model = ModelInfo.fromExtendedJson(m)
+        applyDerivedModelDefaults(model)
+        models.push(model)
       }
     } catch (e) {
       console.warn('ImportExportService', `Failed to parse models for provider ${providerData.id}`)

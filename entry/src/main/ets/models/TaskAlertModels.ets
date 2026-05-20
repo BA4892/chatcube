@@ -13,3 +13,10 @@ export interface InAppTaskAlertPayloadData {
   message: string
   timestamp: number
 }
+
+export interface ImageGenerationAlertPayloadData {
+  id: string
+  status: string
+  message: string
+  timestamp: number
+}

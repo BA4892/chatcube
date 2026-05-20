@@ -1,4 +1,8 @@
-import { InAppTaskAlertPayloadData, OpenSessionPayloadData } from '../models/TaskAlertModels'
+import {
+  ImageGenerationAlertPayloadData,
+  InAppTaskAlertPayloadData,
+  OpenSessionPayloadData
+} from '../models/TaskAlertModels'
 
 export function parseOpenSessionPayload(payloadText: string): OpenSessionPayloadData | null {
   if (payloadText === '') {
@@ -21,6 +25,17 @@ export function parseInAppTaskAlertPayload(payloadText: string): InAppTaskAlertP
   }
   try {
     return JSON.parse(payloadText) as InAppTaskAlertPayloadData
+  } catch (_error) {
+    return null
+  }
+}
+
+export function parseImageGenerationAlertPayload(payloadText: string): ImageGenerationAlertPayloadData | null {
+  if (payloadText === '') {
+    return null
+  }
+  try {
+    return JSON.parse(payloadText) as ImageGenerationAlertPayloadData
   } catch (_error) {
     return null
   }

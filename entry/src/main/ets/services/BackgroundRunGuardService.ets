@@ -8,7 +8,8 @@ export class BackgroundRunGuardService {
   private static instance: BackgroundRunGuardService | null = null
   private context: Context | null = null
   private appInBackground: boolean = false
-  private runningTaskCount: number = 0
+  private chatRunningTaskCount: number = 0
+  private imageGenerationRunningTaskCount: number = 0
   private continuousTaskActive: boolean = false
   private syncInProgress: boolean = false
   private syncAgainRequested: boolean = false
@@ -30,7 +31,16 @@ export class BackgroundRunGuardService {
   }
 
   updateRunningTaskCount(count: number): void {
-    this.runningTaskCount = count
+    this.updateChatRunningTaskCount(count)
+  }
+
+  updateChatRunningTaskCount(count: number): void {
+    this.chatRunningTaskCount = Math.max(0, count)
+    this.syncContinuousTaskState()
+  }
+
+  updateImageGenerationRunningTaskCount(count: number): void {
+    this.imageGenerationRunningTaskCount = Math.max(0, count)
     this.syncContinuousTaskState()
   }
 
@@ -46,7 +56,7 @@ export class BackgroundRunGuardService {
         return
       }
 
-      if (this.appInBackground && this.runningTaskCount > 0) {
+      if (this.appInBackground && this.getTotalRunningTaskCount() > 0) {
         await this.startContinuousTaskIfNeeded()
       } else {
         await this.stopContinuousTaskIfNeeded()
@@ -58,6 +68,10 @@ export class BackgroundRunGuardService {
         void this.syncContinuousTaskState()
       }
     }
+  }
+
+  private getTotalRunningTaskCount(): number {
+    return this.chatRunningTaskCount + this.imageGenerationRunningTaskCount
   }
 
   private async startContinuousTaskIfNeeded(): Promise<void> {

@@ -10,7 +10,8 @@ import { ModelMatchSpec } from './types'
 
 export enum ModelAbility {
   TOOL = 'tool',
-  REASONING = 'reasoning'
+  REASONING = 'reasoning',
+  IMAGE_GENERATION = 'image_generation'
 }
 
 export enum ModelModality {
@@ -68,6 +69,7 @@ const T = ModelModality.TEXT
 const I = ModelModality.IMAGE
 const TOOL = ModelAbility.TOOL
 const REASON = ModelAbility.REASONING
+const IMAGE_GEN = ModelAbility.IMAGE_GENERATION
 
 function def(match: ModelMatchSpec[], abilities: ModelAbility[], input: ModelModality[] = [T],
   output: ModelModality[] = [T]): AbilityDef {
@@ -78,6 +80,10 @@ function def(match: ModelMatchSpec[], abilities: ModelAbility[], input: ModelMod
 
 const DEFS: AbilityDef[] = [
   // --- OpenAI ---
+  def([{ tokens: ['gpt', 'image'] }], [IMAGE_GEN], [T, I], [I]),
+  def([{ tokens: ['dall', 'e'] }], [IMAGE_GEN], [T, I], [I]),
+  def([{ exactId: 'dall-e-3' }], [IMAGE_GEN], [T], [I]),
+  def([{ exactId: 'dall-e-2' }], [IMAGE_GEN], [T, I], [I]),
   def([{ tokens: ['gpt', '4', 'o'] }], [TOOL], [T, I]),
   def([{ tokens: ['gpt', '4', '1'] }], [TOOL], [T, I]),
   def([{ tokens: ['^o$', '^\\d+$'] }], [TOOL, REASON], [T, I]),
@@ -93,11 +99,13 @@ const DEFS: AbilityDef[] = [
   def([{ tokens: ['gemini', '2', '0', 'flash'] }], [TOOL], [T, I]),
   def([{ tokens: ['gemini', '2', '5', 'flash'] }, { notTokens: ['image'] }], [TOOL, REASON], [T, I]),
   def([{ tokens: ['gemini', '2', '5', 'pro'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gemini', '2', '5', 'flash', 'image'] }], [], [T, I], [T, I]),
-  def([{ tokens: ['gemini', '3', 'pro', 'image'] }], [], [T, I], [T, I]),
+  def([{ tokens: ['gemini', '2', '0', 'flash', 'preview', 'image'] }], [IMAGE_GEN], [T, I], [T, I]),
+  def([{ tokens: ['gemini', '2', '5', 'flash', 'image'] }], [IMAGE_GEN], [T, I], [T, I]),
+  def([{ tokens: ['gemini', '3', 'pro', 'image'] }], [IMAGE_GEN], [T, I], [T, I]),
   def([{ tokens: ['gemini', '3', 'pro'] }], [TOOL, REASON], [T, I]),
   def([{ tokens: ['gemini', '3', 'flash'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gemini', '3', '1', 'flash', 'image'] }], [REASON], [T, I], [T, I]),
+  def([{ tokens: ['gemini', '3', '1', 'flash', 'image'] }], [REASON, IMAGE_GEN], [T, I], [T, I]),
+  def([{ tokens: ['imagen'] }], [IMAGE_GEN], [T], [I]),
   def([{ tokens: ['gemini', '3', '1', 'pro', 'preview'] }], [TOOL, REASON], [T, I]),
   def([{ exactId: 'gemini-flash-latest' }], [TOOL, REASON], [T, I]),
   def([{ exactId: 'gemini-pro-latest' }], [TOOL, REASON], [T, I]),
@@ -133,6 +141,9 @@ const DEFS: AbilityDef[] = [
   def([{ tokens: ['doubao', '1', '8'] }], [TOOL, REASON], [T, I]),
 
   // --- Grok ---
+  def([{ tokens: ['grok', 'imagine', 'image'] }], [IMAGE_GEN], [T, I], [I]),
+  def([{ tokens: ['grok', 'imagine'] }], [IMAGE_GEN], [T, I], [I]),
+  def([{ tokens: ['grok', 'image'] }], [IMAGE_GEN], [T, I], [I]),
   def([{ tokens: ['grok', '4'] }], [TOOL, REASON], [T, I]),
 
   // --- Kimi ---
@@ -220,4 +231,10 @@ export function modelSupportsVision(modelId: string): boolean {
 
 export function modelSupportsImageOutput(modelId: string): boolean {
   return lookupModelAbilities(modelId).outputModalities.includes(ModelModality.IMAGE)
+}
+
+export function modelSupportsImageGeneration(modelId: string): boolean {
+  const result = lookupModelAbilities(modelId)
+  return result.abilities.includes(ModelAbility.IMAGE_GENERATION) ||
+    result.outputModalities.includes(ModelModality.IMAGE)
 }

@@ -11,10 +11,12 @@ export class AppUiState {
   @Trace openNewChatTimestamp: number = 0
   @Trace openNewChatWithPromptPayload: string = ''
   @Trace openSessionPayload: string = ''
+  @Trace openImageGenerationTick: number = 0
   @Trace sessionListRefreshAt: number = 0
   @Trace assistantAvatarRefreshAt: number = 0
   @Trace taskEventTick: number = 0
   @Trace inAppTaskAlertPayload: string = ''
+  @Trace inAppImageGenerationAlertPayload: string = ''
   @Trace pendingToolInteractionTick: number = 0
   @Trace appInBackground: boolean = false
   @Trace activeChatSessionId: string = ''
@@ -81,6 +83,9 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
     case AppStorageKeys.OPEN_SESSION_PAYLOAD:
       state.openSessionPayload = value as string
       return
+    case AppStorageKeys.OPEN_IMAGE_GENERATION:
+      state.openImageGenerationTick = value as number
+      return
     case AppStorageKeys.SESSION_LIST_REFRESH_AT:
       state.sessionListRefreshAt = value as number
       return
@@ -92,6 +97,9 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
       return
     case AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD:
       state.inAppTaskAlertPayload = value as string
+      return
+    case AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD:
+      state.inAppImageGenerationAlertPayload = value as string
       return
     case AppStorageKeys.PENDING_TOOL_INTERACTION_TICK:
       state.pendingToolInteractionTick = value as number
@@ -240,6 +248,8 @@ function createAppUiStateFromStorage(): AppUiState {
     readStorageValue<string>(AppStorageKeys.OPEN_NEW_CHAT_WITH_PROMPT, ''))
   applyAppUiStateValue(state, AppStorageKeys.OPEN_SESSION_PAYLOAD,
     readStorageValue<string>(AppStorageKeys.OPEN_SESSION_PAYLOAD, ''))
+  applyAppUiStateValue(state, AppStorageKeys.OPEN_IMAGE_GENERATION,
+    readStorageValue<number>(AppStorageKeys.OPEN_IMAGE_GENERATION, 0))
   applyAppUiStateValue(state, AppStorageKeys.SESSION_LIST_REFRESH_AT,
     readStorageValue<number>(AppStorageKeys.SESSION_LIST_REFRESH_AT, 0))
   applyAppUiStateValue(state, AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT,
@@ -247,6 +257,8 @@ function createAppUiStateFromStorage(): AppUiState {
   applyAppUiStateValue(state, AppStorageKeys.TASK_EVENT_TICK, readStorageValue<number>(AppStorageKeys.TASK_EVENT_TICK, 0))
   applyAppUiStateValue(state, AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD,
     readStorageValue<string>(AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD, ''))
+  applyAppUiStateValue(state, AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD,
+    readStorageValue<string>(AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD, ''))
   applyAppUiStateValue(state, AppStorageKeys.PENDING_TOOL_INTERACTION_TICK,
     readStorageValue<number>(AppStorageKeys.PENDING_TOOL_INTERACTION_TICK, 0))
   applyAppUiStateValue(state, AppStorageKeys.APP_IN_BACKGROUND,
@@ -350,10 +362,12 @@ export function syncAppUiStateFromStorage(): void {
   state.openNewChatTimestamp = freshState.openNewChatTimestamp
   state.openNewChatWithPromptPayload = freshState.openNewChatWithPromptPayload
   state.openSessionPayload = freshState.openSessionPayload
+  state.openImageGenerationTick = freshState.openImageGenerationTick
   state.sessionListRefreshAt = freshState.sessionListRefreshAt
   state.assistantAvatarRefreshAt = freshState.assistantAvatarRefreshAt
   state.taskEventTick = freshState.taskEventTick
   state.inAppTaskAlertPayload = freshState.inAppTaskAlertPayload
+  state.inAppImageGenerationAlertPayload = freshState.inAppImageGenerationAlertPayload
   state.pendingToolInteractionTick = freshState.pendingToolInteractionTick
   state.appInBackground = freshState.appInBackground
   state.activeChatSessionId = freshState.activeChatSessionId
@@ -435,6 +449,8 @@ function resolveAppUiStatePath(path: string): string {
       return 'openNewChatWithPromptPayload'
     case AppStorageKeys.OPEN_SESSION_PAYLOAD:
       return 'openSessionPayload'
+    case AppStorageKeys.OPEN_IMAGE_GENERATION:
+      return 'openImageGenerationTick'
     case AppStorageKeys.SESSION_LIST_REFRESH_AT:
       return 'sessionListRefreshAt'
     case AppStorageKeys.ASSISTANT_AVATAR_REFRESH_AT:
@@ -443,6 +459,8 @@ function resolveAppUiStatePath(path: string): string {
       return 'taskEventTick'
     case AppStorageKeys.IN_APP_TASK_ALERT_PAYLOAD:
       return 'inAppTaskAlertPayload'
+    case AppStorageKeys.IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD:
+      return 'inAppImageGenerationAlertPayload'
     case AppStorageKeys.PENDING_TOOL_INTERACTION_TICK:
       return 'pendingToolInteractionTick'
     case AppStorageKeys.APP_IN_BACKGROUND:

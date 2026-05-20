@@ -1,7 +1,7 @@
 // 默认模型配置页面
 import { DefaultModelService } from '../services/DefaultModelService'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
-import { DefaultModelConfig, ModelRole, ModelProvider } from '../models/ChatModels'
+import { DefaultModelConfig, ModelRole, ModelProvider, OutputMode } from '../models/ChatModels'
 import { DefaultPrompts } from '../config/DefaultPrompts'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { DefaultModelSelectSheetContent } from '../components/defaultmodel/DefaultModelSelectSheetContent'
@@ -52,6 +52,7 @@ struct DefaultModelPage {
   @Local chatModel: DefaultModelConfig = new DefaultModelConfig()
   @Local titleModel: DefaultModelConfig = new DefaultModelConfig()
   @Local translateModel: DefaultModelConfig = new DefaultModelConfig()
+  @Local imageModel: DefaultModelConfig = new DefaultModelConfig()
 
   @Local providers: ModelProvider[] = []
   @Local isProvidersLoaded: boolean = false
@@ -108,6 +109,7 @@ struct DefaultModelPage {
     this.chatModel = this.defaultModelService.getModel(ModelRole.CHAT)
     this.titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
     this.translateModel = this.defaultModelService.getModel(ModelRole.TRANSLATE)
+    this.imageModel = this.defaultModelService.getModel(ModelRole.IMAGE)
   }
 
   async loadProviders(): Promise<void> {
@@ -235,6 +237,7 @@ struct DefaultModelPage {
   CompactModelSections() {
     Column() {
       this.ChatModelSection()
+      this.ImageModelSection()
       this.TitleModelSection()
       this.TranslateModelSection()
       Column().height(40)
@@ -260,6 +263,11 @@ struct DefaultModelPage {
       .alignItems(VerticalAlign.Top)
 
       Row({ space: 16 }) {
+        Column() {
+          this.ImageModelSection()
+        }
+        .layoutWeight(1)
+
         Column() {
           this.TranslateModelSection()
         }
@@ -323,6 +331,28 @@ struct DefaultModelPage {
   }
 
   @Builder
+  ImageModelSection() {
+    Column() {
+      this.SectionTitle($r('app.string.default_model_role_image_generation'))
+      ModelConfigCard({
+        roleName: $r('app.string.default_model_role_image_generation'),
+        description: $r('app.string.default_model_desc_image_generation'),
+        showPromptEdit: false,
+        isConfigured: this.imageModel.isConfigured(),
+        displayName: this.imageModel.getDisplayName(),
+        isDefaultPrompt: true,
+        onCardClick: () => {
+          this.showPromptSheet = false
+          this.currentEditRole = ModelRole.IMAGE
+          this.showModelSheet = true
+        },
+        onPromptClick: () => {}
+      })
+    }
+    .width('100%')
+  }
+
+  @Builder
   TranslateModelSection() {
     Column() {
       this.SectionTitle($r('app.string.default_model_section_translate'))
@@ -366,6 +396,11 @@ struct DefaultModelPage {
       isProvidersLoaded: this.isProvidersLoaded,
       providers: this.providers,
       currentModelId: this.getCurrentModelId(),
+      currentProviderId: this.getCurrentProviderId(),
+      hasOutputModeFilter: this.currentEditRole === ModelRole.IMAGE,
+      outputModeFilter: OutputMode.IMAGE,
+      emptyTitle: this.currentEditRole === ModelRole.IMAGE ? $r('app.string.image_generation_no_available_model') : '',
+      emptyDescription: this.currentEditRole === ModelRole.IMAGE ? $r('app.string.image_generation_no_available_model_hint') : '',
       onSelectModel: (providerId: string, modelId: string, modelName: string): void => {
         this.selectModel(providerId, modelId, modelName)
       },
@@ -482,6 +517,8 @@ struct DefaultModelPage {
       return $r('app.string.default_model_select_chat_model')
     } else if (this.currentEditRole === ModelRole.TITLE) {
       return $r('app.string.default_model_select_title_model')
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      return $r('app.string.default_model_select_image_model')
     }
     return $r('app.string.default_model_select_translate_model')
   }
@@ -493,6 +530,8 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      config = this.imageModel
     } else {
       config = this.translateModel
     }
@@ -509,10 +548,26 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      config = this.imageModel
     } else {
       config = this.translateModel
     }
     return config.modelId
+  }
+
+  private getCurrentProviderId(): string {
+    let config: DefaultModelConfig
+    if (this.currentEditRole === ModelRole.CHAT) {
+      config = this.chatModel
+    } else if (this.currentEditRole === ModelRole.TITLE) {
+      config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      config = this.imageModel
+    } else {
+      config = this.translateModel
+    }
+    return config.providerId
   }
 
   private getProviderNameById(providerId: string): string {
@@ -537,6 +592,8 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      this.imageModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else {
       this.translateModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     }
@@ -556,6 +613,8 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig()
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig()
+    } else if (this.currentEditRole === ModelRole.IMAGE) {
+      this.imageModel = new DefaultModelConfig()
     } else {
       this.translateModel = new DefaultModelConfig()
     }

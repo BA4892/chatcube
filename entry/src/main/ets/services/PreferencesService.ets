@@ -27,6 +27,10 @@ export class PreferenceKeys {
   static readonly DEFAULT_TRANSLATE_PROVIDER_ID: string = 'default_translate_provider_id'
   static readonly DEFAULT_TRANSLATE_MODEL_NAME: string = 'default_translate_model_name'
   static readonly DEFAULT_TRANSLATE_PROVIDER_NAME: string = 'default_translate_provider_name'
+  static readonly DEFAULT_IMAGE_MODEL_ID: string = 'default_image_model_id'
+  static readonly DEFAULT_IMAGE_PROVIDER_ID: string = 'default_image_provider_id'
+  static readonly DEFAULT_IMAGE_MODEL_NAME: string = 'default_image_model_name'
+  static readonly DEFAULT_IMAGE_PROVIDER_NAME: string = 'default_image_provider_name'
 
   // Prompt 配置
   static readonly TITLE_PROMPT_TEMPLATE: string = 'title_prompt_template'

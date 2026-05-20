@@ -21,7 +21,7 @@ import { ProviderIconEditSheet, ProviderIconEditConfig } from './ProviderIconEdi
 import { ProviderShareSheet } from './provider/ProviderShareSheet'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { buildModelIconRenderData, ModelIconRenderData } from '../utils/ModelIconRenderUtils'
-import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
+import { applyDerivedModelDefaults, getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 import {
   ApiStyleOption,
   OpenAITransportOption,
@@ -616,6 +616,7 @@ export struct ProviderDetailPanel {
       }
     }
     const model = new ModelInfo(modelId, modelId, 4096, true, false)
+    applyDerivedModelDefaults(model)
     this.provider.models.push(model)
     await this.saveCurrentProvider()
     this.refreshModelGroups()

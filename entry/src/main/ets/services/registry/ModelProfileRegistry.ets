@@ -43,7 +43,8 @@ const DASHSCOPE_THINKING_MODELS: ModelProfileDef[] = [
 // ---- Kimi thinking:kimi-k2-thinking / kimi-k2.5 / kimi-k2.6 ----
 const KIMI_THINKING_MODELS: ModelProfileDef[] = [
   { id: 'kimi_k2_thinking', match: [{ tokens: ['kimi', 'k', '2', 'thinking'] }] },
-  { id: 'kimi_k2_5', match: [{ tokens: ['kimi', 'k', '2', '.', '5'] }] }
+  { id: 'kimi_k2_5', match: [{ tokens: ['kimi', 'k', '2', '.', '5'] }] },
+  { id: 'kimi_k2_6', match: [{ tokens: ['kimi', 'k', '2', '.', '6'] }] }
 ]
 
 // ---- 智谱 GLM thinking ----

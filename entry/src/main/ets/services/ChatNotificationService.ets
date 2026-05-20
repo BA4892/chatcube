@@ -12,6 +12,13 @@ interface NotificationBusinessError {
   message?: string
 }
 
+export interface ImageGenerationNotificationOptions {
+  taskId: string
+  failed: boolean
+  imageCount: number
+  isEdit: boolean
+}
+
 export class ChatNotificationService {
   private static instance: ChatNotificationService | null = null
   private slotReady: boolean = false
@@ -47,6 +54,31 @@ export class ChatNotificationService {
       await notificationManager.publish(request)
     } catch (error) {
       console.error('ChatNotificationService', `Failed to publish notification: ${JSON.stringify(error)}`)
+    }
+  }
+
+  async publishImageGenerationResult(options: ImageGenerationNotificationOptions): Promise<void> {
+    try {
+      await this.ensureNotificationSlot()
+      const notificationId = this.buildNotificationId(`image_${options.taskId}`)
+      const wantAgentObj = await this.createOpenImageGenerationWantAgent(notificationId)
+      const request: notificationManager.NotificationRequest = {
+        id: notificationId,
+        notificationSlotType: notificationManager.SlotType.SERVICE_INFORMATION,
+        content: {
+          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+          normal: {
+            title: this.buildImageGenerationTitle(options),
+            text: this.buildImageGenerationMessage(options),
+            additionalText: 'ChatCube'
+          }
+        },
+        wantAgent: wantAgentObj
+      }
+      await notificationManager.publish(request)
+    } catch (error) {
+      console.error('ChatNotificationService',
+        `Failed to publish image generation notification: ${JSON.stringify(error)}`)
     }
   }
 
@@ -115,6 +147,24 @@ export class ChatNotificationService {
     return await wantAgent.getWantAgent(info)
   }
 
+  private async createOpenImageGenerationWantAgent(requestCode: number): Promise<WantAgent> {
+    const info: wantAgent.WantAgentInfo = {
+      wants: [
+        {
+          bundleName: DEFAULT_BUNDLE_NAME,
+          abilityName: DEFAULT_ABILITY_NAME,
+          parameters: {
+            action: 'openImageGeneration'
+          }
+        }
+      ],
+      actionType: wantAgent.OperationType.START_ABILITY,
+      requestCode: requestCode,
+      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+    }
+    return await wantAgent.getWantAgent(info)
+  }
+
   private buildNotificationId(taskId: string): number {
     let hash = 0
     for (let i = 0; i < taskId.length; i++) {
@@ -128,6 +178,29 @@ export class ChatNotificationService {
       return `会话「${task.sessionTitle}」回复失败，点击查看详情`
     }
     return `会话「${task.sessionTitle}」回复已完成，点击查看`
+  }
+
+  private buildImageGenerationTitle(options: ImageGenerationNotificationOptions): string {
+    if (options.isEdit) {
+      return options.failed ? '图片编辑失败' : '图片编辑完成'
+    }
+    return options.failed ? '图片生成失败' : '图片生成完成'
+  }
+
+  private buildImageGenerationMessage(options: ImageGenerationNotificationOptions): string {
+    if (options.failed) {
+      return options.isEdit ? '图片编辑失败，点击查看详情' : '图片生成失败，点击查看详情'
+    }
+    if (options.isEdit) {
+      if (options.imageCount <= 1) {
+        return '已编辑 1 张图片，点击查看'
+      }
+      return `已编辑 ${options.imageCount} 张图片，点击查看`
+    }
+    if (options.imageCount <= 1) {
+      return '已生成 1 张图片，点击查看'
+    }
+    return `已生成 ${options.imageCount} 张图片，点击查看`
   }
 
   handleOpenSessionPayload(payloadText: string): void {

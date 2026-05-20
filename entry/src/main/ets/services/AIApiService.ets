@@ -259,6 +259,7 @@ interface OpenAIResponsesInputItem {
   name?: string
   arguments?: string
   output?: string
+  result?: string
   id?: string
   // reasoning item 专用字段(仅当 type === 'reasoning' 时出现)
   summary?: OpenAIResponsesReasoningSummaryItem[]
@@ -497,7 +498,7 @@ interface GoogleThinkingConfig {
 }
 
 interface GoogleGenerationConfig {
-  temperature: number
+  temperature?: number
   // maxOutputTokens 留 optional, 助手未配置 max output (0 / undefined) 时直接不下发, 让 Google
   // 模型走自身默认上限。
   maxOutputTokens?: number
@@ -537,6 +538,7 @@ interface OpenAIResponsesOutputItem {
   content?: OpenAIResponsesOutputContentItem[]
   summary?: OpenAIResponsesReasoningSummaryItem[]
   encrypted_content?: string
+  result?: string
   id?: string
 }
 
@@ -805,7 +807,76 @@ export class AIApiService {
       config.openaiTransport === OpenAITransport.RESPONSES
   }
 
-  private buildOpenAIChatTools(tools: ToolDefinition[]): OpenAITool[] {
+  private isMoonshotCompatibleProvider(config: AIApiConfig): boolean {
+    const providerId = config.providerId.toLowerCase()
+    const baseUrl = config.baseUrl.toLowerCase()
+    return providerId.includes('kimi') ||
+      providerId.includes('moonshot') ||
+      baseUrl.includes('api.moonshot.cn') ||
+      baseUrl.includes('api.moonshot.ai') ||
+      baseUrl.includes('platform.moonshot')
+  }
+
+  private compactMoonshotToolParameters(parameters: object): object {
+    try {
+      const cloned = JSON.parse(JSON.stringify(parameters)) as Object
+      return this.stripMoonshotToolSchemaMetadata(cloned) as object
+    } catch (error) {
+      console.warn('AIApiService', `Failed to compact Moonshot tool schema: ${JSON.stringify(error)}`)
+      return parameters
+    }
+  }
+
+  private isMoonshotToolSchemaMetadataKey(key: string): boolean {
+    return key === 'description' ||
+      key === 'title' ||
+      key === 'default' ||
+      key === 'examples' ||
+      key === 'markdownDescription' ||
+      key === 'deprecated' ||
+      key === 'readOnly' ||
+      key === 'writeOnly'
+  }
+
+  private stripMoonshotToolSchemaMetadata(value: Object): Object {
+    if (Array.isArray(value)) {
+      const sourceArray = value as Object[]
+      const resultArray: Object[] = []
+      for (let i = 0; i < sourceArray.length; i++) {
+        resultArray.push(this.stripMoonshotToolSchemaMetadata(sourceArray[i]))
+      }
+      return resultArray as Object
+    }
+    if (typeof value !== 'object' || value === null) {
+      return value
+    }
+    const source = value as Record<string, Object>
+    const result = JSON.parse('{}') as Record<string, Object>
+    const keys = Object.keys(source)
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]
+      if (this.isMoonshotToolSchemaMetadataKey(key)) {
+        continue
+      }
+      const child = source[key]
+      if (typeof child === 'object' && child !== null) {
+        result[key] = this.stripMoonshotToolSchemaMetadata(child)
+      } else {
+        result[key] = child
+      }
+    }
+    return result
+  }
+
+  private getToolParametersForProvider(config: AIApiConfig, tool: ToolDefinition): object {
+    const parameters = tool.function.parameters.toJsonObject()
+    if (this.isMoonshotCompatibleProvider(config)) {
+      return this.compactMoonshotToolParameters(parameters)
+    }
+    return parameters
+  }
+
+  private buildOpenAIChatTools(config: AIApiConfig, tools: ToolDefinition[]): OpenAITool[] {
     const openaiTools: OpenAITool[] = []
     for (let i = 0; i < tools.length; i++) {
       const tool = tools[i]
@@ -814,14 +885,14 @@ export class AIApiService {
         function: {
           name: tool.function.name,
           description: tool.function.description,
-          parameters: tool.function.parameters.toJsonObject()
+          parameters: this.getToolParametersForProvider(config, tool)
         }
       })
     }
     return openaiTools
   }
 
-  private buildOpenAIResponsesTools(tools: ToolDefinition[]): OpenAIResponsesTool[] {
+  private buildOpenAIResponsesTools(config: AIApiConfig, tools: ToolDefinition[]): OpenAIResponsesTool[] {
     const responseTools: OpenAIResponsesTool[] = []
     for (let i = 0; i < tools.length; i++) {
       const tool = tools[i]
@@ -829,7 +900,7 @@ export class AIApiService {
         type: 'function',
         name: tool.function.name,
         description: tool.function.description,
-        parameters: tool.function.parameters.toJsonObject()
+        parameters: this.getToolParametersForProvider(config, tool)
       })
     }
     return responseTools
@@ -872,6 +943,19 @@ export class AIApiService {
     }
 
     return content
+  }
+
+  private extractOpenAIResponsesImageData(response: OpenAIResponsesResponse): string {
+    if (response.output === undefined || response.output === null) {
+      return ''
+    }
+    for (let i = 0; i < response.output.length; i++) {
+      const item = response.output[i]
+      if (item.type === 'image_generation_call' && item.result !== undefined && item.result !== '') {
+        return item.result
+      }
+    }
+    return ''
   }
 
   // 获取累积的工具调用（流式响应完成后调用）
@@ -1023,8 +1107,8 @@ export class AIApiService {
     config: AIApiConfig,
     messages: RequestMessage[],
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature?: number,
+    maxTokens?: number,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   ): Promise<AIApiResult> {
     const url = this.buildChatUrl(config, model)
@@ -1471,8 +1555,8 @@ export class AIApiService {
     config: AIApiConfig,
     messages: RequestMessage[],
     model: string,
-    temperature: number,
-    maxTokens: number | undefined,
+    temperature: number | undefined,
+    maxTokens?: number,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
     toolChoice?: string,
@@ -1529,9 +1613,10 @@ export class AIApiService {
 
       const googleBody: GoogleRequestBody = {
         contents: googleContents,
-        generationConfig: {
-          temperature: temperature
-        }
+        generationConfig: {}
+      }
+      if (temperature !== undefined) {
+        googleBody.generationConfig.temperature = temperature
       }
       if (maxTokens !== undefined && maxTokens > 0) {
         googleBody.generationConfig.maxOutputTokens = maxTokens
@@ -1626,8 +1711,10 @@ export class AIApiService {
           model: model,
           messages: anthropicMessages,
           max_tokens: claudeMaxTokens,
-          temperature: temperature,
           system: systemPrompt
+        }
+        if (temperature !== undefined) {
+          bodyWithSystem.temperature = temperature
         }
         this.applyAnthropicReasoningConfig(
           bodyWithSystem,
@@ -1642,8 +1729,10 @@ export class AIApiService {
       const body: AnthropicRequestBody = {
         model: model,
         messages: anthropicMessages,
-        max_tokens: claudeMaxTokens,
-        temperature: temperature
+        max_tokens: claudeMaxTokens
+      }
+      if (temperature !== undefined) {
+        body.temperature = temperature
       }
       this.applyAnthropicReasoningConfig(
         body,
@@ -1764,8 +1853,10 @@ export class AIApiService {
       const responsesBody: OpenAIResponsesRequestBody = {
         model: model,
         input: responseInputs,
-        temperature: temperature,
         max_output_tokens: maxTokens
+      }
+      if (temperature !== undefined) {
+        responsesBody.temperature = temperature
       }
       // gpt-5 / o-系列推理模型在 Responses API 也只接受 temperature=1,与 Chat Completions 一致。
       if (this.requiresMaxCompletionTokens(model)) {
@@ -1795,7 +1886,7 @@ export class AIApiService {
         this.applyDashScopeReasoningConfig(responsesBody, normalizedReasoningLevel, reasoningTokenLimit)
       }
       if (tools !== undefined && tools.length > 0) {
-        responsesBody.tools = this.buildOpenAIResponsesTools(tools)
+        responsesBody.tools = this.buildOpenAIResponsesTools(config, tools)
         if (toolChoice !== undefined && toolChoice !== '') {
           responsesBody.tool_choice = toolChoice
         }
@@ -1921,8 +2012,10 @@ export class AIApiService {
 
     const requestBody: OpenAIRequestBody = {
       model: model,
-      messages: openaiMessages,
-      temperature: temperature
+      messages: openaiMessages
+    }
+    if (temperature !== undefined) {
+      requestBody.temperature = temperature
     }
     if (this.requiresMaxCompletionTokens(model)) {
       // gpt-5 / o-系列推理模型只接受 temperature=1,自定义值会被官方接口拒绝(HTTP 400)。
@@ -1935,14 +2028,14 @@ export class AIApiService {
       requestBody.max_tokens = maxTokens
     }
 
-    // 添加模型参数（仅在非默认值时发送，避免不支持这些参数的 API 返回 400）
-    if (config.topP !== undefined && config.topP !== 1.0) {
+    // 添加显式启用的采样参数。未启用时 config 中不会出现对应字段,请求体就不下发。
+    if (config.topP !== undefined) {
       requestBody.top_p = config.topP
     }
-    if (config.presencePenalty !== undefined && config.presencePenalty !== 0) {
+    if (config.presencePenalty !== undefined) {
       requestBody.presence_penalty = config.presencePenalty
     }
-    if (config.frequencyPenalty !== undefined && config.frequencyPenalty !== 0) {
+    if (config.frequencyPenalty !== undefined) {
       requestBody.frequency_penalty = config.frequencyPenalty
     }
 
@@ -1997,7 +2090,7 @@ export class AIApiService {
     }
     // 添加 Function Calling 工具定义
     if (tools !== undefined && tools.length > 0) {
-      requestBody.tools = this.buildOpenAIChatTools(tools)
+      requestBody.tools = this.buildOpenAIChatTools(config, tools)
       if (toolChoice !== undefined && toolChoice !== '') {
         requestBody.tool_choice = toolChoice
       }
@@ -2048,14 +2141,19 @@ export class AIApiService {
   private parseOpenAIResponsesResponse(responseData: string): AIApiResult {
     const response = JSON.parse(responseData) as OpenAIResponsesResponse
     const content = this.extractOpenAIResponsesContent(response)
+    const imageData = this.extractOpenAIResponsesImageData(response)
     const reasoningContent = this.extractOpenAIResponsesReasoningContent(response)
     const reasoningItems = this.collectOpenAIResponsesReasoningItems(response)
     const result: AIApiResult = {
-      success: content !== '',
+      success: content !== '' || imageData !== '',
       content: content,
-      errorMessage: content !== '' ? '' : 'No output in response',
+      errorMessage: content !== '' || imageData !== '' ? '' : 'No output in response',
       usage: this.buildResponsesUsageInfo(response.usage),
       reasoningContent: reasoningContent
+    }
+    if (imageData !== '') {
+      result.imageData = imageData
+      result.imageMimeType = 'image/png'
     }
     const blob = this.serializeResponsesReasoningItems(reasoningItems)
     if (blob !== '') {
@@ -2626,8 +2724,8 @@ export class AIApiService {
     onData: (content: string) => void,
     onComplete: () => void,
     onError: (error: string) => void,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature?: number,
+    maxTokens?: number,
     onReasoningData?: (content: string) => void,
     onImageData?: (base64Data: string, mimeType: string) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF  // 推理级别参数
@@ -2712,8 +2810,8 @@ export class AIApiService {
     onData: (content: string) => void,
     onComplete: (toolCalls: ToolCall[]) => void,
     onError: (error: string) => void,
-    temperature: number = 0.7,
-    maxTokens: number | undefined,
+    temperature?: number,
+    maxTokens?: number,
     onReasoningData?: (content: string) => void,
     onImageData?: (base64Data: string, mimeType: string) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
@@ -3009,6 +3107,11 @@ export class AIApiService {
           event.item !== undefined && event.item.type === 'reasoning') {
           // 抓取完整 reasoning item 原文(含 encrypted_content),供下一轮请求原样回传
           result.reasoningItem = event.item
+        } else if (event.type === 'response.output_item.done' &&
+          event.item !== undefined && event.item.type === 'image_generation_call' &&
+          event.item.result !== undefined && event.item.result !== '') {
+          result.imageData = event.item.result
+          result.imageMimeType = 'image/png'
         } else if (event.type === 'response.function_call_arguments.delta' && event.delta !== undefined) {
           const index = this.getOpenAIResponsesToolCallIndex(event)
           result.toolCallDeltas = [

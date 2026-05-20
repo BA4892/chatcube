@@ -9,7 +9,7 @@ import { ModelInfo, InputMode, OutputMode, ModelInfoExtendedJson } from '../mode
 import { LengthMetrics } from '@kit.ArkUI'
 import { getAppUiState } from '../state/AppUiState'
 import { lookupModelAbilities, ModelAbility, ModelModality } from '../services/registry/ModelAbilityRegistry'
-import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
+import { getEffectiveCapabilities, getEffectiveOutputMode } from '../utils/ModelCapabilityDeriver'
 
 @ComponentV2
 export struct ModelEditSheet {
@@ -52,7 +52,7 @@ export struct ModelEditSheet {
     this.capSupportsWebSearch = effective.supportsWebSearch
     this.capSupportsVision = effective.supportsVision
     this.capSupportsStreaming = effective.supportsStreaming
-    this.capOutputImage = this.model.outputMode === OutputMode.IMAGE
+    this.capOutputImage = getEffectiveOutputMode(this.model) === OutputMode.IMAGE
     this.originalUserModified = this.model.capabilitiesUserModified
     this.userTouched = false
   }
@@ -62,7 +62,8 @@ export struct ModelEditSheet {
     this.capSupportsTools = result.abilities.includes(ModelAbility.TOOL)
     this.capSupportsReasoning = result.abilities.includes(ModelAbility.REASONING)
     this.capSupportsVision = result.inputModalities.includes(ModelModality.IMAGE)
-    this.capOutputImage = result.outputModalities.includes(ModelModality.IMAGE)
+    this.capOutputImage = result.abilities.includes(ModelAbility.IMAGE_GENERATION) ||
+      result.outputModalities.includes(ModelModality.IMAGE)
     this.capSupportsWebSearch = false
     this.capSupportsStreaming = true
     // 强制清除覆盖标志:用户主动选择回到派生轨道

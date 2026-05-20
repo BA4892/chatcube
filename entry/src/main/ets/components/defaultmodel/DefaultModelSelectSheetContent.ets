@@ -1,4 +1,4 @@
-import { ModelProvider } from '../../models/ChatModels'
+import { ModelProvider, OutputMode } from '../../models/ChatModels'
 import { ModelSelectorContent } from '../ModelSelector'
 import { getAppUiState } from '../../state/AppUiState'
 
@@ -8,6 +8,11 @@ export struct DefaultModelSelectSheetContent {
   @Param isProvidersLoaded: boolean = false
   @Param providers: ModelProvider[] = []
   @Param currentModelId: string = ''
+  @Param currentProviderId: string = ''
+  @Param hasOutputModeFilter: boolean = false
+  @Param outputModeFilter: OutputMode = OutputMode.TEXT
+  @Param emptyTitle: string | Resource = ''
+  @Param emptyDescription: string | Resource = ''
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
@@ -54,6 +59,7 @@ export struct DefaultModelSelectSheetContent {
         ModelSelectorContent({
           providers: this.providers,
           currentModelId: this.currentModelId,
+          currentProviderId: this.currentProviderId,
           showEditEntry: false,
           showFavoriteActions: false,
           showFavoriteFilter: false,
@@ -62,6 +68,10 @@ export struct DefaultModelSelectSheetContent {
           searchPlaceholder: $r('app.string.filter_models_placeholder'),
           includeModelIdInSearch: true,
           emptyStateMode: 'default',
+          hasOutputModeFilter: this.hasOutputModeFilter,
+          outputModeFilter: this.outputModeFilter,
+          emptyTitle: this.emptyTitle,
+          emptyDescription: this.emptyDescription,
           onSelectModel: (providerId: string, modelId: string, modelName: string): void => {
             this.onSelectModel(providerId, modelId, modelName)
           },

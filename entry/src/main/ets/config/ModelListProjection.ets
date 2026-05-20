@@ -1,5 +1,6 @@
-import { ModelInfo, ModelProvider } from '../models/ChatModels'
+import { ModelInfo, ModelProvider, OutputMode } from '../models/ChatModels'
 import { PickerModelGroup, buildPickerModelGroups } from './ProviderDetailShared'
+import { getEffectiveOutputMode } from '../utils/ModelCapabilityDeriver'
 
 export enum ModelRowGroupPosition {
   SINGLE = 'single',
@@ -54,6 +55,46 @@ export function buildModelSelectorRows(
   showFavoritesOnly: boolean,
   includeModelIdInSearch: boolean
 ): ModelSelectorBuildResult {
+  return buildModelSelectorRowsInternal(
+    providers,
+    searchKeywords,
+    favoriteKeys,
+    showFavoritesOnly,
+    includeModelIdInSearch,
+    false,
+    OutputMode.TEXT
+  )
+}
+
+export function buildModelSelectorRowsWithOutputMode(
+  providers: ModelProvider[],
+  searchKeywords: string,
+  favoriteKeys: Set<string>,
+  showFavoritesOnly: boolean,
+  includeModelIdInSearch: boolean,
+  hasOutputModeFilter: boolean,
+  outputModeFilter: OutputMode
+): ModelSelectorBuildResult {
+  return buildModelSelectorRowsInternal(
+    providers,
+    searchKeywords,
+    favoriteKeys,
+    showFavoritesOnly,
+    includeModelIdInSearch,
+    hasOutputModeFilter,
+    outputModeFilter
+  )
+}
+
+function buildModelSelectorRowsInternal(
+  providers: ModelProvider[],
+  searchKeywords: string,
+  favoriteKeys: Set<string>,
+  showFavoritesOnly: boolean,
+  includeModelIdInSearch: boolean,
+  hasOutputModeFilter: boolean,
+  outputModeFilter: OutputMode
+): ModelSelectorBuildResult {
   const rows: ModelSelectorRow[] = []
   const trimmedKeyword = searchKeywords.trim().toLowerCase()
   let enabledModelCount = 0
@@ -67,6 +108,9 @@ export function buildModelSelectorRows(
     for (let j = 0; j < provider.models.length; j++) {
       const model = provider.models[j]
       if (!model.isEnabled) {
+        continue
+      }
+      if (hasOutputModeFilter && getEffectiveOutputMode(model) !== outputModeFilter) {
         continue
       }
 

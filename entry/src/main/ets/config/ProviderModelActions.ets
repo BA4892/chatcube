@@ -1,5 +1,6 @@
 import { ModelInfo } from '../models/ChatModels'
 import { ProviderModelGroup } from './ProviderDetailShared'
+import { applyDerivedModelDefaults } from '../utils/ModelCapabilityDeriver'
 
 // 将全部模型设置为同一启用状态，并返回新数组引用（触发 @State 刷新）
 export function setAllModelsEnabled(models: ModelInfo[], enabled: boolean): ModelInfo[] {
@@ -79,9 +80,10 @@ export function buildSelectedModelsWithPreservedConfig(existingModels: ModelInfo
     if (existingModel !== undefined) {
       newModels.push(existingModel)
     } else {
-      newModels.push(new ModelInfo(modelId, modelId, 4096, true, false))
+      const model = new ModelInfo(modelId, modelId, 4096, true, false)
+      applyDerivedModelDefaults(model)
+      newModels.push(model)
     }
   }
   return newModels
 }
-

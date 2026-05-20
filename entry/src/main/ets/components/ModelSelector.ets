@@ -1,4 +1,4 @@
-import { ModelProvider, ModelInfo } from '../models/ChatModels'
+import { ModelProvider, ModelInfo, OutputMode } from '../models/ChatModels'
 import {
   ModelRowGroupPosition,
   ModelRowRadius,
@@ -6,7 +6,7 @@ import {
   ModelSelectorModelRow,
   ModelSelectorRow,
   ModelSelectorRowType,
-  buildModelSelectorRows
+  buildModelSelectorRowsWithOutputMode
 } from '../config/ModelListProjection'
 import { FavoriteModelsService, getFavoriteModelsService } from '../services/FavoriteModelsService'
 import { ProviderIcon } from './ProviderIcon'
@@ -27,6 +27,10 @@ export struct ModelSelectorContent {
   @Param searchPlaceholder: string | Resource = $r('app.string.filter_models_placeholder')
   @Param includeModelIdInSearch: boolean = false
   @Param emptyStateMode: string = 'chat'
+  @Param hasOutputModeFilter: boolean = false
+  @Param outputModeFilter: OutputMode = OutputMode.TEXT
+  @Param emptyTitle: string | Resource = ''
+  @Param emptyDescription: string | Resource = ''
   @Local searchKeywords: string = ''
   @Local showFavoritesOnly: boolean = false
   @Local hasEnabledModels: boolean = false
@@ -129,12 +133,14 @@ export struct ModelSelectorContent {
 
   private rebuildRows(): void {
     const startAt = Date.now()
-    const result: ModelSelectorBuildResult = buildModelSelectorRows(
+    const result: ModelSelectorBuildResult = buildModelSelectorRowsWithOutputMode(
       this.providers,
       this.searchKeywords,
       this.favoriteKeySet,
       this.showFavoritesOnly,
-      this.includeModelIdInSearch
+      this.includeModelIdInSearch,
+      this.hasOutputModeFilter,
+      this.outputModeFilter
     )
     this.hasEnabledModels = result.hasEnabledModels
     this.hasFavoriteModels = result.hasFavoriteModels
@@ -197,6 +203,20 @@ export struct ModelSelectorContent {
       return 3
     }
     return 4
+  }
+
+  private getEmptyTitle(): string | Resource {
+    if (this.emptyTitle !== '') {
+      return this.emptyTitle
+    }
+    return this.emptyStateMode === 'default' ? $r('app.string.default_model_no_provider') : '暂无可用模型'
+  }
+
+  private getEmptyDescription(): string | Resource {
+    if (this.emptyDescription !== '') {
+      return this.emptyDescription
+    }
+    return this.emptyStateMode === 'default' ? $r('app.string.default_model_no_provider_hint') : '请先添加或启用AI服务商'
   }
 
   build() {
@@ -476,12 +496,12 @@ export struct ModelSelectorContent {
         .fontSize(48)
         .fontColor([$r('app.color.text_tertiary')])
 
-      Text(this.emptyStateMode === 'default' ? $r('app.string.default_model_no_provider') : '暂无可用模型')
+      Text(this.getEmptyTitle())
         .fontSize(16)
         .fontColor($r('app.color.text_secondary'))
         .margin({ top: 16 })
 
-      Text(this.emptyStateMode === 'default' ? $r('app.string.default_model_no_provider_hint') : '请先添加或启用AI服务商')
+      Text(this.getEmptyDescription())
         .fontSize(14)
         .fontColor($r('app.color.text_tertiary'))
         .margin({ top: 4 })
@@ -543,4 +563,3 @@ export struct ModelSelectorContent {
       .margin({ right: 6 })
   }
 }
-

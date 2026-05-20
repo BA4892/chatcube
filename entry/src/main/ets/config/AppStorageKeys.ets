@@ -4,13 +4,16 @@ export class AppStorageKeys {
   static readonly OPEN_NEW_CHAT: string = 'openNewChat'
   static readonly OPEN_NEW_CHAT_WITH_PROMPT: string = 'openNewChatWithPrompt'
   static readonly OPEN_SESSION_PAYLOAD: string = 'openSessionPayload'
+  static readonly OPEN_IMAGE_GENERATION: string = 'openImageGeneration'
   static readonly SESSION_LIST_REFRESH_AT: string = 'session_list_refresh_at'
   static readonly ASSISTANT_AVATAR_REFRESH_AT: string = 'assistant_avatar_refresh_at'
   static readonly SCREENSHOT_DISMISSED_TS: string = 'screenshot_dismissed_ts'
   static readonly TASK_EVENT_TICK: string = 'task_event_tick'
   static readonly IN_APP_TASK_ALERT_PAYLOAD: string = 'in_app_task_alert_payload'
+  static readonly IN_APP_IMAGE_GENERATION_ALERT_PAYLOAD: string = 'in_app_image_generation_alert_payload'
   static readonly PENDING_TOOL_INTERACTION_TICK: string = 'pending_tool_interaction_tick'
   static readonly RUNNING_CHAT_TASK_COUNT: string = 'running_chat_task_count'
+  static readonly ACTIVE_IMAGE_GENERATION_PAGE: string = 'active_image_generation_page'
 
   // 系统状态键
   static readonly APP_IN_BACKGROUND: string = 'appInBackground'
