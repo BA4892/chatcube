@@ -10,7 +10,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "ChatCube"
+      "value": "Cube Chat"
     },
     {
       "name": "model_manage_title",
@@ -334,7 +334,7 @@
     },
     {
       "name": "settings_about_chatcube",
-      "value": "关于 ChatCube"
+      "value": "关于 Cube Chat"
     },
     {
       "name": "settings_invitation",
@@ -1134,7 +1134,7 @@
     },
     {
       "name": "provider_import_password_hint",
-      "value": "已识别到 ChatCube 配置二维码,请输入对方告知的数字密码进行解密。"
+      "value": "已识别到 Cube Chat 配置二维码,请输入对方告知的数字密码进行解密。"
     },
     {
       "name": "provider_import_decrypt",
@@ -1790,7 +1790,7 @@
     },
     {
       "name": "about_github_repo",
-      "value": "ChatCube 开源仓库"
+      "value": "Cube Chat 开源仓库"
     },
     {
       "name": "about_save_qrcode",
@@ -1814,7 +1814,7 @@
     },
     {
       "name": "sponsor_page_subtitle",
-      "value": "你的支持,是 ChatCube 持续迭代的底气"
+      "value": "你的支持,是 Cube Chat 持续迭代的底气"
     },
     {
       "name": "sponsor_disclaimer",
@@ -1878,7 +1878,7 @@
     },
     {
       "name": "sponsor_qq_hint",
-      "value": "💡 微信打赏时请在备注里写下你的 QQ 号或其他联系方式,作者会通过 QQ 群联系你并兑现福利(群号见「关于 ChatCube」)"
+      "value": "💡 微信打赏时请在备注里写下你的 QQ 号或其他联系方式,作者会通过 QQ 群联系你并兑现福利(群号见「关于 Cube Chat」)"
     },
     {
       "name": "about_open_source",
@@ -1886,7 +1886,7 @@
     },
     {
       "name": "about_copyright",
-      "value": "© 2026 ChatCube. 保留所有权利。"
+      "value": "© 2026 Cube Chat. 保留所有权利。"
     },
     {
       "name": "provider_tab_config",
@@ -2502,7 +2502,7 @@
     },
     {
       "name": "hw_login_welcome_title",
-      "value": "登录 ChatCube"
+      "value": "登录 Cube Chat"
     },
     {
       "name": "hw_login_welcome_subtitle",

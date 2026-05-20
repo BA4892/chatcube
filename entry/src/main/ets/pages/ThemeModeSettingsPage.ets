@@ -942,7 +942,7 @@ export struct ThemeAppearanceSettingsView {
       offsetY: 4
     })
     .onClick(() => {
-      animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
         this.showPreview = !this.showPreview
       })
     })
@@ -991,7 +991,7 @@ export struct ThemeAppearanceSettingsView {
         .animationDuration(280)
         .onChange((idx: number) => {
           if (this.currentTabIndex !== idx) {
-            animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+            this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
               this.currentTabIndex = idx
             })
           }

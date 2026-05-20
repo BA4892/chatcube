@@ -2930,6 +2930,9 @@ ${limitedSearchContext}
 
       const result: ImageDownloadResult = { base64Data: base64, mimeType: mimeType }
       return result
+    } catch (error) {
+      console.error('ChatViewModel', `Download image failed: ${JSON.stringify(error)}`)
+      throw new Error(`Download image failed: ${JSON.stringify(error)}`)
     } finally {
       httpRequest.destroy()
     }

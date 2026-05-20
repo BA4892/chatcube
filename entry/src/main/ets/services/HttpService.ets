@@ -528,6 +528,9 @@ export class HttpService {
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
       }
       throw new Error('Unexpected response payload type')
+    } catch (error) {
+      console.error('HttpService', `Binary GET failed: ${JSON.stringify(error)}`)
+      throw new Error(`Binary GET failed: ${JSON.stringify(error)}`)
     } finally {
       if (controller !== undefined) {
         controller.unregisterRequest(requestId)

@@ -563,8 +563,21 @@ export function observeAppUiState(paths: string | string[], callback: () => void
   const monitorCallback = (_monitorValue: Object): void => {
     callback()
   }
-  UIUtils.addMonitor(getAppUiState(), monitorPaths, monitorCallback)
+  let isObserved = false
+  try {
+    UIUtils.addMonitor(getAppUiState(), monitorPaths, monitorCallback)
+    isObserved = true
+  } catch (error) {
+    console.error('AppUiState', `Failed to observe app UI state: ${JSON.stringify(error)}`)
+  }
   return (): void => {
-    UIUtils.clearMonitor(getAppUiState(), monitorPaths, monitorCallback)
+    if (!isObserved) {
+      return
+    }
+    try {
+      UIUtils.clearMonitor(getAppUiState(), monitorPaths, monitorCallback)
+    } catch (error) {
+      console.error('AppUiState', `Failed to clear app UI state observer: ${JSON.stringify(error)}`)
+    }
   }
 }

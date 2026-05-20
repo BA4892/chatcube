@@ -30,7 +30,11 @@ export struct OnboardingStepPrompts {
       IndexRecommendedPromptsCard({
         prompts: getOnboardingPresetPrompts(),
         onPromptClick: (prompt: PresetPrompt): void => {
-          const bodyText = resolvePromptBody(prompt, getContext(this) as common.Context)
+          const context = this.getUIContext().getHostContext() as common.Context | undefined
+          if (context === undefined || context === null) {
+            return
+          }
+          const bodyText = resolvePromptBody(prompt, context)
           if (bodyText === '') {
             return
           }

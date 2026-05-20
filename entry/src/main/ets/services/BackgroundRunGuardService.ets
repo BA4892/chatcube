@@ -116,7 +116,12 @@ export class BackgroundRunGuardService {
       requestCode: 100,
       actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
     }
-    return await wantAgent.getWantAgent(wantInfo)
+    try {
+      return await wantAgent.getWantAgent(wantInfo)
+    } catch (error) {
+      console.error('BackgroundRunGuardService', `Failed to create want agent: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to create want agent: ${JSON.stringify(error)}`)
+    }
   }
 }
 

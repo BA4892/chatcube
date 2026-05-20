@@ -133,7 +133,7 @@ export struct SharePreviewSheet {
             Column() {
               ShareMessageCard({
                 messages: this.messages,
-                appName: 'ChatCube',
+                appName: 'Cube Chat',
                 currentModelId: this.currentModelId,
                 iconRenderVersion: this.iconRenderVersion,
                 assistantAvatarValue: this.assistantAvatarValue,

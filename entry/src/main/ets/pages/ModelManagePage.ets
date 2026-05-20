@@ -234,7 +234,7 @@ struct ModelManagePage {
       }
       if (!getProviderShareCodec().peekEnvelope(result.payload)) {
         showToast(this.getUIContext(),
-          pickLocalizedText('不是有效的 ChatCube 配置', 'Not a valid ChatCube payload'))
+          pickLocalizedText('不是有效的 Cube Chat 配置', 'Not a valid Cube Chat payload'))
         return
       }
       this.pendingImportPayload = result.payload

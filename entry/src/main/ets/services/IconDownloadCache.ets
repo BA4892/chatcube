@@ -43,7 +43,11 @@ export class IconDownloadCache {
     try {
       fileIo.accessSync(this.cacheDir)
     } catch (_e) {
-      fileIo.mkdirSync(this.cacheDir, true)
+      try {
+        fileIo.mkdirSync(this.cacheDir, true)
+      } catch (error) {
+        console.warn('IconDownloadCache', `Failed to create cache directory: ${JSON.stringify(error)}`)
+      }
     }
   }
   // 启动时扫描缓存目录重建内存索引
@@ -128,13 +132,17 @@ export class IconDownloadCache {
       imageSource.release()
 
       const packer = image.createImagePacker()
-      const packOpts: image.PackingOption = {
-        format: 'image/png',
-        quality: 100
+      let pngBuffer: ArrayBuffer
+      try {
+        const packOpts: image.PackingOption = {
+          format: 'image/png',
+          quality: 100
+        }
+        pngBuffer = await packer.packToData(pixelMap, packOpts)
+      } finally {
+        packer.release()
+        pixelMap.release()
       }
-      const pngBuffer = await packer.packing(pixelMap, packOpts)
-      packer.release()
-      pixelMap.release()
 
       // 写入沙箱
       const hash = this.hashUrl(logoUrl)

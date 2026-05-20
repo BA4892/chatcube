@@ -43,10 +43,14 @@ function resolveSnackBarIcon(tone: SnackBarTone): Resource {
 
 function fallbackToast(context: UIContext, message: string | Resource, duration: number): void {
   const promptAction: PromptAction = context.getPromptAction()
-  promptAction.openToast({
-    message: message,
-    duration: duration
-  })
+  try {
+    promptAction.openToast({
+      message: message,
+      duration: duration
+    })
+  } catch (error) {
+    console.error('ToastUtil', 'Failed to open fallback toast: ' + JSON.stringify(error))
+  }
 }
 
 function clearActiveSnackBarTimer(): void {

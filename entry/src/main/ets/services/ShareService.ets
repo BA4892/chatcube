@@ -332,6 +332,7 @@ export class ShareService {
 
   private async writePixelMapToImageFile(pixelMap: image.PixelMap): Promise<string> {
     let packer: image.ImagePacker | null = null
+    let file: fs.File | null = null
     try {
       packer = image.createImagePacker()
       const packOpts: image.PackingOption = {
@@ -354,11 +355,20 @@ export class ShareService {
         fs.mkdirSync(imageDir, true)
       }
 
-      const file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
+      file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
       fs.writeSync(file.fd, arrayBuffer)
-      fs.closeSync(file)
       return filePath
+    } catch (error) {
+      console.error('ShareService', `Failed to write share image file: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to write share image file: ${JSON.stringify(error)}`)
     } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file)
+        } catch (error) {
+          console.error('ShareService', `Failed to close share image file: ${JSON.stringify(error)}`)
+        }
+      }
       if (packer !== null) {
         packer.release()
       }

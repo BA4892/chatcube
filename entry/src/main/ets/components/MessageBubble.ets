@@ -2935,8 +2935,12 @@ export struct MessageBubble {
     }
     try {
       const packer = image.createImagePacker()
-      const data = await packer.packing(this.latexPreviewPixelMap, { format: 'image/png', quality: 100 })
-      packer.release()
+      let data: ArrayBuffer
+      try {
+        data = await packer.packToData(this.latexPreviewPixelMap, { format: 'image/png', quality: 100 })
+      } finally {
+        packer.release()
+      }
       const context = this.getUIContext().getHostContext()!
       const tempPath = `${context.tempDir}/latex_${Date.now()}.png`
       const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)

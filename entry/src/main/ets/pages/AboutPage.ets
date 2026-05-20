@@ -122,7 +122,7 @@ struct AboutPage {
               .borderRadius(20)
               .shadow({ radius: 12, color: 'rgba(0,0,0,0.1)', offsetY: 4 })
 
-            Text('ChatCube')
+            Text('Cube Chat')
               .fontSize(24)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
@@ -405,7 +405,7 @@ struct AboutPage {
       if (!hostContext) {
         throw new Error('UI context unavailable')
       }
-      await saveRawfileImageToAlbum(hostContext as common.UIAbilityContext, 'qq_group_qrcode.jpg', 'ChatCube_QQ_Group')
+      await saveRawfileImageToAlbum(hostContext as common.UIAbilityContext, 'qq_group_qrcode.jpg', 'CubeChat_QQ_Group')
       this.pageToast(successMessage)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -456,7 +456,12 @@ struct AboutPage {
       entities: ['entity.system.browsable'],
       uri: url
     }
-    await context.startAbility(want)
+    try {
+      await context.startAbility(want)
+    } catch (error) {
+      hilog.error(0x0000, TAG, 'Start browsable ability failed: %{public}s', JSON.stringify(error))
+      throw new Error(`Start browsable ability failed: ${JSON.stringify(error)}`)
+    }
   }
 }
 

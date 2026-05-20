@@ -11,7 +11,7 @@ import { showToast } from '../utils/ToastUtil'
 const DOMAIN = 0x0000
 const LOG_TAG = 'LoginPage'
 
-// ChatCube 隐私政策（复用 PrivacyPolicyPage 的 AppGallery 托管地址）
+// Cube Chat 隐私政策（复用 PrivacyPolicyPage 的 AppGallery 托管地址）
 const PRIVACY_POLICY_URL: string =
   'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1906111586003597632'
 // 华为账号用户认证协议（官方）

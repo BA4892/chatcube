@@ -115,8 +115,12 @@ export struct ProviderShareSheet {
         throw new Error('host context unavailable')
       }
       const packer = image.createImagePacker()
-      const pngData = await packer.packing(this.qrImage, { format: 'image/png', quality: 100 })
-      packer.release()
+      let pngData: ArrayBuffer
+      try {
+        pngData = await packer.packToData(this.qrImage, { format: 'image/png', quality: 100 })
+      } finally {
+        packer.release()
+      }
 
       tempPath = `${context.tempDir}/provider_qr_${Date.now()}.png`
       const tempFile = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
@@ -124,7 +128,7 @@ export struct ProviderShareSheet {
       fileIo.closeSync(tempFile)
 
       const config: photoAccessHelper.PhotoCreationConfig = {
-        title: `ChatCube_Provider_${Date.now()}`,
+        title: `CubeChat_Provider_${Date.now()}`,
         fileNameExtension: 'png',
         photoType: photoAccessHelper.PhotoType.IMAGE,
         subtype: photoAccessHelper.PhotoSubtype.DEFAULT

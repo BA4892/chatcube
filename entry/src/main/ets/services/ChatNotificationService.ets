@@ -45,7 +45,7 @@ export class ChatNotificationService {
           normal: {
             title: task.status === ChatTaskStatus.FAILED ? '回复失败' : '回复完成',
             text: this.buildMessage(task),
-            additionalText: 'ChatCube'
+            additionalText: 'Cube Chat'
           }
 
         },
@@ -70,7 +70,7 @@ export class ChatNotificationService {
           normal: {
             title: this.buildImageGenerationTitle(options),
             text: this.buildImageGenerationMessage(options),
-            additionalText: 'ChatCube'
+            additionalText: 'Cube Chat'
           }
         },
         wantAgent: wantAgentObj
@@ -144,7 +144,12 @@ export class ChatNotificationService {
       requestCode: this.buildNotificationId(task.id),
       actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
     }
-    return await wantAgent.getWantAgent(info)
+    try {
+      return await wantAgent.getWantAgent(info)
+    } catch (error) {
+      console.error('ChatNotificationService', `Failed to create session want agent: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to create session want agent: ${JSON.stringify(error)}`)
+    }
   }
 
   private async createOpenImageGenerationWantAgent(requestCode: number): Promise<WantAgent> {
@@ -162,7 +167,12 @@ export class ChatNotificationService {
       requestCode: requestCode,
       actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
     }
-    return await wantAgent.getWantAgent(info)
+    try {
+      return await wantAgent.getWantAgent(info)
+    } catch (error) {
+      console.error('ChatNotificationService', `Failed to create image generation want agent: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to create image generation want agent: ${JSON.stringify(error)}`)
+    }
   }
 
   private buildNotificationId(taskId: string): number {

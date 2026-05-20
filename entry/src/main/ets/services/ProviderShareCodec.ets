@@ -79,7 +79,7 @@ class ProviderShareCodec {
 
   /**
    * 仅校验 envelope JSON 结构和 v/src 头,**不**解密。
-   * 用于扫到 QR 后立即拦截非 ChatCube payload(URL QR / 名片 QR 等)。
+   * 用于扫到 QR 后立即拦截非 Cube Chat payload(URL QR / 名片 QR 等)。
    */
   peekEnvelope(envelopeJson: string): boolean {
     try {

@@ -17,7 +17,7 @@ import {
 @ComponentV2
 export struct ShareMessageCard {
   @Param messages: ChatMessage[] = []
-  @Param appName: string = 'ChatCube'
+  @Param appName: string = 'Cube Chat'
   @Param currentModelId: string = ''
   @Param iconRenderVersion: number = 0
   @Param assistantAvatarValue: string = 'AI'

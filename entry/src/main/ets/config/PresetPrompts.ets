@@ -84,11 +84,11 @@ export function getOnboardingPresetPrompts(): PresetPrompt[] {
 
 /**
  * 把 prompt 的正文 Resource 转成当前 locale 的实际字符串。
- * 内部用 resourceManager.getStringSync,失败时返回空串。
+ * 内部用 resourceManager.getStringSync(resourceId),失败时返回空串。
  */
 export function resolvePromptBody(prompt: PresetPrompt, context: common.Context): string {
   try {
-    return context.resourceManager.getStringSync(prompt.body)
+    return context.resourceManager.getStringSync(prompt.body.id)
   } catch (err) {
     console.error('PresetPrompts', `Failed to resolve prompt body: ${JSON.stringify(err)}`)
     return ''

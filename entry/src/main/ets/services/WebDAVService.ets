@@ -56,7 +56,7 @@ export interface DeleteResult {
 }
 
 // 默认远端文件名
-export const DEFAULT_WEBDAV_FILE_NAME: string = 'chatcube_backup.zip'
+export const DEFAULT_WEBDAV_FILE_NAME: string = 'cubechat_backup.zip'
 
 export class WebDAVService {
   private static instance: WebDAVService | null = null
@@ -134,7 +134,7 @@ export class WebDAVService {
   private buildHeaders(config: WebDAVConfig, extra?: Record<string, string>): Record<string, string> {
     const headers: Record<string, string> = {
       'Authorization': this.buildAuthHeader(config.username, config.password),
-      'User-Agent': 'ChatCube-WebDAV/1.0',
+      'User-Agent': 'CubeChat-WebDAV/1.0',
       'Accept': '*/*'
     }
     if (extra !== undefined) {
@@ -304,15 +304,25 @@ export class WebDAVService {
       controller: controller
     })
 
-    const localPath = `${this.context.cacheDir}/chatcube_webdav_${Date.now()}.zip`
-    const file = fileIo.openSync(
-      localPath,
-      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
-    )
+    const localPath = `${this.context.cacheDir}/cubechat_webdav_${Date.now()}.zip`
+    let file: fileIo.File | null = null
     try {
+      file = fileIo.openSync(
+        localPath,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      )
       fileIo.writeSync(file.fd, buffer)
+    } catch (error) {
+      console.error('WebDAVService', `Write downloaded backup failed: ${JSON.stringify(error)}`)
+      throw new Error(`Write downloaded backup failed: ${JSON.stringify(error)}`)
     } finally {
-      fileIo.closeSync(file)
+      if (file !== null) {
+        try {
+          fileIo.closeSync(file)
+        } catch (error) {
+          console.error('WebDAVService', `Close downloaded backup failed: ${JSON.stringify(error)}`)
+        }
+      }
     }
     return localPath
   }

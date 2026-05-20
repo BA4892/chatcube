@@ -856,14 +856,24 @@ export class ImageGenerationService {
   }
 
   private readFileBytes(path: string): Uint8Array {
-    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY)
+    let file: fileIo.File | null = null
     try {
+      file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY)
       const stat = fileIo.statSync(file.fd)
       const buffer = new ArrayBuffer(stat.size)
       fileIo.readSync(file.fd, buffer)
       return new Uint8Array(buffer)
+    } catch (error) {
+      console.error('ImageGenerationService', `Read reference image failed: ${JSON.stringify(error)}`)
+      throw new Error(`Read reference image failed: ${JSON.stringify(error)}`)
     } finally {
-      fileIo.closeSync(file)
+      if (file !== null) {
+        try {
+          fileIo.closeSync(file)
+        } catch (error) {
+          console.error('ImageGenerationService', `Close reference image failed: ${JSON.stringify(error)}`)
+        }
+      }
     }
   }
 

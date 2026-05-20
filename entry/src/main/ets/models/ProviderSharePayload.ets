@@ -52,7 +52,7 @@ export interface ProviderShareDataV1 {
 }
 
 export type ProviderShareCodecError =
-  | 'invalid_envelope'    // 不是 ChatCube QR / JSON 损坏 / 版本不对
+  | 'invalid_envelope'    // 不是 Cube Chat QR / JSON 损坏 / 版本不对
   | 'wrong_password'      // GCM 完整性校验失败
   | 'payload_too_large'   // encode 时超出 MAX_QR_PAYLOAD_BYTES
   | 'crypto_unavailable'  // 加解密 API 抛错

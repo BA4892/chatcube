@@ -463,7 +463,7 @@ struct SupportDevelopmentPage {
       if (!hostContext) {
         throw new Error('UI context unavailable')
       }
-      await saveRawfileImageToAlbum(hostContext as common.UIAbilityContext, 'wechat-pay.png', 'ChatCube_WeChat_Pay')
+      await saveRawfileImageToAlbum(hostContext as common.UIAbilityContext, 'wechat-pay.png', 'CubeChat_WeChat_Pay')
       this.pageToast($r('app.string.sponsor_wechat_saved'))
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

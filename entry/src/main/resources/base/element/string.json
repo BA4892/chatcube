@@ -10,7 +10,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "ChatCube"
+      "value": "Cube Chat"
     },
     {
       "name": "model_manage_title",
@@ -334,7 +334,7 @@
     },
     {
       "name": "settings_about_chatcube",
-      "value": "About ChatCube"
+      "value": "About Cube Chat"
     },
     {
       "name": "settings_invitation",
@@ -350,7 +350,7 @@
     },
     {
       "name": "settings_support_development_desc",
-      "value": "Voluntary support to keep ChatCube growing"
+      "value": "Voluntary support to keep Cube Chat growing"
     },
     {
       "name": "settings_privacy_policy",
@@ -1134,7 +1134,7 @@
     },
     {
       "name": "provider_import_password_hint",
-      "value": "Detected a ChatCube provider QR. Enter the password shared with you to decrypt."
+      "value": "Detected a Cube Chat provider QR. Enter the password shared with you to decrypt."
     },
     {
       "name": "provider_import_decrypt",
@@ -1790,7 +1790,7 @@
     },
     {
       "name": "about_github_repo",
-      "value": "ChatCube Open Source Repo"
+      "value": "Cube Chat Open Source Repo"
     },
     {
       "name": "about_save_qrcode",
@@ -1814,7 +1814,7 @@
     },
     {
       "name": "sponsor_page_subtitle",
-      "value": "Your support keeps ChatCube evolving"
+      "value": "Your support keeps Cube Chat evolving"
     },
     {
       "name": "sponsor_disclaimer",
@@ -1878,7 +1878,7 @@
     },
     {
       "name": "sponsor_qq_hint",
-      "value": "💡 When tipping via WeChat, leave your QQ number or other contact info in the note. The author will reach out via the QQ group to grant perks (group number listed under About ChatCube)."
+      "value": "💡 When tipping via WeChat, leave your QQ number or other contact info in the note. The author will reach out via the QQ group to grant perks (group number listed under About Cube Chat)."
     },
     {
       "name": "about_open_source",
@@ -1886,7 +1886,7 @@
     },
     {
       "name": "about_copyright",
-      "value": "© 2026 ChatCube. All rights reserved."
+      "value": "© 2026 Cube Chat. All rights reserved."
     },
     {
       "name": "provider_tab_config",
@@ -2229,6 +2229,58 @@
       "value": "Follow System"
     },
     {
+      "name": "assistant_editor_identity_section",
+      "value": "Basic Info"
+    },
+    {
+      "name": "assistant_editor_identity_desc",
+      "value": "Name, avatar, and how this assistant appears in the list"
+    },
+    {
+      "name": "assistant_editor_prompt_section",
+      "value": "Prompt"
+    },
+    {
+      "name": "assistant_editor_prompt_desc",
+      "value": "Only applies to this assistant and is sent with the global system prompt"
+    },
+    {
+      "name": "assistant_editor_model_section",
+      "value": "Model and Reasoning"
+    },
+    {
+      "name": "assistant_editor_model_desc",
+      "value": "Set this assistant's default model and reasoning effort for new chats"
+    },
+    {
+      "name": "assistant_editor_sampling_section",
+      "value": "Sampling"
+    },
+    {
+      "name": "assistant_editor_sampling_desc",
+      "value": "When disabled, global settings or provider defaults are used"
+    },
+    {
+      "name": "assistant_editor_context_section",
+      "value": "Context and Output"
+    },
+    {
+      "name": "assistant_editor_context_desc",
+      "value": "Control sent history range and single-reply length"
+    },
+    {
+      "name": "assistant_context_message_count",
+      "value": "Context message count"
+    },
+    {
+      "name": "assistant_context_unlimited",
+      "value": "Unlimited"
+    },
+    {
+      "name": "assistant_context_message_hint",
+      "value": "Limit the history messages sent to the model; 0 means unlimited"
+    },
+    {
       "name": "assistant_name_required",
       "value": "Please enter an assistant name"
     },
@@ -2450,7 +2502,7 @@
     },
     {
       "name": "hw_login_welcome_title",
-      "value": "Sign in to ChatCube"
+      "value": "Sign in to Cube Chat"
     },
     {
       "name": "hw_login_welcome_subtitle",

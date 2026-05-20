@@ -344,7 +344,7 @@ export class ImportExportService {
 
       emitProgress(60)
 
-      const zipPath = `${this.context.cacheDir}/chatcube_export_${timestamp}.zip`
+      const zipPath = `${this.context.cacheDir}/cubechat_export_${timestamp}.zip`
       const zlibOptions: zlib.Options = {
         level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
         memLevel: zlib.MemLevel.MEM_LEVEL_DEFAULT,

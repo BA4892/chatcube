@@ -1887,7 +1887,7 @@ export class DatabaseService {
   }
 
   private buildChatMessageFromResultSet(resultSet: relationalStore.ResultSet): ChatMessage {
-    const roleStr = resultSet.getString(resultSet.getColumnIndex('role'))
+    const roleStr = this.safeGetString(resultSet, 'role')
     let role: MessageRole = MessageRole.USER
     if (roleStr === 'assistant') {
       role = MessageRole.ASSISTANT
@@ -1895,13 +1895,13 @@ export class DatabaseService {
       role = MessageRole.SYSTEM
     }
     const message = new ChatMessage(
-      resultSet.getString(resultSet.getColumnIndex('id')),
+      this.safeGetString(resultSet, 'id'),
       role,
       this.safeGetString(resultSet, 'content'),
       this.safeGetString(resultSet, 'model_name')
     )
     message.modelId = this.safeGetString(resultSet, 'model_id')
-    message.timestamp = resultSet.getLong(resultSet.getColumnIndex('timestamp'))
+    message.timestamp = this.safeGetLong(resultSet, 'timestamp')
     message.reasoningContent = this.safeGetString(resultSet, 'reasoning_content')
     message.reasoningSignatureBlob = this.safeGetString(resultSet, 'reasoning_signature_blob')
     message.parts = deserializeMessageParts(this.safeGetString(resultSet, 'parts_json'))
@@ -2710,6 +2710,14 @@ export class DatabaseService {
     }
   }
 
+  private safeGetLong(resultSet: relationalStore.ResultSet, columnName: string, defaultValue: number = 0): number {
+    try {
+      return resultSet.getLong(resultSet.getColumnIndex(columnName))
+    } catch (_error) {
+      return defaultValue
+    }
+  }
+
   // ==================== 使用统计聚合查询 ====================
 
   private applyUsageRange(
@@ -2732,15 +2740,30 @@ export class DatabaseService {
     }
     const predicates = new relationalStore.RdbPredicates(tableName)
     this.applyUsageRange(predicates, rangeField, rangeStartMs)
-    const resultSet = await this.rdbStore.query(predicates, ['id'])
+    let resultSet: relationalStore.ResultSet
+    try {
+      resultSet = await this.rdbStore.query(predicates, ['id'])
+    } catch (error) {
+      console.error('DatabaseService', `Failed to count rows: ${JSON.stringify(error)}`)
+      return 0
+    }
     try {
       let count = 0
-      while (resultSet.goToNextRow()) {
-        count += 1
+      try {
+        while (resultSet.goToNextRow()) {
+          count += 1
+        }
+      } catch (error) {
+        console.error('DatabaseService', `Failed to iterate row count: ${JSON.stringify(error)}`)
+        return 0
       }
       return count
     } finally {
-      resultSet.close()
+      try {
+        resultSet.close()
+      } catch (error) {
+        console.error('DatabaseService', `Failed to close row count result set: ${JSON.stringify(error)}`)
+      }
     }
   }
 
@@ -2764,18 +2787,32 @@ export class DatabaseService {
     }
     const predicates = new relationalStore.RdbPredicates(TableNames.MESSAGES)
     this.applyUsageRange(predicates, 'timestamp', rangeStartMs)
-    const resultSet = await this.rdbStore.query(predicates, ['role', 'model_name', 'model_id', 'timestamp'])
+    let resultSet: relationalStore.ResultSet
     try {
-      while (resultSet.goToNextRow()) {
-        rows.push({
-          role: this.safeGetString(resultSet, 'role'),
-          modelName: this.safeGetString(resultSet, 'model_name'),
-          modelId: this.safeGetString(resultSet, 'model_id'),
-          timestamp: resultSet.getLong(resultSet.getColumnIndex('timestamp'))
-        })
+      resultSet = await this.rdbStore.query(predicates, ['role', 'model_name', 'model_id', 'timestamp'])
+    } catch (error) {
+      console.error('DatabaseService', `Failed to collect message usage rows: ${JSON.stringify(error)}`)
+      return rows
+    }
+    try {
+      try {
+        while (resultSet.goToNextRow()) {
+          rows.push({
+            role: this.safeGetString(resultSet, 'role'),
+            modelName: this.safeGetString(resultSet, 'model_name'),
+            modelId: this.safeGetString(resultSet, 'model_id'),
+            timestamp: this.safeGetLong(resultSet, 'timestamp')
+          })
+        }
+      } catch (error) {
+        console.error('DatabaseService', `Failed to iterate message usage rows: ${JSON.stringify(error)}`)
       }
     } finally {
-      resultSet.close()
+      try {
+        resultSet.close()
+      } catch (error) {
+        console.error('DatabaseService', `Failed to close message usage result set: ${JSON.stringify(error)}`)
+      }
     }
     return rows
   }

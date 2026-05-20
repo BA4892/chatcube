@@ -493,8 +493,12 @@ export struct ChatPage {
       return
     }
     const context = hostContext as common.UIAbilityContext
-    const mainWindow = context.windowStage.getMainWindowSync()
-    mainWindow.setSpecificSystemBarEnabled('status', visible).catch((): void => {})
+    try {
+      const mainWindow = context.windowStage.getMainWindowSync()
+      mainWindow.setSpecificSystemBarEnabled('status', visible).catch((): void => {})
+    } catch (error) {
+      console.error('ChatPage', `Failed to update status bar visibility: ${JSON.stringify(error)}`)
+    }
   }
 
   aboutToDisappear(): void {

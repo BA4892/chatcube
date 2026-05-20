@@ -181,7 +181,7 @@ struct ExportDataPage {
       // 使用文件选择器保存
       const documentSaveOptions = new picker.DocumentSaveOptions()
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19)
-      documentSaveOptions.newFileNames = [`chatcube_export_${timestamp}.zip`]
+      documentSaveOptions.newFileNames = [`cubechat_export_${timestamp}.zip`]
       documentSaveOptions.fileSuffixChoices = ['.zip']
 
       if (context) {

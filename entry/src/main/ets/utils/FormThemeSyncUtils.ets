@@ -46,19 +46,34 @@ function parseStoredFormIds(rawValue: string): string[] {
 }
 
 async function getFormPreferences(context: Context): Promise<preferences.Preferences> {
-  return await preferences.getPreferences(context, PREFERENCES_NAME)
+  try {
+    return await preferences.getPreferences(context, PREFERENCES_NAME)
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to open form preferences: ${JSON.stringify(error)}`)
+    throw new Error(`Failed to open form preferences: ${JSON.stringify(error)}`)
+  }
 }
 
 async function readRegisteredFormIdsWithContext(context: Context): Promise<string[]> {
   const store = await getFormPreferences(context)
-  const rawValue = await store.get(FORM_IDS_PREF_KEY, '[]') as string
-  return parseStoredFormIds(rawValue)
+  try {
+    const rawValue = await store.get(FORM_IDS_PREF_KEY, '[]') as string
+    return parseStoredFormIds(rawValue)
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to read registered form ids: ${JSON.stringify(error)}`)
+    return []
+  }
 }
 
 async function writeRegisteredFormIds(context: Context, formIds: string[]): Promise<void> {
   const store = await getFormPreferences(context)
-  await store.put(FORM_IDS_PREF_KEY, JSON.stringify(formIds))
-  await store.flush()
+  try {
+    await store.put(FORM_IDS_PREF_KEY, JSON.stringify(formIds))
+    await store.flush()
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to write registered form ids: ${JSON.stringify(error)}`)
+    throw new Error(`Failed to write registered form ids: ${JSON.stringify(error)}`)
+  }
 }
 
 export function readFormIdFromWant(want: Want): string {
@@ -67,7 +82,12 @@ export function readFormIdFromWant(want: Want): string {
 }
 
 function resolveContextSystemDarkMode(context: Context): boolean {
-  return context.resourceManager.getConfigurationSync().colorMode === resourceManager.ColorMode.DARK
+  try {
+    return context.resourceManager.getConfigurationSync().colorMode === resourceManager.ColorMode.DARK
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to resolve system dark mode: ${JSON.stringify(error)}`)
+    return false
+  }
 }
 
 export function createNewChatFormBindingData(colors: ThemeColorConfig, isSystemDarkMode?: boolean): formBindingData.FormBindingData {
@@ -129,7 +149,12 @@ async function loadStoredWidgetThemeId(): Promise<ColorTheme> {
 
 export async function loadWidgetThemeColors(context: Context): Promise<ThemeColorConfig> {
   const store = await getFormPreferences(context)
-  const themeId = await store.get(AppStorageKeys.COLOR_THEME, ColorTheme.DEFAULT) as string
+  let themeId: string = ColorTheme.DEFAULT
+  try {
+    themeId = await store.get(AppStorageKeys.COLOR_THEME, ColorTheme.DEFAULT) as string
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to read widget theme id: ${JSON.stringify(error)}`)
+  }
   return getThemeColors(themeId as ColorTheme, resolveContextSystemDarkMode(context))
 }
 
@@ -137,7 +162,12 @@ export async function refreshThemeAwareForm(formId: string, colors: ThemeColorCo
   if (formId === '') {
     return
   }
-  await formProvider.updateForm(formId, createNewChatFormBindingData(colors, isSystemDarkMode))
+  try {
+    await formProvider.updateForm(formId, createNewChatFormBindingData(colors, isSystemDarkMode))
+  } catch (error) {
+    console.error('FormThemeSyncUtils', `Failed to update form ${formId}: ${JSON.stringify(error)}`)
+    throw new Error(`Failed to update form ${formId}: ${JSON.stringify(error)}`)
+  }
 }
 
 export async function refreshThemeAwareFormWithStoredTheme(context: Context, formId: string): Promise<void> {

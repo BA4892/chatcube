@@ -114,8 +114,21 @@ export function observeAppSettingsState(paths: string | string[], callback: () =
   const monitorCallback = (_monitorValue: Object): void => {
     callback()
   }
-  UIUtils.addMonitor(getAppSettingsState(), monitorPaths, monitorCallback)
+  let isObserved = false
+  try {
+    UIUtils.addMonitor(getAppSettingsState(), monitorPaths, monitorCallback)
+    isObserved = true
+  } catch (error) {
+    console.error('AppSettingsState', `Failed to observe app settings state: ${JSON.stringify(error)}`)
+  }
   return (): void => {
-    UIUtils.clearMonitor(getAppSettingsState(), monitorPaths, monitorCallback)
+    if (!isObserved) {
+      return
+    }
+    try {
+      UIUtils.clearMonitor(getAppSettingsState(), monitorPaths, monitorCallback)
+    } catch (error) {
+      console.error('AppSettingsState', `Failed to clear app settings state observer: ${JSON.stringify(error)}`)
+    }
   }
 }
