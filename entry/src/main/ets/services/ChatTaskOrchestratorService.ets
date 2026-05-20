@@ -80,6 +80,10 @@ export class ChatTaskOrchestratorService {
     this.finishTaskInternal(taskId, ChatTaskStatus.COMPLETED, '')
   }
 
+  completeTaskSilently(taskId: string): void {
+    this.finishTaskInternal(taskId, ChatTaskStatus.COMPLETED, '', false)
+  }
+
   failTask(taskId: string, errorMessage: string): void {
     this.finishTaskInternal(taskId, ChatTaskStatus.FAILED, errorMessage)
   }
@@ -98,7 +102,12 @@ export class ChatTaskOrchestratorService {
     this.finishTaskInternal(taskId, ChatTaskStatus.CANCELLED, '')
   }
 
-  private finishTaskInternal(taskId: string, status: ChatTaskStatus, errorMessage: string): void {
+  private finishTaskInternal(
+    taskId: string,
+    status: ChatTaskStatus,
+    errorMessage: string,
+    publishResult: boolean = true
+  ): void {
     const runtime = this.tasks.get(taskId)
     if (runtime === undefined || runtime.finalized) {
       return
@@ -109,7 +118,7 @@ export class ChatTaskOrchestratorService {
     runtime.info.finishedAt = Date.now()
     runtime.info.errorMessage = errorMessage
 
-    if (status === ChatTaskStatus.COMPLETED || status === ChatTaskStatus.FAILED) {
+    if (publishResult && (status === ChatTaskStatus.COMPLETED || status === ChatTaskStatus.FAILED)) {
       this.handleTaskResult(runtime.info)
     }
 

@@ -1977,7 +1977,7 @@ ${limitedSearchContext}
     onAIMessageAdded: (message: ChatMessage) => void,
     onAIMessageUpdated: (message: ChatMessage) => void,
     onComplete: () => void,
-    onError: (error: string) => void,
+    onError: (error: string) => void | Promise<void>,
     attachments: MessageAttachment[] = [],
     contextStartIndex: number = 0,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
@@ -2311,7 +2311,7 @@ ${limitedSearchContext}
   private async failAIMessage(
     aiMessage: ChatMessage,
     onAIMessageUpdated: (message: ChatMessage) => void,
-    onError: (error: string) => void,
+    onError: (error: string) => void | Promise<void>,
     snapshotSessionId: string,
     snapshotSession: ChatSession | null,
     requestId: string,
@@ -2334,7 +2334,7 @@ ${limitedSearchContext}
     } finally {
       this.clearPendingAIMessageIfMatches(aiMessage.id)
       this.unregisterActiveRequest(requestId)
-      onError(errorMessage)
+      await onError(errorMessage)
     }
   }
 
@@ -2353,7 +2353,7 @@ ${limitedSearchContext}
     aiMessage: ChatMessage,
     onAIMessageUpdated: (message: ChatMessage) => void,
     onComplete: () => void,
-    onError: (error: string) => void,
+    onError: (error: string) => void | Promise<void>,
     tools: ToolDefinition[],
     toolCallbacks: ToolCallCallbacks | undefined,
     reasoningLevel: ReasoningLevel,
@@ -2654,15 +2654,15 @@ ${limitedSearchContext}
         aiMessage.isGenerating = false
         aiMessage.isSearching = false
         onAIMessageUpdated(aiMessage)
+        this.clearPendingAIMessageIfMatches(aiMessage.id)
+        this.unregisterActiveRequest(requestId)
         if (isUserCancelledFn()) {
           setUserCancelled(false)
           console.info('ChatViewModel', 'Request cancelled by user')
           onComplete()
         } else {
-          onError(outcome.error)
+          await onError(outcome.error)
         }
-        this.clearPendingAIMessageIfMatches(aiMessage.id)
-        this.unregisterActiveRequest(requestId)
         return
       }
 

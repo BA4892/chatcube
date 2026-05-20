@@ -1604,6 +1604,9 @@ export struct ChatPage {
       },
       onShowToast: (message: string | Resource): void => {
         this.showChatSnack(message)
+      },
+      onConfirmModelSupportsTools: async (providerId: string, modelId: string): Promise<void> => {
+        await this.confirmModelSupportsTools(providerId, modelId)
       }
     }
     this.sendFlow = new ChatSendFlow(deps)
@@ -2726,6 +2729,41 @@ export struct ChatPage {
     this.modelSheetActivePanel = 'selector'
     this.editingModel = null
     this.editingModelProvider = null
+  }
+
+  private async confirmModelSupportsTools(providerId: string, modelId: string): Promise<void> {
+    const selection = this.findProviderModelSelection(providerId, modelId)
+    if (selection === null) {
+      return
+    }
+    const effective = getEffectiveCapabilities(selection.model)
+    if (effective.supportsTools && selection.model.capabilitiesUserModified) {
+      return
+    }
+
+    selection.model.capabilities.supportsTools = true
+    selection.model.capabilities.supportsReasoning = effective.supportsReasoning
+    selection.model.capabilities.supportsWebSearch = effective.supportsWebSearch
+    selection.model.capabilities.supportsVision = effective.supportsVision
+    selection.model.capabilities.supportsStreaming = effective.supportsStreaming
+    selection.model.capabilitiesUserModified = true
+
+    try {
+      await this.providerViewModel.saveProvider(selection.provider)
+      const refreshedProviders = await this.providerViewModel.loadProviders()
+      this.providers = refreshedProviders
+      const refreshedSelection = this.findProviderModelSelection(providerId, modelId)
+      if (refreshedSelection !== null && this.currentProvider !== null &&
+        this.currentProvider.id === providerId && this.currentModelId === modelId) {
+        await this.applyModelSelection(refreshedSelection.provider, refreshedSelection.model, '', false)
+      }
+      this.showChatSnack(pickLocalizedText(
+        '已识别当前模型支持工具调用',
+        'Detected tool calling support for this model'
+      ), 2200, SnackBarTone.SUCCESS)
+    } catch (error) {
+      console.error('ChatPage', `[confirmModelSupportsTools] Failed: ${JSON.stringify(error)}`)
+    }
   }
 
   @Builder

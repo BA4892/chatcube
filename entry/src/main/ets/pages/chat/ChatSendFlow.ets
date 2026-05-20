@@ -38,10 +38,12 @@ enum ChatExecutionPlanKind {
 class ChatExecutionPlan {
   kind: ChatExecutionPlanKind
   enabledToolIds: string[]
+  learnToolsOnSuccess: boolean
 
-  constructor(kind: ChatExecutionPlanKind, enabledToolIds: string[] = []) {
+  constructor(kind: ChatExecutionPlanKind, enabledToolIds: string[] = [], learnToolsOnSuccess: boolean = false) {
     this.kind = kind
     this.enabledToolIds = enabledToolIds
+    this.learnToolsOnSuccess = learnToolsOnSuccess
   }
 }
 
@@ -70,6 +72,7 @@ export interface ChatSendFlowDependencies {
   onMarkAutoTaskFailed: (message: string) => void
   onShowError: (message: string | Resource) => void
   onShowToast: (message: string | Resource) => void
+  onConfirmModelSupportsTools: (providerId: string, modelId: string) => Promise<void>
 }
 
 export class ChatSendFlow {
@@ -171,7 +174,8 @@ export class ChatSendFlow {
         currentProvider,
         effectiveApiKey,
         attachmentsToSend,
-        plan.enabledToolIds
+        plan.enabledToolIds,
+        plan.learnToolsOnSuccess
       )
       return
     }
@@ -211,6 +215,16 @@ export class ChatSendFlow {
     console.info('ChatSendFlow',
       `[Function Calling] 未在 provider.models 中找到当前模型: currentModelId=${currentModelId}, provider=${currentProvider.id}`)
     return false
+  }
+
+  private shouldProbeToolsForCurrentModel(currentProvider: ModelProvider | null): boolean {
+    if (currentProvider === null) {
+      return false
+    }
+    if (currentProvider.apiStyle !== ApiStyle.OPENAI) {
+      return false
+    }
+    return true
   }
 
   buildEnabledToolIds(selectedToolIds: string[] = [], forcedToolIds: string[] = []): string[] {
@@ -289,7 +303,62 @@ export class ChatSendFlow {
       return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds)
     }
 
+    if (this.shouldProbeToolsForCurrentModel(currentProvider)) {
+      console.info('ChatSendFlow',
+        `[Function Calling] 当前模型未标记 supportsTools, 先尝试 tools 请求: modelId=${currentModelId}`)
+      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, true)
+    }
+
     return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds)
+  }
+
+  private includesAny(text: string, keywords: string[]): boolean {
+    for (let i = 0; i < keywords.length; i++) {
+      if (text.includes(keywords[i])) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private isToolCapabilityError(error: string): boolean {
+    const normalized = error.toLowerCase()
+    const toolKeywords = [
+      'tool',
+      'tools',
+      'tool_choice',
+      'tool calls',
+      'function calling',
+      'function_call',
+      'functions',
+      '函数调用',
+      '工具调用'
+    ]
+    if (!this.includesAny(normalized, toolKeywords)) {
+      return false
+    }
+
+    const capabilityKeywords = [
+      'not support',
+      'not supported',
+      'does not support',
+      'do not support',
+      'unsupported',
+      'unknown parameter',
+      'unknown field',
+      'unrecognized request argument',
+      'unrecognized field',
+      'extra_forbidden',
+      'extra inputs are not permitted',
+      'invalid parameter',
+      'invalid_request_error',
+      'not allowed',
+      'is not permitted',
+      '不支持',
+      '未知参数',
+      '不允许'
+    ]
+    return this.includesAny(normalized, capabilityKeywords)
   }
 
   private startTaskOrFail(messageContent: string): string {
@@ -381,6 +450,64 @@ export class ChatSendFlow {
     }
   }
 
+  private completeTaskForFallback(taskId: string, senderSessionId: string): void {
+    this.deps.chatTaskOrchestrator.completeTaskSilently(taskId)
+    if (this.deps.getSessionId() !== senderSessionId) {
+      return
+    }
+    if (this.deps.getCurrentTaskId() === taskId) {
+      this.deps.onSetCurrentTaskId('')
+    }
+    this.deps.onSetSending(false)
+  }
+
+  private appendUniqueMessageId(messageIds: string[], messageId: string): void {
+    if (messageId === '' || messageIds.includes(messageId)) {
+      return
+    }
+    messageIds.push(messageId)
+  }
+
+  private async removeProbeMessages(messageIds: string[], senderSessionId: string): Promise<void> {
+    if (messageIds.length === 0) {
+      return
+    }
+    if (this.deps.getSessionId() === senderSessionId) {
+      for (let i = 0; i < messageIds.length; i++) {
+        const index = this.deps.messages.findIndex((message: ChatMessage) => message.id === messageIds[i])
+        if (index >= 0) {
+          this.deps.messages.splice(index, 1)
+        }
+      }
+      this.deps.onSyncMessages()
+    }
+    await this.deps.chatViewModel.deleteMessagesFromIndex(messageIds)
+  }
+
+  private async fallbackToPlainMessageAfterToolFailure(
+    taskId: string,
+    senderSessionId: string,
+    messageIds: string[],
+    messageContent: string,
+    currentProvider: ModelProvider,
+    effectiveApiKey: string,
+    attachmentsToSend: MessageAttachment[],
+    error: string
+  ): Promise<void> {
+    console.warn('ChatSendFlow', `[Function Calling] tools request failed, fallback to plain message: ${error}`)
+    this.completeTaskForFallback(taskId, senderSessionId)
+    await this.removeProbeMessages(messageIds, senderSessionId)
+    if (this.deps.getSessionId() === senderSessionId) {
+      this.deps.onShowToast('当前模型未接受工具调用，已关闭工具重试本次发送')
+    }
+    await this.sendPlainMessage(
+      messageContent,
+      currentProvider,
+      effectiveApiKey,
+      attachmentsToSend
+    )
+  }
+
   async sendPlainMessage(
     messageContent: string,
     currentProvider: ModelProvider,
@@ -445,7 +572,8 @@ export class ChatSendFlow {
     currentProvider: ModelProvider,
     effectiveApiKey: string,
     attachmentsToSend: MessageAttachment[] = [],
-    enabledToolIds: string[] = []
+    enabledToolIds: string[] = [],
+    learnToolsOnSuccess: boolean = false
   ): Promise<void> {
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
@@ -456,6 +584,9 @@ export class ChatSendFlow {
     const senderSessionId = this.deps.getSessionId()
     const modelId = this.deps.getCurrentModelId()
     const tools = this.deps.toolRegistry.getEnabledToolDefinitions(enabledToolIds)
+    const createdMessageIds: string[] = []
+    let completedSuccessfully = false
+    let fallbackStarted = false
 
     console.info('ChatSendFlow', `[Function Calling] 启用工具: ${enabledToolIds.join(', ')}`)
 
@@ -486,18 +617,35 @@ export class ChatSendFlow {
         this.deps.getCurrentModelName(),
         this.deps.getMessages(),
         (userMessage: ChatMessage): void => {
+          this.appendUniqueMessageId(createdMessageIds, userMessage.id)
           this.handleUserMessageAdded(userMessage, senderSessionId)
         },
         (aiMessage: ChatMessage): void => {
+          this.appendUniqueMessageId(createdMessageIds, aiMessage.id)
           this.handleAIMessageAdded(aiMessage, senderSessionId)
         },
         (aiMessage: ChatMessage): void => {
           this.handleAIMessageUpdated(aiMessage, senderSessionId)
         },
         (): void => {
+          completedSuccessfully = true
           this.handleTaskCompleted(taskId, senderSessionId)
         },
-        (error: string): void => {
+        async (error: string): Promise<void> => {
+          if (this.isToolCapabilityError(error)) {
+            fallbackStarted = true
+            await this.fallbackToPlainMessageAfterToolFailure(
+              taskId,
+              senderSessionId,
+              createdMessageIds,
+              messageContent,
+              currentProvider,
+              effectiveApiKey,
+              attachmentsToSend,
+              error
+            )
+            return
+          }
           this.handleTaskFailed(taskId, error, true, senderSessionId)
         },
         attachmentsToSend,
@@ -509,6 +657,9 @@ export class ChatSendFlow {
         currentProvider.customHeadersJson || undefined,
         currentProvider.openaiTransport
       )
+      if (completedSuccessfully && learnToolsOnSuccess && !fallbackStarted) {
+        await this.deps.onConfirmModelSupportsTools(currentProvider.id, modelId)
+      }
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`
       this.handleTaskFailed(taskId, message, true, senderSessionId)
