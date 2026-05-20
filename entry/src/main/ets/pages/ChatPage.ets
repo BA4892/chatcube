@@ -1,6 +1,12 @@
 import { KeyboardAvoidMode } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import {
+  DefaultMediaModel,
+  DefaultMediaType,
+  MediaPreview,
+  MediaPreviewOptions
+} from '@lyb/media-preview'
+import {
   HdsNavDestination,
   HdsNavDestinationTitleMode,
   HdsNavigationTitleBarOptions
@@ -23,7 +29,6 @@ import {
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { AttachmentPicker } from '../components/AttachmentPicker'
-import { ImagePreview } from '../components/ImagePreview'
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton'
 import { ScrollToBottomLoadingButton } from '../components/ScrollToBottomLoadingButton'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
@@ -100,6 +105,7 @@ import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { getSearchToolIds, isSearchToolFunctionName, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
+import { savePreviewImageToAlbum } from '../utils/ImagePreviewSaveUtil'
 
 const DOMAIN = 0x0003
 const TAG = 'ChatPage'
@@ -189,6 +195,9 @@ export struct ChatPage {
   @Local showImagePreview: boolean = false
   @Local previewImages: Array<string> = []
   @Local previewImageIndex: number = 0
+  @Local isImagePreviewSaving: boolean = false
+  private previewImageSourceIds: Array<string> = []
+  private imagePreviewDialogId: string = ''
   @Local showMessageWebSheet: boolean = false
   @Local messageWebSheetUrl: string = ''
   @Local messageWebSheetTitle: string = ''
@@ -479,12 +488,8 @@ export struct ChatPage {
     }
   }
 
-  /**
-   * 状态栏联动：仅图片预览时隐藏状态栏。
-   * 输入框、标题栏、状态栏始终显示（用户要求）。
-   */
   private updateStatusBar(): void {
-    this.setChatStatusBarVisible(!this.showImagePreview)
+    this.setChatStatusBarVisible(true)
   }
 
   private setChatStatusBarVisible(visible: boolean): void {
@@ -503,6 +508,7 @@ export struct ChatPage {
 
   aboutToDisappear(): void {
     this.isPageVisible = false
+    this.closeActiveChatImagePreview(false)
     // 释放TTS资源
     this.ttsService.destroy()
     this.clearInitialBottomAlignmentRetries()
@@ -2051,9 +2057,6 @@ export struct ChatPage {
   }
 
   private getStatusBarContentColor(): string {
-    if (this.showImagePreview) {
-      return '#F5F7FA'
-    }
     return this.isDarkMode ? '#F5F7FA' : '#1F2329'
   }
 
@@ -2199,8 +2202,8 @@ export struct ChatPage {
             callback: (result: string, errorMessage: string) => void): void => {
             this.handleTranslate(content, targetLang, callback)
           },
-          onImageClick: (images: Array<string>, imageIndex: number): void => {
-            this.handleImagePreview(images, imageIndex)
+          onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+            this.handleImagePreview(images, imageIndex, sourceIds)
           },
           onOpenLink: (title: string, url: string): void => {
             this.handleMessageLinkOpen(title, url)
@@ -2559,21 +2562,6 @@ export struct ChatPage {
           })
           .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
         }
-
-        // 图片预览（全屏覆盖层，不使用 bindContentCover 以避免模态层拦截手势）
-        if (this.showImagePreview) {
-          ImagePreview({
-            images: this.previewImages,
-            currentIndex: this.previewImageIndex,
-            topSafeAreaVp: this.px2vp(this.topAvoidHeight),
-            bottomSafeAreaVp: this.px2vp(this.bottomAvoidHeight),
-            onClose: () => {
-              this.showImagePreview = false
-              this.updateStatusBar()
-            }
-          })
-            .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
-        }
       }
       .width('100%')
       .height('100%')
@@ -2583,7 +2571,7 @@ export struct ChatPage {
     .titleBar(this.getTitleBarOptions())
     .bindToScrollable([this.scroller])
     .titleMode(HdsNavDestinationTitleMode.MINI)
-    .hideTitleBar(this.showImagePreview, true)
+    .hideTitleBar(false, true)
     .systemBarStyle(
       { statusBarContentColor: this.getStatusBarContentColor() },
       { statusBarContentColor: this.getStatusBarContentColor() }
@@ -2609,6 +2597,7 @@ export struct ChatPage {
     })
     .onHidden(() => {
       this.isPageVisible = false
+      this.closeActiveChatImagePreview(false)
       if (this.isMultiSelectMode) {
         this.handleExitMultiSelectMode()
       }
@@ -2616,8 +2605,7 @@ export struct ChatPage {
     })
     .onBackPressed((): boolean => {
       if (this.showImagePreview) {
-        this.showImagePreview = false
-        this.updateStatusBar()
+        this.closeActiveChatImagePreview(true)
         return true
       }
       if (this.showAttachmentPicker) {
@@ -2666,14 +2654,162 @@ export struct ChatPage {
       .translate({ x: 0 })
   }
 
-  // 处理图片预览
-  private handleImagePreview(images: Array<string>, index: number): void {
+  private normalizePreviewIndex(index: number, imageCount: number): number {
+    if (imageCount <= 0 || index < 0) {
+      return 0
+    }
+    if (index >= imageCount) {
+      return imageCount - 1
+    }
+    return index
+  }
+
+  private getChatImagePreviewSourceId(sourceIds: Array<string>, index: number): string {
+    if (index >= 0 && index < sourceIds.length && sourceIds[index] !== '') {
+      return sourceIds[index]
+    }
+    return `chat_image_preview_${index}`
+  }
+
+  private buildChatImagePreviewModels(images: Array<string>): DefaultMediaModel[] {
+    const mediaModels: DefaultMediaModel[] = []
+    for (let i = 0; i < images.length; i++) {
+      mediaModels.push(new DefaultMediaModel(images[i], images[i], DefaultMediaType.IMAGE))
+    }
+    return mediaModels
+  }
+
+  private handleImagePreview(images: Array<string>, index: number, sourceIds: Array<string>): void {
     hilog.info(DOMAIN, TAG, '🖼️ ChatPage.handleImagePreview (images: %{public}d, index: %{public}d)', images.length,
       index)
-    this.previewImages = images
-    this.previewImageIndex = index
+    const previewImages: Array<string> = []
+    const previewSourceIds: Array<string> = []
+    let initialIndex = 0
+    for (let i = 0; i < images.length; i++) {
+      if (images[i] !== '') {
+        if (i === index) {
+          initialIndex = previewImages.length
+        }
+        previewImages.push(images[i])
+        previewSourceIds.push(i < sourceIds.length ? sourceIds[i] : '')
+      }
+    }
+
+    const mediaModels = this.buildChatImagePreviewModels(previewImages)
+    if (mediaModels.length === 0) {
+      return
+    }
+
+    initialIndex = this.normalizePreviewIndex(initialIndex, mediaModels.length)
+    this.previewImages = previewImages
+    this.previewImageIndex = initialIndex
+    this.previewImageSourceIds = previewSourceIds
     this.showImagePreview = true
+    const options = new MediaPreviewOptions<DefaultMediaModel>()
+      .setMedias(mediaModels)
+      .setInitIndex(initialIndex)
+      .setIdBuilder((_item: DefaultMediaModel, mediaIndex: number): string => {
+        return this.getChatImagePreviewSourceId(this.previewImageSourceIds, mediaIndex)
+      })
+      .setPageChangedListener((_item: DefaultMediaModel, mediaIndex: number): void => {
+        this.previewImageIndex = mediaIndex
+      })
+      .setBackListener((): void => {
+        this.handleChatImagePreviewClosed()
+      })
+      .setLongPressListener((_item: DefaultMediaModel, mediaIndex: number): void => {
+        this.previewImageIndex = mediaIndex
+        this.saveCurrentChatPreviewImage()
+      })
+      .setToolBuilder((): void => {
+        this.ChatImagePreviewToolBuilder()
+      })
+      .setShowPageText(mediaModels.length > 1)
+      .setIndicator(false)
+      .setBackgroundColor(Color.Black)
+      .setDismissOnTap(true)
+      .setDismissOnDrag(true)
+      .setMaxScale(4)
+      .setDuration(260)
+    this.imagePreviewDialogId = MediaPreview.open(this.getUIContext(), options)
+  }
+
+  private closeActiveChatImagePreview(animated: boolean): void {
+    if (this.imagePreviewDialogId !== '') {
+      MediaPreview.close({ dialogId: this.imagePreviewDialogId, animated: animated })
+    } else {
+      this.handleChatImagePreviewClosed()
+      return
+    }
+    if (!animated) {
+      this.handleChatImagePreviewClosed()
+    }
+  }
+
+  private handleChatImagePreviewClosed(): void {
+    this.showImagePreview = false
+    this.previewImages = []
+    this.previewImageIndex = 0
+    this.previewImageSourceIds = []
+    this.imagePreviewDialogId = ''
+    this.isImagePreviewSaving = false
     this.updateStatusBar()
+  }
+
+  private hasCurrentChatPreviewImage(): boolean {
+    return this.previewImageIndex >= 0 && this.previewImageIndex < this.previewImages.length &&
+      this.previewImages[this.previewImageIndex] !== ''
+  }
+
+  private async saveCurrentChatPreviewImage(): Promise<void> {
+    if (this.isImagePreviewSaving || !this.hasCurrentChatPreviewImage()) {
+      return
+    }
+    const hostContext = this.getUIContext().getHostContext()
+    if (hostContext === undefined || hostContext === null) {
+      this.showChatSnack($r('app.string.image_save_failed'), 2000, SnackBarTone.ERROR)
+      return
+    }
+
+    this.isImagePreviewSaving = true
+    try {
+      await savePreviewImageToAlbum(hostContext as common.UIAbilityContext, this.previewImages[this.previewImageIndex])
+      this.showChatSnack($r('app.string.image_saved_to_album'), 2000, SnackBarTone.SUCCESS)
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, 'Save preview image failed: %{public}s', JSON.stringify(error))
+      this.showChatSnack($r('app.string.image_save_failed'), 2000, SnackBarTone.ERROR)
+    } finally {
+      this.isImagePreviewSaving = false
+    }
+  }
+
+  @Builder
+  private ChatImagePreviewToolBuilder() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        if (this.isImagePreviewSaving) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color('rgba(255, 255, 255, 0.86)')
+        } else {
+          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            .fontSize(20)
+            .fontColor(['rgba(255, 255, 255, 0.9)'])
+        }
+      }
+      .width(48)
+      .height(48)
+      .margin({ bottom: 24 + this.px2vp(this.bottomAvoidHeight) })
+      .backgroundColor('rgba(8, 12, 18, 0.62)')
+      .enabled(!this.isImagePreviewSaving && this.hasCurrentChatPreviewImage())
+      .onClick(() => {
+        this.saveCurrentChatPreviewImage()
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 
   @Builder

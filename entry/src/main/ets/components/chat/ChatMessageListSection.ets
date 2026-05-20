@@ -41,7 +41,8 @@ export struct ChatMessageListSection {
   @Event onShareMessage: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onTranslate: (content: string, targetLang: string, callback: (result: string, errorMessage: string) => void) => void =
     (_content: string, _targetLang: string, _callback: (result: string, errorMessage: string) => void): void => {}
-  @Event onImageClick: (images: Array<string>, imageIndex: number) => void = (_images: Array<string>, _imageIndex: number): void => {
+  @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
+    (_images: Array<string>, _imageIndex: number, _sourceIds: Array<string>): void => {
   }
   @Event onOpenLink: (title: string, url: string) => void = (_title: string, _url: string): void => {}
   @Event onTTS: (messageId: string, content: string) => void = (_messageId: string, _content: string): void => {}
@@ -435,8 +436,8 @@ export struct ChatMessageListSection {
                   callback: (result: string, errorMessage: string) => void): void => {
                   this.onTranslate(content, targetLang, callback)
                 },
-                onImageClick: (images: Array<string>, imageIndex: number): void => {
-                  this.onImageClick(images, imageIndex)
+                onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+                  this.onImageClick(images, imageIndex, sourceIds)
                 },
                 onOpenLink: (title: string, url: string): void => {
                   this.onOpenLink(title, url)

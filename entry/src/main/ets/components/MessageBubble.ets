@@ -239,7 +239,8 @@ export struct MessageBubble {
   @Event onShareMessage: () => void = () => {}
   @Event onTranslate: (content: string, targetLang: string, callback: (result: string, errorMessage: string) => void) => void = () => {}
   // 图片点击预览回调
-  @Event onImageClick: (images: Array<string>, index: number) => void = () => {}
+  @Event onImageClick: (images: Array<string>, index: number, sourceIds: Array<string>) => void =
+    (_images: Array<string>, _index: number, _sourceIds: Array<string>): void => {}
   @Event onOpenLink: (title: string, url: string) => void = () => {}
   // TTS朗读回调
   @Event onTTS: (messageId: string, content: string) => void = () => {}
@@ -1041,7 +1042,7 @@ export struct MessageBubble {
       imageIndex = 0
     }
 
-    this.onImageClick(images, imageIndex)
+    this.onImageClick(images, imageIndex, [])
     return true
   }
 
@@ -1099,6 +1100,16 @@ export struct MessageBubble {
       return `data:${attachment.mimeType};base64,${attachment.base64Data}`
     }
     return ''
+  }
+
+  private getAttachmentImagePreviewId(attachment: MessageAttachment, originalIndex: number): string {
+    if (attachment.id !== '') {
+      return 'img_' + attachment.id
+    }
+    if (attachment.filePath !== '') {
+      return 'img_' + attachment.filePath
+    }
+    return `img_attachment_${originalIndex}`
   }
 
   // 提取图片附件并保留原始索引（用于正确映射预览索引）
@@ -1455,7 +1466,7 @@ export struct MessageBubble {
   CompactSingleImage(attachment: MessageAttachment, attachmentIndex: number, bottomMargin: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
       Image(this.getAttachmentImageSource(attachment))
-        .id('img_' + attachment.id)
+        .id(this.getAttachmentImagePreviewId(attachment, attachmentIndex))
         .width(this.compactImageContainerWidth)
         .height(this.compactImageMaxHeight)
         .objectFit(ImageFit.Cover)
@@ -1472,7 +1483,7 @@ export struct MessageBubble {
   CompactGridImage(attachment: MessageAttachment, attachmentIndex: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
       Image(this.getAttachmentImageSource(attachment))
-        .id('img_' + attachment.id)
+        .id(this.getAttachmentImagePreviewId(attachment, attachmentIndex))
         .width('100%')
         .height(this.compactImageMaxHeight)
         .objectFit(ImageFit.Cover)
@@ -1602,33 +1613,27 @@ export struct MessageBubble {
 
   // 处理图片预览点击
   private handleImagePreview(clickedIndex: number): void {
-    // 收集所有图片附件的路径
-    const imageAttachments = this.message.getImageAttachments()
+    const imageEntries = this.getMessageImageEntries()
     const imagePaths: Array<string> = []
+    const imageSourceIds: Array<string> = []
+    let imageIndex = 0
+    let clickedImageFound = false
 
-    for (let i = 0; i < imageAttachments.length; i++) {
-      const attachment = imageAttachments[i]
-      if (attachment.filePath !== '') {
-        imagePaths.push('file://' + attachment.filePath)
-      } else if (attachment.base64Data !== '') {
-        imagePaths.push(`data:${attachment.mimeType};base64,${attachment.base64Data}`)
+    for (let i = 0; i < imageEntries.length; i++) {
+      const entry = imageEntries[i]
+      const imageSource = this.getAttachmentImageSource(entry.attachment)
+      if (imageSource !== '') {
+        if (entry.originalIndex === clickedIndex) {
+          imageIndex = imagePaths.length
+          clickedImageFound = true
+        }
+        imagePaths.push(imageSource)
+        imageSourceIds.push(this.getAttachmentImagePreviewId(entry.attachment, entry.originalIndex))
       }
     }
 
-    if (imagePaths.length > 0) {
-      // 计算点击的图片在纯图片列表中的索引
-      let imageIndex = 0
-      let imageCount = 0
-      for (let i = 0; i < this.message.attachments.length; i++) {
-        if (this.message.attachments[i].type === AttachmentType.IMAGE) {
-          if (i === clickedIndex) {
-            imageIndex = imageCount
-            break
-          }
-          imageCount++
-        }
-      }
-      this.onImageClick(imagePaths, imageIndex)
+    if (imagePaths.length > 0 && clickedImageFound) {
+      this.onImageClick(imagePaths, imageIndex, imageSourceIds)
     }
   }
 
