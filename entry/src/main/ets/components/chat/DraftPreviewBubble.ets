@@ -1,5 +1,6 @@
 import { AttachmentType, MessageAttachment } from '../../models/ChatModels'
 import { getAppUiState } from '../../state/AppUiState'
+import { AdaptiveImageThumbnail } from '../AdaptiveImageThumbnail'
 
 @ComponentV2
 export struct DraftPreviewBubble {
@@ -13,6 +14,8 @@ export struct DraftPreviewBubble {
   }
   @Param chatFontSize: number = 15
   @Param previewTimeText: string = ''
+  @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
+    (_images: Array<string>, _imageIndex: number, _sourceIds: Array<string>): void => {}
   draftPreviewImageMaxHeight: number = 120
   draftPreviewImageContainerWidth: number = 180
   draftPreviewImageGap: number = 6
@@ -39,66 +42,104 @@ export struct DraftPreviewBubble {
     return rows
   }
 
-  @Builder
-  private DraftPreviewSingleImage(attachment: MessageAttachment, bottomMargin: number) {
+  private getAttachmentImageSource(attachment: MessageAttachment): string {
     if (attachment.filePath !== '') {
-      Image('file://' + attachment.filePath)
-        .width(this.draftPreviewImageContainerWidth)
-        .height(this.draftPreviewImageMaxHeight)
-        .objectFit(ImageFit.Contain)
-        .borderRadius(12)
-        .clip(true)
-        .margin({ bottom: bottomMargin })
-    } else if (attachment.base64Data !== '') {
-      Image(`data:${attachment.mimeType};base64,${attachment.base64Data}`)
-        .width(this.draftPreviewImageContainerWidth)
-        .height(this.draftPreviewImageMaxHeight)
-        .objectFit(ImageFit.Contain)
-        .borderRadius(12)
-        .clip(true)
+      return 'file://' + attachment.filePath
+    }
+    if (attachment.base64Data !== '') {
+      return `data:${attachment.mimeType};base64,${attachment.base64Data}`
+    }
+    return ''
+  }
+
+  private getAttachmentImagePreviewId(attachment: MessageAttachment, originalIndex: number): string {
+    if (attachment.id !== '') {
+      return 'draft_img_' + attachment.id
+    }
+    if (attachment.filePath !== '') {
+      return 'draft_img_' + attachment.filePath
+    }
+    return `draft_img_${originalIndex}`
+  }
+
+  private handleImagePreview(clickedIndex: number): void {
+    const imagePaths: Array<string> = []
+    const imageSourceIds: Array<string> = []
+    let imageIndex = 0
+    let clickedImageFound = false
+
+    for (let i = 0; i < this.pendingAttachments.length; i++) {
+      const attachment = this.pendingAttachments[i]
+      if (attachment.type !== AttachmentType.IMAGE) {
+        continue
+      }
+      const imageSource = this.getAttachmentImageSource(attachment)
+      if (imageSource === '') {
+        continue
+      }
+      if (i === clickedIndex) {
+        imageIndex = imagePaths.length
+        clickedImageFound = true
+      }
+      imagePaths.push(imageSource)
+      imageSourceIds.push(this.getAttachmentImagePreviewId(attachment, i))
+    }
+
+    if (imagePaths.length > 0 && clickedImageFound) {
+      this.onImageClick(imagePaths, imageIndex, imageSourceIds)
+    }
+  }
+
+  @Builder
+  private DraftPreviewSingleImage(attachment: MessageAttachment, attachmentIndex: number, bottomMargin: number) {
+    if (this.getAttachmentImageSource(attachment) !== '') {
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: this.draftPreviewImageContainerWidth,
+        maxHeight: this.draftPreviewImageMaxHeight,
+        radius: 12,
+        onPreview: () => {
+          this.handleImagePreview(attachmentIndex)
+        }
+      })
         .margin({ bottom: bottomMargin })
     }
   }
 
   @Builder
-  private DraftPreviewGridImage(attachment: MessageAttachment) {
-    if (attachment.filePath !== '') {
-      Image('file://' + attachment.filePath)
-        .width('100%')
-        .height(this.draftPreviewImageMaxHeight)
-        .objectFit(ImageFit.Contain)
-        .borderRadius(12)
-        .clip(true)
-        .layoutWeight(1)
-    } else if (attachment.base64Data !== '') {
-      Image(`data:${attachment.mimeType};base64,${attachment.base64Data}`)
-        .width('100%')
-        .height(this.draftPreviewImageMaxHeight)
-        .objectFit(ImageFit.Contain)
-        .borderRadius(12)
-        .clip(true)
-        .layoutWeight(1)
+  private DraftPreviewGridImage(attachment: MessageAttachment, attachmentIndex: number) {
+    if (this.getAttachmentImageSource(attachment) !== '') {
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: (this.draftPreviewImageContainerWidth - this.draftPreviewImageGap) / 2,
+        maxHeight: this.draftPreviewImageMaxHeight,
+        radius: 12,
+        onPreview: () => {
+          this.handleImagePreview(attachmentIndex)
+        }
+      })
     }
   }
 
   @Builder
   private DraftPreviewImages(draftImageIndices: number[]) {
     if (draftImageIndices.length === 1) {
-      this.DraftPreviewSingleImage(this.pendingAttachments[draftImageIndices[0]], this.inputText.trim().length > 0 ? 6 : 0)
+      this.DraftPreviewSingleImage(this.pendingAttachments[draftImageIndices[0]], draftImageIndices[0],
+        this.inputText.trim().length > 0 ? 6 : 0)
     } else if (draftImageIndices.length > 1) {
       Column({ space: this.draftPreviewImageGap }) {
         ForEach(this.buildDraftImageGridRows(draftImageIndices.length), (rowIndex: number) => {
           Row({ space: this.draftPreviewImageGap }) {
-            this.DraftPreviewGridImage(this.pendingAttachments[draftImageIndices[rowIndex * 2]])
+            this.DraftPreviewGridImage(this.pendingAttachments[draftImageIndices[rowIndex * 2]],
+              draftImageIndices[rowIndex * 2])
 
             if (rowIndex * 2 + 1 < draftImageIndices.length) {
-              this.DraftPreviewGridImage(this.pendingAttachments[draftImageIndices[rowIndex * 2 + 1]])
-            } else {
-              Blank()
-                .layoutWeight(1)
+              this.DraftPreviewGridImage(this.pendingAttachments[draftImageIndices[rowIndex * 2 + 1]],
+                draftImageIndices[rowIndex * 2 + 1])
             }
           }
-          .width(this.draftPreviewImageContainerWidth)
         }, (rowIndex: number) => rowIndex.toString())
       }
       .margin({ bottom: this.inputText.trim().length > 0 ? 6 : 0 })

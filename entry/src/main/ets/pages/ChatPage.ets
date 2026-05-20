@@ -2393,6 +2393,9 @@ export struct ChatPage {
               },
               onRecentPhotoDetected: (detected: boolean): void => {
                 this.hasRecentScreenshot = detected
+              },
+              onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+                this.handleImagePreview(images, imageIndex, sourceIds)
               }
             })
               .onAreaChange((_oldArea: Area, newArea: Area) => {

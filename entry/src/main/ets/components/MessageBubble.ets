@@ -18,6 +18,7 @@ import { HtmlPreviewCard } from './HtmlPreviewCard'
 import { MermaidPreviewCard } from './MermaidPreviewCard'
 import { TypingDots } from './TypingDots'
 import { AssistantAvatarView } from './AssistantAvatar'
+import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { getAppUiState, observeAppUiState } from '../state/AppUiState'
@@ -1406,29 +1407,32 @@ export struct MessageBubble {
     })
   }
 
-  // 编辑模式下的简化附件预览（无手势交互）
+  // 编辑模式下的简化附件预览
   @Builder
   PreviewAttachments() {
     Column() {
       if (this.getPreviewImageEntries().length === 1) {
         this.CompactPreviewSingleImage(
           this.getPreviewImageEntries()[0].attachment,
+          this.getPreviewImageEntries()[0].originalIndex,
           this.hasPreviewTextContent() ? 6 : 0
         )
       } else if (this.getPreviewImageEntries().length > 1) {
         Column({ space: this.compactImageGap }) {
           ForEach(this.getPreviewImageGridRows(), (rowIndex: number) => {
             Row({ space: this.compactImageGap }) {
-              this.CompactPreviewGridImage(this.getPreviewImageEntries()[rowIndex * 2].attachment)
+              this.CompactPreviewGridImage(
+                this.getPreviewImageEntries()[rowIndex * 2].attachment,
+                this.getPreviewImageEntries()[rowIndex * 2].originalIndex
+              )
 
               if (rowIndex * 2 + 1 < this.getPreviewImageEntries().length) {
-                this.CompactPreviewGridImage(this.getPreviewImageEntries()[rowIndex * 2 + 1].attachment)
-              } else {
-                Blank()
-                  .layoutWeight(1)
+                this.CompactPreviewGridImage(
+                  this.getPreviewImageEntries()[rowIndex * 2 + 1].attachment,
+                  this.getPreviewImageEntries()[rowIndex * 2 + 1].originalIndex
+                )
               }
             }
-            .width(this.compactImageContainerWidth)
           }, (rowIndex: number) => rowIndex.toString())
         }
         .margin({ bottom: this.hasPreviewTextContent() ? 6 : 0 })
@@ -1437,62 +1441,68 @@ export struct MessageBubble {
   }
 
   @Builder
-  CompactPreviewSingleImage(attachment: MessageAttachment, bottomMargin: number) {
+  CompactPreviewSingleImage(attachment: MessageAttachment, attachmentIndex: number, bottomMargin: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
-      Image(this.getAttachmentImageSource(attachment))
-        .width(this.compactImageContainerWidth)
-        .height(this.compactImageMaxHeight)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: this.compactImageContainerWidth,
+        maxHeight: this.compactImageMaxHeight,
+        radius: 8,
+        onPreview: () => {
+          this.handlePreviewImagePreview(attachmentIndex)
+        }
+      })
         .margin({ bottom: bottomMargin })
     }
   }
 
   @Builder
-  CompactPreviewGridImage(attachment: MessageAttachment) {
+  CompactPreviewGridImage(attachment: MessageAttachment, attachmentIndex: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
-      Image(this.getAttachmentImageSource(attachment))
-        .width('100%')
-        .height(this.compactImageMaxHeight)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
-        .layoutWeight(1)
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: (this.compactImageContainerWidth - this.compactImageGap) / 2,
+        maxHeight: this.compactImageMaxHeight,
+        radius: 8,
+        onPreview: () => {
+          this.handlePreviewImagePreview(attachmentIndex)
+        }
+      })
     }
   }
 
   @Builder
   CompactSingleImage(attachment: MessageAttachment, attachmentIndex: number, bottomMargin: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
-      Image(this.getAttachmentImageSource(attachment))
-        .id(this.getAttachmentImagePreviewId(attachment, attachmentIndex))
-        .width(this.compactImageContainerWidth)
-        .height(this.compactImageMaxHeight)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
-        .margin({ bottom: bottomMargin })
-        .onClick(() => {
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: this.compactImageContainerWidth,
+        maxHeight: this.compactImageMaxHeight,
+        radius: 8,
+        onPreview: () => {
           this.handleImagePreview(attachmentIndex)
-        })
+        }
+      })
+        .margin({ bottom: bottomMargin })
     }
   }
 
   @Builder
   CompactGridImage(attachment: MessageAttachment, attachmentIndex: number) {
     if (this.getAttachmentImageSource(attachment) !== '') {
-      Image(this.getAttachmentImageSource(attachment))
-        .id(this.getAttachmentImagePreviewId(attachment, attachmentIndex))
-        .width('100%')
-        .height(this.compactImageMaxHeight)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .clip(true)
-        .layoutWeight(1)
-        .onClick(() => {
+      AdaptiveImageThumbnail({
+        src: this.getAttachmentImageSource(attachment),
+        previewId: this.getAttachmentImagePreviewId(attachment, attachmentIndex),
+        maxWidth: (this.compactImageContainerWidth - this.compactImageGap) / 2,
+        maxHeight: this.compactImageMaxHeight,
+        radius: 8,
+        onPreview: () => {
           this.handleImagePreview(attachmentIndex)
-        })
+        }
+      })
     }
   }
 
@@ -1519,12 +1529,8 @@ export struct MessageBubble {
                   this.getMessageImageEntries()[rowIndex * 2 + 1].attachment,
                   this.getMessageImageEntries()[rowIndex * 2 + 1].originalIndex
                 )
-              } else {
-                Blank()
-                  .layoutWeight(1)
               }
             }
-            .width(this.compactImageContainerWidth)
           }, (rowIndex: number) => `${this.message.id}_user_${rowIndex}`)
         }
         .margin({ bottom: this.hasMessageTextContent() ? 6 : 0 })
@@ -1576,12 +1582,8 @@ export struct MessageBubble {
                   this.getMessageImageEntries()[rowIndex * 2 + 1].attachment,
                   this.getMessageImageEntries()[rowIndex * 2 + 1].originalIndex
                 )
-              } else {
-                Blank()
-                  .layoutWeight(1)
               }
             }
-            .width(this.compactImageContainerWidth)
           }, (rowIndex: number) => `${this.message.id}_ai_${rowIndex}`)
         }
         .margin({ bottom: 8 })
@@ -1614,6 +1616,15 @@ export struct MessageBubble {
   // 处理图片预览点击
   private handleImagePreview(clickedIndex: number): void {
     const imageEntries = this.getMessageImageEntries()
+    this.openAttachmentImagePreview(imageEntries, clickedIndex)
+  }
+
+  private handlePreviewImagePreview(clickedIndex: number): void {
+    const imageEntries = this.getPreviewImageEntries()
+    this.openAttachmentImagePreview(imageEntries, clickedIndex)
+  }
+
+  private openAttachmentImagePreview(imageEntries: ImageAttachmentEntry[], clickedIndex: number): void {
     const imagePaths: Array<string> = []
     const imageSourceIds: Array<string> = []
     let imageIndex = 0

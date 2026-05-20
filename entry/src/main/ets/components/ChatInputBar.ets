@@ -12,6 +12,7 @@ import { util } from '@kit.ArkTS'
 import { getAttachmentStorageService } from '../services/AttachmentStorageService'
 import { getAppUiState } from '../state/AppUiState'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 
 @ComponentV2
 export struct ChatInputBar {
@@ -29,6 +30,8 @@ export struct ChatInputBar {
   @Event onInputTextChange: (value: string) => void = (_value: string): void => {}
   @Param attachments: MessageAttachment[] = []
   @Event onAttachmentsChange: (value: MessageAttachment[]) => void = (_value: MessageAttachment[]): void => {}
+  @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
+    (_images: Array<string>, _imageIndex: number, _sourceIds: Array<string>): void => {}
   @Param isSending: boolean = false
   // isSending 为 true 时，pause 在整个发送期都保留轻微呼吸感
   @Param isAwaitingResponse: boolean = false
@@ -396,19 +399,17 @@ export struct ChatInputBar {
   AttachmentItem(attachment: MessageAttachment, index: number) {
     Stack({ alignContent: Alignment.TopEnd }) {
       if (attachment.type === AttachmentType.IMAGE) {
-        // 图片预览 - 优先使用文件路径（需要 file:// 协议），备选使用 base64
-        if (attachment.filePath !== '') {
-          Image('file://' + attachment.filePath)
-            .width(60)
-            .height(60)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(8)
-        } else if (attachment.base64Data !== '') {
-          Image(`data:${attachment.mimeType};base64,${attachment.base64Data}`)
-            .width(60)
-            .height(60)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(8)
+        if (this.getAttachmentImageSource(attachment) !== '') {
+          AdaptiveImageThumbnail({
+            src: this.getAttachmentImageSource(attachment),
+            previewId: this.getAttachmentImagePreviewId(attachment, index),
+            maxWidth: 72,
+            maxHeight: 72,
+            radius: 8,
+            onPreview: () => {
+              this.handleImagePreview(index)
+            }
+          })
         }
       } else {
         // 文件预览
@@ -447,6 +448,54 @@ export struct ChatInputBar {
       })
     }
     .margin({ right: 8 })
+  }
+
+  private getAttachmentImageSource(attachment: MessageAttachment): string {
+    if (attachment.filePath !== '') {
+      return 'file://' + attachment.filePath
+    }
+    if (attachment.base64Data !== '') {
+      return `data:${attachment.mimeType};base64,${attachment.base64Data}`
+    }
+    return ''
+  }
+
+  private getAttachmentImagePreviewId(attachment: MessageAttachment, originalIndex: number): string {
+    if (attachment.id !== '') {
+      return 'composer_img_' + attachment.id
+    }
+    if (attachment.filePath !== '') {
+      return 'composer_img_' + attachment.filePath
+    }
+    return `composer_img_${originalIndex}`
+  }
+
+  private handleImagePreview(clickedIndex: number): void {
+    const imagePaths: Array<string> = []
+    const imageSourceIds: Array<string> = []
+    let imageIndex = 0
+    let clickedImageFound = false
+
+    for (let i = 0; i < this.attachments.length; i++) {
+      const attachment = this.attachments[i]
+      if (attachment.type !== AttachmentType.IMAGE) {
+        continue
+      }
+      const imageSource = this.getAttachmentImageSource(attachment)
+      if (imageSource === '') {
+        continue
+      }
+      if (i === clickedIndex) {
+        imageIndex = imagePaths.length
+        clickedImageFound = true
+      }
+      imagePaths.push(imageSource)
+      imageSourceIds.push(this.getAttachmentImagePreviewId(attachment, i))
+    }
+
+    if (imagePaths.length > 0 && clickedImageFound) {
+      this.onImageClick(imagePaths, imageIndex, imageSourceIds)
+    }
   }
 
   private removeAttachment(index: number): void {

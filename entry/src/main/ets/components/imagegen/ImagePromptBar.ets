@@ -26,6 +26,7 @@ export struct ImagePromptBar {
   @Event onGenerate: () => void = (): void => {}
   @Event onCancel: () => void = (): void => {}
   @Event onRemoveReferenceImage: (path: string) => void = (_path: string): void => {}
+  @Event onPreviewReferenceImage: (index: number) => void = (_index: number): void => {}
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -61,6 +62,9 @@ export struct ImagePromptBar {
           removable: !this.isGenerating,
           onRemove: (path: string): void => {
             this.onRemoveReferenceImage(path)
+          },
+          onPreview: (index: number): void => {
+            this.onPreviewReferenceImage(index)
           }
         })
           .margin({ bottom: 8 })

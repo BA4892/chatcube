@@ -1,6 +1,7 @@
 import { GeneratedMedia } from '../../models/ImageGenerationModels'
 import { getAppUiState } from '../../state/AppUiState'
 import { getImageGenerationPreviewId } from './ImageGenerationPreviewUtil'
+import { AdaptiveImageThumbnail } from '../AdaptiveImageThumbnail'
 
 @ComponentV2
 export struct ImageResultGrid {
@@ -94,16 +95,16 @@ export struct ImageResultGrid {
 
   @Builder
   private PreviewImage(item: GeneratedMedia, aspectRatio: number, previewIndex: number) {
-    Image('file://' + item.filePath)
-      .width('100%')
-      .aspectRatio(aspectRatio)
-      .objectFit(ImageFit.Cover)
-      .borderRadius(8)
-      .clip(true)
-      .id(this.getPreviewSourceId(item))
-      .onClick(() => {
+    AdaptiveImageThumbnail({
+      src: 'file://' + item.filePath,
+      previewId: this.getPreviewSourceId(item),
+      fillWidth: true,
+      fallbackAspectRatio: aspectRatio,
+      radius: 8,
+      onPreview: () => {
         this.onPreview(previewIndex)
-      })
+      }
+    })
   }
 
   @Builder

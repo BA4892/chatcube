@@ -470,7 +470,10 @@ export struct ChatMessageListSection {
                     inputText: this.inputText,
                     pendingAttachments: this.pendingAttachments,
                     previewTimeText: this.draftPreviewTimeText,
-                    chatFontSize: this.chatFontSize
+                    chatFontSize: this.chatFontSize,
+                    onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+                      this.onImageClick(images, imageIndex, sourceIds)
+                    }
                   })
                 }
                 .width('100%')

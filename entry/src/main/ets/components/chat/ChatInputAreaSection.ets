@@ -50,6 +50,8 @@ export struct ChatInputAreaSection {
   @Event onInputBlur: () => void = () => {}
   @Event onComposerContentChanged: () => void = () => {}
   @Event onRecentPhotoDetected: (detected: boolean) => void = (_detected: boolean): void => {}
+  @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
+    (_images: Array<string>, _imageIndex: number, _sourceIds: Array<string>): void => {}
 
   private getEffectiveContentMaxWidth(): number {
     return this.contentMaxWidth > 0 ? this.contentMaxWidth : 99999
@@ -146,6 +148,9 @@ export struct ChatInputAreaSection {
           },
           onRecentPhotoDetected: (detected: boolean): void => {
             this.onRecentPhotoDetected(detected)
+          },
+          onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+            this.onImageClick(images, imageIndex, sourceIds)
           }
         })
 

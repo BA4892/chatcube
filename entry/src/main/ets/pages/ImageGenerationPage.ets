@@ -3,6 +3,7 @@ import { pasteboard } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
 import {
   DefaultMediaModel,
+  DefaultMediaType,
   MediaPreview,
   MediaPreviewOptions
 } from '@lyb/media-preview'
@@ -233,6 +234,57 @@ struct ImageGenerationPage {
     this.previewDialogId = MediaPreview.open(this.getUIContext(), previewOptions)
   }
 
+  private openReferenceImagePreview(index: number): void {
+    const mediaModels: DefaultMediaModel[] = []
+    const previewSourceIds: string[] = []
+    let previewIndex = 0
+    let clickedImageFound = false
+
+    for (let i = 0; i < this.viewModel.referenceImages.length; i++) {
+      const path = this.viewModel.referenceImages[i]
+      if (path === '') {
+        continue
+      }
+      if (i === index) {
+        previewIndex = mediaModels.length
+        clickedImageFound = true
+      }
+      const imageUri = 'file://' + path
+      mediaModels.push(new DefaultMediaModel(imageUri, imageUri, DefaultMediaType.IMAGE))
+      previewSourceIds.push(this.getReferencePreviewId(path, i))
+    }
+
+    if (mediaModels.length === 0 ||
+      (index >= 0 && index < this.viewModel.referenceImages.length && !clickedImageFound)) {
+      return
+    }
+
+    const previewOptions = new MediaPreviewOptions<DefaultMediaModel>()
+      .setMedias(mediaModels)
+      .setInitIndex(previewIndex)
+      .setIdBuilder((_item: DefaultMediaModel, mediaIndex: number): string => {
+        return this.getPreviewDialogSourceId(previewSourceIds, mediaIndex)
+      })
+      .setThumbBuilder((item: DefaultMediaModel, mediaIndex: number): void => {
+        this.PreviewThumbBuilder(item, mediaIndex)
+      })
+      .setBackListener((): void => {
+        this.handlePreviewClosed()
+      })
+      .setShowPageText(mediaModels.length > 1)
+      .setIndicator(false)
+      .setBackgroundColor(Color.Black)
+      .setDismissOnTap(true)
+      .setDismissOnDrag(true)
+      .setMaxScale(4)
+      .setDuration(260)
+
+    this.previewSourceItems = []
+    this.previewCurrentIndex = previewIndex
+    this.isPreviewOpen = true
+    this.previewDialogId = MediaPreview.open(this.getUIContext(), previewOptions)
+  }
+
   private handlePreviewClosed(): void {
     this.isPreviewOpen = false
     this.previewDialogId = ''
@@ -273,6 +325,13 @@ struct ImageGenerationPage {
       return previewSourceIds[mediaIndex]
     }
     return getImageGenerationPreviewFallbackId(mediaIndex)
+  }
+
+  private getReferencePreviewId(path: string, index: number): string {
+    if (path !== '') {
+      return 'image_generation_reference_' + path
+    }
+    return `image_generation_reference_${index}`
   }
 
   private getPreviewModelImageSrc(item: DefaultMediaModel): ResourceStr {
@@ -431,7 +490,7 @@ struct ImageGenerationPage {
     Image(this.getPreviewModelImageSrc(item))
       .width('100%')
       .height('100%')
-      .objectFit(ImageFit.Cover)
+      .objectFit(ImageFit.Contain)
       .borderRadius(8)
       .clip(true)
       .draggable(false)
@@ -556,6 +615,9 @@ struct ImageGenerationPage {
         },
         onRemoveReferenceImage: (path: string): void => {
           this.viewModel.removeReferenceImage(path)
+        },
+        onPreviewReferenceImage: (index: number): void => {
+          this.openReferenceImagePreview(index)
         }
       })
     }
