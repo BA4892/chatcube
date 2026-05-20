@@ -27,7 +27,6 @@ export struct ChatToolbar {
   @Param toolSelectionAvailable: boolean = false
   @Param hasSelectedTools: boolean = false
   @Event onOpenTools: () => void = (): void => {}
-  @Event onOpenImageGeneration: () => void = (): void => {}
   // 当前模型是否支持推理
   @Param reasoningAvailable: boolean = false
   @Param reasoningControlMode: ReasoningControlMode = ReasoningControlMode.NONE
@@ -171,34 +170,6 @@ export struct ChatToolbar {
           this.onOpenTools()
         })
       }
-
-      Button({ type: ButtonType.Capsule, stateEffect: false }) {
-        Row() {
-          SymbolGlyph($r('sys.symbol.picture'))
-            .fontSize(16)
-            .fontColor([$r('app.color.text_secondary')])
-
-          Text($r('app.string.image_generation_title'))
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .fontWeight(FontWeight.Regular)
-            .margin({ left: 4 })
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-      }
-      .height(32)
-      .padding({ left: 12, right: 12 })
-      .borderRadius(16)
-      .backgroundColor(this.getChipBackgroundColor())
-      .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-      .border({ width: 1, color: this.getInactiveChipBorderColor() })
-      .shadow({ radius: 10, color: this.getChipShadowColor(), offsetX: 0, offsetY: 2 })
-      .margin({ left: this.webSearchAvailable || this.toolSelectionAvailable ? 8 : 0 })
-      .animation({ duration: 200, curve: Curve.EaseOut })
-      .onClick(() => {
-        this.onOpenImageGeneration()
-      })
 
       if (this.reasoningAvailable) {
         // 推理控制按钮: 启用时只显示 level(自动/低/中/高/超高), 禁用时显示"推理"label。

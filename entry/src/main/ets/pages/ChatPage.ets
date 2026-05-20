@@ -2347,9 +2347,6 @@ export struct ChatPage {
               onOpenTools: (): void => {
                 this.showToolPickerSheet = true
               },
-              onOpenImageGeneration: (): void => {
-                this.navPathStack.pushPath({ name: 'ImageGenerationPage' })
-              },
               reasoningLevel: this.getActiveComposerReasoningLevel(),
               onReasoningLevelChange: (value: ReasoningLevel): void => {
                 this.updateActiveComposerReasoningLevel(value)

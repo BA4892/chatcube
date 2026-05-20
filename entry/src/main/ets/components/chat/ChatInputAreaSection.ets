@@ -31,7 +31,6 @@ export struct ChatInputAreaSection {
   @Param toolSelectionAvailable: boolean = false
   @Param hasSelectedTools: boolean = false
   @Event onOpenTools: () => void = (): void => {}
-  @Event onOpenImageGeneration: () => void = (): void => {}
   @Param reasoningAvailable: boolean = false
   @Param reasoningControlMode: ReasoningControlMode = ReasoningControlMode.NONE
   @Param reasoningXhighAvailable: boolean = false
@@ -88,9 +87,6 @@ export struct ChatInputAreaSection {
           hasSelectedTools: this.hasSelectedTools,
           onOpenTools: (): void => {
             this.onOpenTools()
-          },
-          onOpenImageGeneration: (): void => {
-            this.onOpenImageGeneration()
           },
           reasoningAvailable: this.reasoningAvailable,
           reasoningControlMode: this.reasoningControlMode,
