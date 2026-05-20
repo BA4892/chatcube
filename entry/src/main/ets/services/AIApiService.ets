@@ -2425,11 +2425,6 @@ export class AIApiService {
     body.thinking = {
       type: level === ReasoningLevel.OFF ? 'disabled' : 'enabled'
     }
-    body.reasoning_effort = undefined
-    body.temperature = undefined
-    body.top_p = undefined
-    body.presence_penalty = undefined
-    body.frequency_penalty = undefined
   }
 
   private getAnthropicAdaptiveEffort(model: string, level: ReasoningLevel): string | undefined {
