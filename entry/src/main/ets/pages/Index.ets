@@ -8,7 +8,9 @@ import {
   HdsNavigation,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
+  HdsAnimationMode,
   HdsTabs,
+  HdsTabsController,
   HdsTabsFloatingStyle
 } from '@kit.UIDesignKit'
 import {
@@ -130,6 +132,10 @@ import { parseOpenNewChatWithPromptPayload } from '../config/PresetPrompts'
 struct Index {
   private static readonly COMPACT_TABS_BAR_HEIGHT: number = 56
   private static readonly COMPACT_TABS_FLOATING_SIDE_MARGIN: number = 16
+  private static readonly COMPACT_TABS_HIDE_SCROLL_OFFSET_PX: number = 2
+  private static readonly COMPACT_TABS_SHOW_SCROLL_OFFSET_PX: number = 2
+  private static readonly COMPACT_TABS_SHOW_SCROLL_SPEED_PX_PER_MS: number = 0.45
+  private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 260
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -350,9 +356,13 @@ struct Index {
   private preferencesService = ServiceRegistry.preferences()
   private assistantService = ServiceRegistry.assistant()
   private providerViewModel = ServiceRegistry.provider()
+  private compactTabsController: HdsTabsController = new HdsTabsController()
   private assistantListScroller: ListScroller = new ListScroller()
   private sessionListScroller: ListScroller = new ListScroller()
   private settingsRootScroller: Scroller = new Scroller()
+  private compactTabsVisibleByScroll: boolean = true
+  private compactTabsAnimationGuardTimerId: number = -1
+  private lastSessionListScrollAt: number = 0
   private settingsCallback: SettingsChangeCallback | null = null
   private holdingHandSubscribed: boolean = false
   private handAdaptiveLoadSeq: number = 0
@@ -496,6 +506,9 @@ struct Index {
     if (index !== Index.TAB_SETTINGS) {
       this.dismissSettingsSheetForNavigation()
     }
+    if (index !== Index.TAB_CHAT) {
+      this.showCompactTabsFromNonScrollChange()
+    }
     this.currentTabIndex = index
     if (index === Index.TAB_CHAT) {
       this.loadSessions()
@@ -571,6 +584,85 @@ struct Index {
     }
     clearTimeout(this.chatListPaneResizeSaveTimerId)
     this.chatListPaneResizeSaveTimerId = -1
+  }
+
+  private clearCompactTabsAnimationGuardTimer(): void {
+    if (this.compactTabsAnimationGuardTimerId === -1) {
+      return
+    }
+    clearTimeout(this.compactTabsAnimationGuardTimerId)
+    this.compactTabsAnimationGuardTimerId = -1
+  }
+
+  private startCompactTabsAnimationGuardTimer(): void {
+    this.clearCompactTabsAnimationGuardTimer()
+    this.compactTabsAnimationGuardTimerId = setTimeout((): void => {
+      this.compactTabsAnimationGuardTimerId = -1
+    }, Index.COMPACT_TABS_ANIMATION_GUARD_MS)
+  }
+
+  private resetCompactTabsScrollState(): void {
+    this.lastSessionListScrollAt = 0
+    this.clearCompactTabsAnimationGuardTimer()
+    this.compactTabsVisibleByScroll = true
+  }
+
+  private canApplyCompactTabsScrollAnimation(): boolean {
+    return !this.isExpandedLayout() &&
+      this.currentTabIndex === Index.TAB_CHAT &&
+      !this.shouldHideCompactTabsHost() &&
+      !this.shouldHideCompactTabsBar()
+  }
+
+  private applyCompactTabsScrollAnimation(visible: boolean): void {
+    if (!this.canApplyCompactTabsScrollAnimation()) {
+      return
+    }
+    if (this.compactTabsAnimationGuardTimerId !== -1 || this.compactTabsVisibleByScroll === visible) {
+      return
+    }
+    this.compactTabsVisibleByScroll = visible
+    if (visible) {
+      this.compactTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION)
+    } else {
+      this.compactTabsController.applyHideAnimation(HdsAnimationMode.SCROLL_ANIMATION)
+    }
+    this.startCompactTabsAnimationGuardTimer()
+  }
+
+  private showCompactTabsFromNonScrollChange(): void {
+    this.lastSessionListScrollAt = 0
+    this.clearCompactTabsAnimationGuardTimer()
+    if (this.compactTabsVisibleByScroll) {
+      return
+    }
+    this.compactTabsVisibleByScroll = true
+    if (this.shouldHideCompactTabsHost()) {
+      return
+    }
+    this.compactTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION)
+  }
+
+  private handleSessionListDidScroll(scrollOffset: number, scrollState: ScrollState): void {
+    if (!this.canApplyCompactTabsScrollAnimation() || scrollState === ScrollState.Idle) {
+      this.lastSessionListScrollAt = 0
+      return
+    }
+    const now = Date.now()
+    const elapsed = this.lastSessionListScrollAt > 0 ? Math.max(now - this.lastSessionListScrollAt, 1) : 16
+    this.lastSessionListScrollAt = now
+
+    if (scrollOffset > Index.COMPACT_TABS_HIDE_SCROLL_OFFSET_PX) {
+      this.applyCompactTabsScrollAnimation(false)
+      return
+    }
+    if (scrollOffset >= -Index.COMPACT_TABS_SHOW_SCROLL_OFFSET_PX) {
+      return
+    }
+    const speedPxPerMs = Math.abs(scrollOffset) / elapsed
+    if (speedPxPerMs >= Index.COMPACT_TABS_SHOW_SCROLL_SPEED_PX_PER_MS) {
+      this.applyCompactTabsScrollAnimation(true)
+    }
   }
 
   private handleChatListPaneAreaChange(newArea: Area): void {
@@ -799,6 +891,7 @@ struct Index {
         if (to === 'navBar' || size <= 0) {
           this.currentChatRouteName = ''
           this.chatTabTopSessionId = ''
+          this.showCompactTabsFromNonScrollChange()
           this.refreshSessionListProjection()
           this.loadSessions()
           this.processInAppTaskAlertPayload(this.inAppTaskAlertPayload)
@@ -886,6 +979,7 @@ struct Index {
     this.unregisterAppUiStateObservers()
     this.clearPendingToolInteractionAlertTimer()
     this.clearChatListPaneResizeSaveTimer()
+    this.clearCompactTabsAnimationGuardTimer()
     this.unsubscribeHoldingHand()
     if (this.settingsCallback !== null) {
       this.settingsManager.unregisterCallback(this.settingsCallback)
@@ -1933,7 +2027,11 @@ struct Index {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsTabs({ barPosition: BarPosition.End, index: this.currentTabIndex }) {
+        HdsTabs({
+          barPosition: BarPosition.End,
+          index: this.currentTabIndex,
+          controller: this.compactTabsController
+        }) {
           TabContent() {
             this.AssistantsTab()
           }
@@ -4239,6 +4337,9 @@ struct Index {
             },
             onToggleFavorite: (session: ChatSession): void => {
               this.handleToggleFavoriteSession(session)
+            },
+            onDidScroll: (scrollOffset: number, scrollState: ScrollState): void => {
+              this.handleSessionListDidScroll(scrollOffset, scrollState)
             }
           })
           .width('100%')
@@ -4899,6 +5000,7 @@ struct Index {
   // 进入多选模式
   private handleEnterMultiSelectMode(sessionId: string): void {
     this.isMultiSelectMode = true
+    this.resetCompactTabsScrollState()
     this.selectedSessionIds = [sessionId]
     this.refreshSessionListProjection()
   }

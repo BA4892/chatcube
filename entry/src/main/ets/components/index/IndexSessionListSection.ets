@@ -20,6 +20,8 @@ export struct IndexSessionListSection {
   @Event onEnterMultiSelect: (sessionId: string) => void = (_sessionId: string): void => {}
   @Event onShareSession: (session: ChatSession) => void = (_session: ChatSession): void => {}
   @Event onToggleFavorite: (session: ChatSession) => void = (_session: ChatSession): void => {}
+  @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
+    _scrollState: ScrollState): void => {}
 
   @Builder
   private SessionGroupHeader(groupKey: string, count: number) {
@@ -201,5 +203,8 @@ export struct IndexSessionListSection {
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .cachedCount(4)
+    .onDidScroll((scrollOffset: number, scrollState: ScrollState) => {
+      this.onDidScroll(scrollOffset, scrollState)
+    })
   }
 }
