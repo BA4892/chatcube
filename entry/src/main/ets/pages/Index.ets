@@ -2332,8 +2332,8 @@ struct Index {
   TabBarAssistants() {
     IndexBottomTabItem({
       active: this.isTabActive(Index.TAB_ASSISTANTS),
-      activeIcon: $r('sys.symbol.person_fill'),
-      inactiveIcon: $r('sys.symbol.person'),
+      activeIcon: $r('sys.symbol.person_2_fill'),
+      inactiveIcon: $r('sys.symbol.person_2'),
       label: $r('app.string.tab_assistants')
     })
   }
@@ -3002,7 +3002,7 @@ struct Index {
     if (this.assistants.length === 0) {
       Column() {
         IndexEmptyStateCard({
-          icon: $r('sys.symbol.person'),
+          icon: $r('sys.symbol.person_2'),
           title: $r('app.string.assistant_manage_title'),
           description: $r('app.string.loading')
         })
@@ -4038,7 +4038,7 @@ struct Index {
       if (this.assistants.length === 0) {
         Column() {
           IndexEmptyStateCard({
-            icon: $r('sys.symbol.person'),
+            icon: $r('sys.symbol.person_2'),
             title: $r('app.string.assistant_manage_title'),
             description: $r('app.string.loading')
           })

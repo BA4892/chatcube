@@ -36,6 +36,26 @@ export struct ProviderShareSheet {
     return getAppUiState().themePrimary
   }
 
+  private get themePrimaryLight(): string {
+    return getAppUiState().themePrimaryLight
+  }
+
+  private hasGeneratePrerequisites(): boolean {
+    return this.isPasswordValid() && this.provider !== null
+  }
+
+  private canTapGenerate(): boolean {
+    return this.hasGeneratePrerequisites() && !this.isGenerating
+  }
+
+  private getGenerateButtonBackgroundColor(): ResourceColor {
+    return this.hasGeneratePrerequisites() ? this.themePrimary : this.themePrimaryLight
+  }
+
+  private getGenerateButtonContentColor(): ResourceColor {
+    return this.hasGeneratePrerequisites() ? Color.White : this.themePrimary
+  }
+
   aboutToDisappear(): void {
     this.releaseQrImage()
   }
@@ -314,23 +334,21 @@ export struct ProviderShareSheet {
           LoadingProgress()
             .width(18)
             .height(18)
-            .color(Color.White)
+            .color(this.getGenerateButtonContentColor())
         }
         Text(this.qrImage !== null
           ? $r('app.string.provider_share_regenerate')
           : $r('app.string.provider_share_generate'))
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
+          .fontColor(this.getGenerateButtonContentColor())
       }
     }
     .type(ButtonType.Capsule)
     .width('100%')
     .height(44)
-    .backgroundColor(this.isPasswordValid() && !this.isGenerating
-      ? this.themePrimary
-      : $r('app.color.divider'))
-    .enabled(this.isPasswordValid() && !this.isGenerating && this.provider !== null)
+    .backgroundColor(this.getGenerateButtonBackgroundColor())
+    .enabled(this.canTapGenerate())
     .onClick(() => {
       void this.onTapGenerate()
     })

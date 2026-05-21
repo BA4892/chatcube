@@ -601,8 +601,8 @@ export struct ThemeAppearanceSettingsView {
   private MiniTabBarAssistants() {
     IndexBottomTabItem({
       active: this.previewTabIndex === PREVIEW_TAB_INDEX_ASSISTANTS,
-      activeIcon: $r('sys.symbol.person_fill'),
-      inactiveIcon: $r('sys.symbol.person'),
+      activeIcon: $r('sys.symbol.person_2_fill'),
+      inactiveIcon: $r('sys.symbol.person_2'),
       label: $r('app.string.tab_assistants')
     })
   }

@@ -129,14 +129,14 @@ export struct IndexSettingsPanel {
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.CHAT_INPUT,
-            icon: $r('sys.symbol.textformat'),
+            icon: $r('sys.symbol.keyboard'),
             title: $r('app.string.settings_chat_input'),
             subtitle: $r('app.string.settings_chat_input_desc'),
             action: (): void => { this.onOpenChatInput() }
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.HAND_ADAPTIVE,
-            icon: $r('sys.symbol.person'),
+            icon: $r('sys.symbol.phone_and_hand'),
             title: $r('app.string.settings_hand_adaptive'),
             action: (): void => { this.onOpenHandAdaptive() }
           } as SettingsListItemModel,
@@ -207,7 +207,7 @@ export struct IndexSettingsPanel {
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.ABOUT,
-            icon: $r('sys.symbol.exclamationmark_message'),
+            icon: $r('sys.symbol.info_circle'),
             title: $r('app.string.settings_about_chatcube'),
             subtitle: `v${this.versionName}`,
             action: (): void => { this.onOpenAbout() }
@@ -227,7 +227,7 @@ export struct IndexSettingsPanel {
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.SUPPORT_DEVELOPMENT,
-            icon: $r('sys.symbol.heart_fill'),
+            icon: $r('sys.symbol.flower'),
             title: $r('app.string.settings_support_development'),
             subtitle: $r('app.string.settings_support_development_desc'),
             action: (): void => { this.onOpenSupportDevelopment() }
