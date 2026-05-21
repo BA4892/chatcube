@@ -17,6 +17,7 @@ import { AskUserCard } from './AskUserCard'
 import { HtmlPreviewCard } from './HtmlPreviewCard'
 import { MermaidPreviewCard } from './MermaidPreviewCard'
 import { TypingDots } from './TypingDots'
+import { CubeSpinnerBubble } from './loading/CubeSpinner'
 import { AssistantAvatarView } from './AssistantAvatar'
 import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 import { hilog } from '@kit.PerformanceAnalysisKit'
@@ -1890,27 +1891,11 @@ export struct MessageBubble {
     })
   }
 
-  // 等待 AI 响应的跳动点动画
+  // 等待 AI 响应的立体跳动点动画
   @Builder
   TypingIndicator() {
     Row() {
-      // 三个跳动的点
-      TypingDots({ dotSize: 7, spacing: 5 })
-      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-      .backgroundColor(this.themeAiBubble)
-      .borderRadius({
-        topLeft: 4,
-        topRight: 18,
-        bottomLeft: 18,
-        bottomRight: 18
-      })
-      .clip(true)
-      .shadow({
-        radius: 8,
-        color: 'rgba(0, 0, 0, 0.05)',
-        offsetX: 0,
-        offsetY: 1
-      })
+      CubeSpinnerBubble({ dotSize: 7, spacing: 5 })
     }
     .width('100%')
     .justifyContent(FlexAlign.Start)

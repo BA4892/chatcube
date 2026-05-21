@@ -2,6 +2,7 @@ import { ChatMessage, MessageAttachment } from '../../models/ChatModels'
 import { DraftPreviewBubble } from './DraftPreviewBubble'
 import { shouldShowMessageHeader } from '../../utils/MessageListUtils'
 import { ChatMessageListItem } from './ChatMessageListItem'
+import { CubeSpinner3D } from '../loading/CubeSpinner'
 import {
   buildChatMessageContentRenderSignature,
   buildChatMessageRowRenderSignature,
@@ -380,10 +381,7 @@ export struct ChatMessageListSection {
     Column() {
       if (this.isLoading) {
         Column() {
-          LoadingProgress()
-            .width(48)
-            .height(48)
-            .color(this.loadingColor)
+          CubeSpinner3D({ sizeVp: 80, color: this.loadingColor })
         }
         .width('100%')
         .height('100%')
