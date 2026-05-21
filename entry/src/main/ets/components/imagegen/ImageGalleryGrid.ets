@@ -16,12 +16,13 @@ export struct ImageGalleryGrid {
     if (this.items.length === 0) {
       this.EmptyState()
     } else {
-      // 用 WaterFlow 而不是 Grid: WaterFlow 每列独立流式排列, 避免 Grid 行齐导致的右侧留白
-      // (例如左列一张极窄图拉到 700dp 时, Grid 会让右列同行也是 700dp)
-      WaterFlow() {
+      // 用 Grid (而非 WaterFlow): WaterFlow + Repeat + virtualScroll 实测会出现 FlowItem
+      // 元数据 / 工具栏被裁切丢失的渲染异常。Grid 行齐导致的右侧留白通过
+      // AdaptiveImageThumbnail 的 minAspectRatio 限制极端比例图来缓解 (而不是结构上消除)
+      Grid() {
         Repeat<GeneratedMedia>(this.items)
           .each((obj: RepeatItem<GeneratedMedia>) => {
-            FlowItem() {
+            GridItem() {
               this.MediaCard(obj.item)
             }
           })
