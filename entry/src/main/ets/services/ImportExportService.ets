@@ -270,6 +270,10 @@ interface AttachmentMetadata {
   name: string
   mimeType: string
   size: number
+  processState?: string
+  parseEngine?: string
+  parsedText?: string
+  parseError?: string
 }
 
 // 导入文件数据
@@ -738,7 +742,11 @@ export class ImportExportService {
               type: a.type,
               name: a.name,
               mimeType: a.mimeType,
-              size: a.size
+              size: a.size,
+              processState: a.processState,
+              parseEngine: a.parseEngine,
+              parsedText: a.parsedText,
+              parseError: a.parseError
             }
             metadataList.push(metadata)
           }
@@ -1099,6 +1107,10 @@ export class ImportExportService {
                     attData.mimeType,
                     attData.size
                   )
+                  attachment.processState = attData.processState ?? attachment.processState
+                  attachment.parseEngine = attData.parseEngine ?? ''
+                  attachment.parsedText = attData.parsedText ?? ''
+                  attachment.parseError = attData.parseError ?? ''
 
                   const savedPath = await this.attachmentService.importExistingAttachment(srcPath, attachment)
                   attachment.filePath = savedPath

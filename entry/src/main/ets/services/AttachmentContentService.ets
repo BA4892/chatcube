@@ -89,6 +89,11 @@ const DOCUMENT_FILE_TYPES: AttachmentFileTypeDefinition[] = [
     ['.docx'],
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   ),
+  new AttachmentFileTypeDefinition(['.xls'], 'application/vnd.ms-excel'),
+  new AttachmentFileTypeDefinition(
+    ['.xlsx'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ),
   new AttachmentFileTypeDefinition(['.txt'], 'text/plain', PLAIN_TEXT_EXTRACTOR_ID),
   new AttachmentFileTypeDefinition(['.md', '.markdown', '.mdx'], 'text/markdown', PLAIN_TEXT_EXTRACTOR_ID),
   new AttachmentFileTypeDefinition(['.csv'], 'text/csv', PLAIN_TEXT_EXTRACTOR_ID),
@@ -183,10 +188,16 @@ export class AttachmentContentService {
   }
 
   static canExtractInlineText(attachment: MessageAttachment): boolean {
+    if (attachment.parsedText !== '') {
+      return true
+    }
     return AttachmentContentService.findTextExtractorForAttachment(attachment) !== null
   }
 
   static extractInlineText(attachment: MessageAttachment): AttachmentTextExtractionResult | null {
+    if (attachment.parsedText !== '') {
+      return new AttachmentTextExtractionResult(attachment.parsedText, false, attachment.parsedText.length)
+    }
     if (attachment.base64Data === '') {
       return null
     }
@@ -222,9 +233,6 @@ export class AttachmentContentService {
     const sections: string[] = []
     for (let i = 0; i < attachments.length; i++) {
       const attachment = attachments[i]
-      if (attachment.base64Data === '') {
-        continue
-      }
       const extractionResult = AttachmentContentService.extractInlineText(attachment)
       if (extractionResult === null || extractionResult.text === '') {
         continue

@@ -94,12 +94,12 @@ export class RequestMessage {
 
   // 检查是否包含任何附件（图片或文件）
   hasAttachments(): boolean {
-    return this.attachments.length > 0 && this.attachments.some(a => a.base64Data !== '')
+    return this.attachments.length > 0 && this.attachments.some(a => a.base64Data !== '' || a.parsedText !== '')
   }
 
   // 检查是否包含文件（非图片）
   hasFiles(): boolean {
-    return this.attachments.some(a => a.type === AttachmentType.FILE && a.base64Data !== '')
+    return this.attachments.some(a => a.type === AttachmentType.FILE && (a.base64Data !== '' || a.parsedText !== ''))
   }
 
   // 检查是否是工具结果消息

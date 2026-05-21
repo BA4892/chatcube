@@ -79,6 +79,10 @@ interface DraftAttachmentJsonData {
   filePath: string
   mimeType: string
   size: number
+  processState?: string
+  parseEngine?: string
+  parsedText?: string
+  parseError?: string
 }
 
 // 数据库服务 - 单例模式
@@ -263,6 +267,10 @@ export class DatabaseService {
         file_path TEXT,
         mime_type TEXT,
         size INTEGER,
+        process_state TEXT DEFAULT 'idle',
+        parse_engine TEXT DEFAULT '',
+        parsed_text TEXT DEFAULT '',
+        parse_error TEXT DEFAULT '',
         FOREIGN KEY (message_id) REFERENCES ${TableNames.MESSAGES}(id)
       )
     `
@@ -331,6 +339,7 @@ export class DatabaseService {
       await this.addOpenAITransportColumnIfNeeded()
       await this.addProviderCustomHeadersColumnIfNeeded()
       await this.addProviderRequiresApiKeyColumnIfNeeded()
+      await this.addAttachmentParseColumnsIfNeeded()
       // 尝试添加同步相关字段（为 WebDAV 同步预留）
       await this.addSyncColumnsIfNeeded()
       // 尝试添加会话元信息字段（用于会话列表增强）
@@ -685,6 +694,32 @@ export class DatabaseService {
 	    }
 	  }
 
+  private async addAttachmentParseColumnsIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ATTACHMENTS} ADD COLUMN process_state TEXT DEFAULT 'idle'`)
+    } catch (error) {
+      console.info('DatabaseService', 'process_state column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ATTACHMENTS} ADD COLUMN parse_engine TEXT DEFAULT ''`)
+    } catch (error) {
+      console.info('DatabaseService', 'parse_engine column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ATTACHMENTS} ADD COLUMN parsed_text TEXT DEFAULT ''`)
+    } catch (error) {
+      console.info('DatabaseService', 'parsed_text column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.ATTACHMENTS} ADD COLUMN parse_error TEXT DEFAULT ''`)
+    } catch (error) {
+      console.info('DatabaseService', 'parse_error column may already exist')
+    }
+  }
+
 	  private assistantToValueBucket(assistant: Assistant, includeId: boolean = true): relationalStore.ValuesBucket {
 	    const now = Date.now()
 	    if (assistant.updatedAt <= 0) {
@@ -960,7 +995,11 @@ export class DatabaseService {
         name: attachments[i].name,
         filePath: attachments[i].filePath,
         mimeType: attachments[i].mimeType,
-        size: attachments[i].size
+        size: attachments[i].size,
+        processState: attachments[i].processState,
+        parseEngine: attachments[i].parseEngine,
+        parsedText: attachments[i].parsedText,
+        parseError: attachments[i].parseError
       })
     }
     return JSON.stringify(serialized)
@@ -974,16 +1013,19 @@ export class DatabaseService {
       const parsed = JSON.parse(raw) as DraftAttachmentJsonData[]
       const attachments: MessageAttachment[] = []
       for (let i = 0; i < parsed.length; i++) {
-        attachments.push(
-          new MessageAttachment(
-            parsed[i].id,
-            parsed[i].type === AttachmentType.IMAGE ? AttachmentType.IMAGE : AttachmentType.FILE,
-            parsed[i].name,
-            parsed[i].filePath,
-            parsed[i].mimeType,
-            parsed[i].size
-          )
+        const attachment = new MessageAttachment(
+          parsed[i].id,
+          parsed[i].type === AttachmentType.IMAGE ? AttachmentType.IMAGE : AttachmentType.FILE,
+          parsed[i].name,
+          parsed[i].filePath,
+          parsed[i].mimeType,
+          parsed[i].size
         )
+        attachment.processState = parsed[i].processState ?? attachment.processState
+        attachment.parseEngine = parsed[i].parseEngine ?? ''
+        attachment.parsedText = parsed[i].parsedText ?? ''
+        attachment.parseError = parsed[i].parseError ?? ''
+        attachments.push(attachment)
       }
       return attachments
     } catch (error) {
@@ -1793,11 +1835,7 @@ export class DatabaseService {
     await this.refreshSessionSummary(sessionId)
   }
 
-  // 添加附件
-  private async addAttachment(messageId: string, attachment: MessageAttachment): Promise<void> {
-    if (this.rdbStore === null) {
-      return
-    }
+  private buildAttachmentValueBucket(messageId: string, attachment: MessageAttachment): relationalStore.ValuesBucket {
     const valueBucket: relationalStore.ValuesBucket = {
       id: attachment.id,
       message_id: messageId,
@@ -1805,8 +1843,21 @@ export class DatabaseService {
       name: attachment.name,
       file_path: attachment.filePath,
       mime_type: attachment.mimeType,
-      size: attachment.size
+      size: attachment.size,
+      process_state: attachment.processState,
+      parse_engine: attachment.parseEngine,
+      parsed_text: attachment.parsedText,
+      parse_error: attachment.parseError
     }
+    return valueBucket
+  }
+
+  // 添加附件
+  private async addAttachment(messageId: string, attachment: MessageAttachment): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    const valueBucket = this.buildAttachmentValueBucket(messageId, attachment)
     try {
       await this.rdbStore.insert(TableNames.ATTACHMENTS, valueBucket)
     } catch (error) {
@@ -1835,6 +1886,7 @@ export class DatabaseService {
           resultSet.getString(resultSet.getColumnIndex('mime_type')),
           resultSet.getLong(resultSet.getColumnIndex('size'))
         )
+        this.applyAttachmentParseFields(resultSet, attachment)
         attachments.push(attachment)
       }
       resultSet.close()
@@ -1870,6 +1922,7 @@ export class DatabaseService {
             resultSet.getString(resultSet.getColumnIndex('mime_type')),
             resultSet.getLong(resultSet.getColumnIndex('size'))
           )
+          this.applyAttachmentParseFields(resultSet, attachment)
           const existing = attachmentsMap.get(messageId)
           if (existing !== undefined) {
             existing.push(attachment)
@@ -2081,15 +2134,7 @@ export class DatabaseService {
       // 2. 插入新的附件
       for (let i = 0; i < attachments.length; i++) {
         const attachment = attachments[i]
-        const valueBucket: relationalStore.ValuesBucket = {
-          id: attachment.id,
-          message_id: messageId,
-          type: attachment.type,
-          name: attachment.name,
-          file_path: attachment.filePath,
-          mime_type: attachment.mimeType,
-          size: attachment.size
-        }
+        const valueBucket = this.buildAttachmentValueBucket(messageId, attachment)
         await this.rdbStore.insert(TableNames.ATTACHMENTS, valueBucket)
       }
       console.info('DatabaseService', `Updated attachments for message ${messageId}: ${attachments.length} attachments`)
@@ -2716,6 +2761,13 @@ export class DatabaseService {
     } catch (_error) {
       return defaultValue
     }
+  }
+
+  private applyAttachmentParseFields(resultSet: relationalStore.ResultSet, attachment: MessageAttachment): void {
+    attachment.processState = this.safeGetString(resultSet, 'process_state', attachment.processState)
+    attachment.parseEngine = this.safeGetString(resultSet, 'parse_engine')
+    attachment.parsedText = this.safeGetString(resultSet, 'parsed_text')
+    attachment.parseError = this.safeGetString(resultSet, 'parse_error')
   }
 
   // ==================== 使用统计聚合查询 ====================

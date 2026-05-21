@@ -1,5 +1,5 @@
 import { getModelIconPath, buildIconResourcePath, isNetworkIconPath, isSandboxIconPath } from '../utils/ProviderIconUtils'
-import { MessageAttachment, AttachmentType } from '../models/ChatModels'
+import { AttachmentProcessState, MessageAttachment, AttachmentType } from '../models/ChatModels'
 import {
   BaseItemInfo,
   PhotoSource,
@@ -7,9 +7,6 @@ import {
   RecentPhotoOptions,
   photoAccessHelper
 } from '@kit.MediaLibraryKit'
-import { fileIo } from '@kit.CoreFileKit'
-import { util } from '@kit.ArkTS'
-import { getAttachmentStorageService } from '../services/AttachmentStorageService'
 import { getAppUiState } from '../state/AppUiState'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
@@ -93,7 +90,6 @@ export struct ChatInputBar {
   private lastHasContent: boolean = false
   private breatheTimerId: number = -1
   // 焦点控制器
-  private focusController: TextAreaController = new TextAreaController()
 
   private getCurrentModelIconPath(): string {
     if (this.currentModelId === '' || this.currentProviderId === '') {
@@ -298,6 +294,7 @@ export struct ChatInputBar {
         .width(40)
         .height(40)
         .backgroundColor(this.themeUserBubble)
+        .opacity(this.getSendButtonOpacity())
         .shadow({
           radius: this.sendBtnPressed ? 24 : 16,
           color: this.themeUserBubble + (this.sendBtnPressed ? '66' : '40'),
@@ -384,7 +381,7 @@ export struct ChatInputBar {
   HiddenRecentPhotoDetector() {
     RecentPhotoComponent({
       recentPhotoOptions: this.recentPhotoOptions,
-      onRecentPhotoClick: (info: BaseItemInfo): boolean => {
+      onRecentPhotoClick: (_info: BaseItemInfo): boolean => {
         // 无需处理，我们使用自定义UI
         return true
       },
@@ -415,7 +412,7 @@ export struct ChatInputBar {
         // 文件预览
         Column() {
           SymbolGlyph($r('sys.symbol.doc'))
-            .fontSize(24)
+            .fontSize(22)
             .fontColor([$r('app.color.text_secondary')])
 
           Text(attachment.name)
@@ -423,10 +420,20 @@ export struct ChatInputBar {
             .fontColor($r('app.color.text_tertiary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ maxWidth: 50 })
+            .constraintSize({ maxWidth: 58 })
+
+          if (this.getAttachmentStatusText(attachment) !== '') {
+            Text(this.getAttachmentStatusText(attachment))
+              .fontSize(9)
+              .fontColor(this.getAttachmentStatusColor(attachment))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 2 })
+              .constraintSize({ maxWidth: 58 })
+          }
         }
-        .width(60)
-        .height(60)
+        .width(72)
+        .height(72)
         .borderRadius(8)
         .backgroundColor(this.themeBackground)
         .justifyContent(FlexAlign.Center)
@@ -527,6 +534,64 @@ export struct ChatInputBar {
 
   private computeHasContent(): boolean {
     return this.inputText.trim() !== '' || this.attachments.length > 0
+  }
+
+  private computeHasBlockingAttachments(): boolean {
+    for (let i = 0; i < this.attachments.length; i++) {
+      if (this.isAttachmentBlocking(this.attachments[i])) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private isAttachmentBlocking(attachment: MessageAttachment): boolean {
+    return attachment.processState === AttachmentProcessState.COPYING ||
+      attachment.processState === AttachmentProcessState.QUEUED ||
+      attachment.processState === AttachmentProcessState.PARSING ||
+      attachment.processState === AttachmentProcessState.PARSE_FAILED ||
+      attachment.processState === AttachmentProcessState.TOO_LARGE ||
+      attachment.processState === AttachmentProcessState.PASSWORD_REQUIRED
+  }
+
+  private getAttachmentStatusText(attachment: MessageAttachment): string {
+    if (attachment.processState === AttachmentProcessState.QUEUED ||
+      attachment.processState === AttachmentProcessState.PARSING ||
+      attachment.processState === AttachmentProcessState.COPYING) {
+      return '解析中'
+    }
+    if (attachment.processState === AttachmentProcessState.PARSED) {
+      return '已解析'
+    }
+    if (attachment.processState === AttachmentProcessState.PARSE_FAILED) {
+      return '解析失败'
+    }
+    if (attachment.processState === AttachmentProcessState.TOO_LARGE) {
+      return '过大'
+    }
+    if (attachment.processState === AttachmentProcessState.PASSWORD_REQUIRED) {
+      return '加密'
+    }
+    return ''
+  }
+
+  private getAttachmentStatusColor(attachment: MessageAttachment): ResourceColor {
+    if (attachment.processState === AttachmentProcessState.PARSED) {
+      return '#2E7D32'
+    }
+    if (attachment.processState === AttachmentProcessState.QUEUED ||
+      attachment.processState === AttachmentProcessState.PARSING ||
+      attachment.processState === AttachmentProcessState.COPYING) {
+      return this.themePrimary
+    }
+    return '#C62828'
+  }
+
+  private getSendButtonOpacity(): number {
+    if (!this.isSending && this.computeHasBlockingAttachments()) {
+      return 0.45
+    }
+    return 1
   }
 
   private getSendButtonSymbol(): Resource {

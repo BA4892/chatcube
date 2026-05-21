@@ -131,16 +131,20 @@ export class ChatPageLoadFlow {
   private cloneDraftAttachments(attachments: MessageAttachment[]): MessageAttachment[] {
     const cloned: MessageAttachment[] = []
     for (let i = 0; i < attachments.length; i++) {
-      cloned.push(
-        new MessageAttachment(
-          attachments[i].id,
-          attachments[i].type,
-          attachments[i].name,
-          attachments[i].filePath,
-          attachments[i].mimeType,
-          attachments[i].size
-        )
+      const attachment = new MessageAttachment(
+        attachments[i].id,
+        attachments[i].type,
+        attachments[i].name,
+        attachments[i].filePath,
+        attachments[i].mimeType,
+        attachments[i].size
       )
+      attachment.base64Data = attachments[i].base64Data
+      attachment.processState = attachments[i].processState
+      attachment.parseEngine = attachments[i].parseEngine
+      attachment.parsedText = attachments[i].parsedText
+      attachment.parseError = attachments[i].parseError
+      cloned.push(attachment)
     }
     return cloned
   }

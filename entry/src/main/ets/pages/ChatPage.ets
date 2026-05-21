@@ -18,6 +18,7 @@ import {
   ModelInfo,
   ModelInfoExtendedJson,
   MessageAttachment,
+  AttachmentProcessState,
   ReasoningLevel,
   ModelRole,
   ToolCall,
@@ -106,6 +107,7 @@ import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { getSearchToolIds, isSearchToolFunctionName, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
 import { savePreviewImageToAlbum } from '../utils/ImagePreviewSaveUtil'
+import { DocumentParsePolicy, DocumentParseResult, WebDocumentParserService } from '../services/DocumentParseService'
 
 const DOMAIN = 0x0003
 const TAG = 'ChatPage'
@@ -168,6 +170,11 @@ export struct ChatPage {
   @Local showAttachmentPicker: boolean = false
   @Local attachmentPanelHeightVp: number = 0
   private readonly ATTACHMENT_PANEL_EXPANDED_HEIGHT: number = 130
+  private documentParserWebController: webview.WebviewController = new webview.WebviewController()
+  private documentParserService: WebDocumentParserService = new WebDocumentParserService()
+  private documentParseQueue: MessageAttachment[] = []
+  private isDocumentParseQueueRunning: boolean = false
+  private documentParseEpoch: number = 0
   // 是否在列表底部
   @Local isAtBottom: boolean = false
   // 是否在列表顶部
@@ -365,6 +372,7 @@ export struct ChatPage {
   }
 
   aboutToAppear(): void {
+    this.documentParserService.attachController(this.documentParserWebController)
     if (this.routeParams === null && this.routeParamsSeed !== null) {
       this.routeParams = this.routeParamsSeed
       this.applyRouteDisplaySeed(this.routeParamsSeed)
@@ -509,6 +517,7 @@ export struct ChatPage {
   aboutToDisappear(): void {
     this.isPageVisible = false
     this.closeActiveChatImagePreview(false)
+    this.resetDocumentParseQueue()
     // 释放TTS资源
     this.ttsService.destroy()
     this.clearInitialBottomAlignmentRetries()
@@ -611,7 +620,9 @@ export struct ChatPage {
     this.reasoningLevel = loadResult.reasoningLevel
     // initialDraft(来自推荐提示词点击)优先于持久化 draftText, 仅 prefill 不自动发送
     this.inputText = loadResult.pendingInitialDraft !== '' ? loadResult.pendingInitialDraft : loadResult.draftText
+    this.resetDocumentParseQueue()
     this.pendingAttachments = [...loadResult.draftAttachments]
+    this.preparePendingDocumentAttachments()
     this.isNewChatTransition = loadResult.isNewChatTransition
     this.isNewEmptySession = loadResult.isNewEmptySession
     this.applyAssistantSnapshot(loadResult.assistantId, loadResult.assistantAvatarSymbol, loadResult.assistantColor)
@@ -775,6 +786,7 @@ export struct ChatPage {
     if (this.isLoading || this.sessionId === '') {
       return
     }
+    this.preparePendingDocumentAttachments()
     this.refreshToolAvailabilityOnShown()
     this.syncSendingStateFromRuntime()
     this.fixInconsistentState()
@@ -1577,6 +1589,7 @@ export struct ChatPage {
       onClearComposer: (): void => {
         this.clearDraftAutosaveTimer()
         this.inputText = ''
+        this.resetDocumentParseQueue()
         this.pendingAttachments = []
       },
       onBeforeSend: (): void => {
@@ -1702,7 +1715,9 @@ export struct ChatPage {
         reasoningLevel: ReasoningLevel
       ): void => {
         this.inputText = content
+        this.resetDocumentParseQueue()
         this.pendingAttachments = [...attachments]
+        this.preparePendingDocumentAttachments()
         this.webSearchConversationEnabled = this.isWebSearchReady() && webSearchEnabled
         this.applySelectedToolIdsInMemory(selectedToolIds)
         this.reasoningLevel = this.normalizeReasoningLevelForCurrentModel(reasoningLevel)
@@ -1715,7 +1730,9 @@ export struct ChatPage {
         reasoningLevel: ReasoningLevel
       ): Promise<void> => {
         this.inputText = content
+        this.resetDocumentParseQueue()
         this.pendingAttachments = [...attachments]
+        this.preparePendingDocumentAttachments()
         this.webSearchConversationEnabled = this.isWebSearchReady() && webSearchEnabled
         this.applySelectedToolIdsInMemory(selectedToolIds)
         this.reasoningLevel = this.normalizeReasoningLevelForCurrentModel(reasoningLevel)
@@ -2247,6 +2264,25 @@ export struct ChatPage {
           .height('100%')
           .backgroundColor(this.themeBackground)
 
+        Web({ src: DocumentParsePolicy.WEB_PARSER_URL, controller: this.documentParserWebController })
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -2, y: -2 })
+          .hitTestBehavior(HitTestMode.None)
+          .onControllerAttached(() => {
+            this.documentParserService.attachController(this.documentParserWebController)
+          })
+          .onPageEnd(() => {
+            this.documentParserService.markReady()
+            if (this.isPageVisible) {
+              this.preparePendingDocumentAttachments()
+            }
+          })
+          .javaScriptAccess(true)
+          .fileAccess(false)
+          .backgroundColor(Color.Transparent)
+
         // 编辑模式覆盖层 - 点击/滑动空白处都取消编辑
         // 滑动不再传透给 List,List 不会跟随滚动(已与产品确认)
         if (this.isEditingMessage) {
@@ -2313,7 +2349,7 @@ export struct ChatPage {
               },
               attachments: this.pendingAttachments,
               onAttachmentsChange: (value: MessageAttachment[]): void => {
-                this.pendingAttachments = [...value]
+                this.handleComposerAttachmentsChange(value)
               },
               isSending: this.isSending,
               isAwaitingResponse: this.calcIsAwaitingAiOutput(),
@@ -2597,6 +2633,7 @@ export struct ChatPage {
     })
     .onHidden(() => {
       this.isPageVisible = false
+      this.resetDocumentParseQueue()
       this.closeActiveChatImagePreview(false)
       if (this.isMultiSelectMode) {
         this.handleExitMultiSelectMode()
@@ -3067,7 +3104,238 @@ export struct ChatPage {
     }
     // 触发数组更新，便于子组件监听并驱动发送按钮动效
     this.pendingAttachments = [...this.pendingAttachments]
+    this.preparePendingDocumentAttachments()
     this.closeAttachmentPanel()
+  }
+
+  private handleComposerAttachmentsChange(attachments: MessageAttachment[]): void {
+    this.resetDocumentParseQueue()
+    this.pendingAttachments = [...attachments]
+    this.preparePendingDocumentAttachments()
+  }
+
+  private resetDocumentParseQueue(): void {
+    this.documentParseEpoch = this.documentParseEpoch + 1
+    this.documentParseQueue.splice(0, this.documentParseQueue.length)
+    this.documentParserService.cancelCurrentParse().catch((error: Error): void => {
+      console.warn('ChatPage', `Cancel document parse failed: ${JSON.stringify(error)}`)
+    })
+    let changed = false
+    for (let i = 0; i < this.pendingAttachments.length; i++) {
+      const attachment = this.pendingAttachments[i]
+      if (attachment.parsedText !== '') {
+        continue
+      }
+      if (attachment.processState === AttachmentProcessState.QUEUED ||
+        attachment.processState === AttachmentProcessState.PARSING ||
+        attachment.processState === AttachmentProcessState.COPYING) {
+        attachment.processState = AttachmentProcessState.IDLE
+        attachment.parseError = ''
+        changed = true
+      }
+    }
+    if (changed) {
+      this.refreshPendingAttachments()
+    }
+  }
+
+  private preparePendingDocumentAttachments(): void {
+    if (!this.isPageVisible) {
+      return
+    }
+    for (let i = 0; i < this.pendingAttachments.length; i++) {
+      this.prepareAttachmentForParsing(this.pendingAttachments[i])
+    }
+  }
+
+  private prepareAttachmentForParsing(attachment: MessageAttachment): void {
+    if (!DocumentParsePolicy.isWebParseCandidate(attachment)) {
+      return
+    }
+    if (attachment.parsedText !== '') {
+      if (attachment.processState !== AttachmentProcessState.PARSED) {
+        attachment.processState = AttachmentProcessState.PARSED
+        this.refreshPendingAttachments()
+      }
+      return
+    }
+    const hardLimit = DocumentParsePolicy.getHardLimitBytes(attachment)
+    if (hardLimit > 0 && attachment.size > hardLimit) {
+      attachment.processState = AttachmentProcessState.TOO_LARGE
+      attachment.parseError = `文件大小超过 ${Math.floor(hardLimit / 1024 / 1024)}MB`
+      this.refreshPendingAttachments()
+      return
+    }
+    if (attachment.processState === AttachmentProcessState.QUEUED ||
+      attachment.processState === AttachmentProcessState.PARSING ||
+      attachment.processState === AttachmentProcessState.PARSED ||
+      attachment.processState === AttachmentProcessState.PARSE_FAILED ||
+      attachment.processState === AttachmentProcessState.PASSWORD_REQUIRED ||
+      attachment.processState === AttachmentProcessState.TOO_LARGE) {
+      return
+    }
+    attachment.processState = AttachmentProcessState.QUEUED
+    attachment.parseEngine = ''
+    attachment.parseError = ''
+    this.refreshPendingAttachments()
+    this.enqueueDocumentParse(attachment)
+  }
+
+  private enqueueDocumentParse(attachment: MessageAttachment): void {
+    for (let i = 0; i < this.documentParseQueue.length; i++) {
+      if (this.documentParseQueue[i] === attachment) {
+        return
+      }
+    }
+    this.documentParseQueue.push(attachment)
+    this.runDocumentParseQueue()
+  }
+
+  private async runDocumentParseQueue(): Promise<void> {
+    if (this.isDocumentParseQueueRunning) {
+      return
+    }
+    this.isDocumentParseQueueRunning = true
+    const epoch = this.documentParseEpoch
+    try {
+      while (this.documentParseQueue.length > 0) {
+        if (epoch !== this.documentParseEpoch) {
+          break
+        }
+        const attachment = this.documentParseQueue.shift()
+        if (attachment === undefined || !this.isPendingAttachmentActive(attachment)) {
+          continue
+        }
+        await this.parsePendingAttachment(attachment, epoch)
+      }
+    } finally {
+      this.isDocumentParseQueueRunning = false
+      if (this.documentParseQueue.length > 0) {
+        this.runDocumentParseQueue()
+      }
+    }
+  }
+
+  private async parsePendingAttachment(attachment: MessageAttachment, epoch: number): Promise<void> {
+    if (epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)) {
+      return
+    }
+    attachment.processState = AttachmentProcessState.PARSING
+    attachment.parseError = ''
+    this.refreshPendingAttachments()
+
+    try {
+      const cancelChecker = (): boolean => {
+        return epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)
+      }
+      this.documentParserService.cancelChecker = cancelChecker
+      const result = await this.documentParserService.parseAttachment(attachment)
+      if (epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)) {
+        return
+      }
+      this.applyDocumentParseResult(attachment, result)
+    } catch (error) {
+      if (epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)) {
+        return
+      }
+      attachment.processState = AttachmentProcessState.PARSE_FAILED
+      attachment.parseError = this.normalizeDocumentParseError(this.stringifyDocumentParseError(error))
+      this.refreshPendingAttachments()
+    } finally {
+      this.documentParserService.cancelChecker = null
+    }
+  }
+
+  private applyDocumentParseResult(attachment: MessageAttachment, result: DocumentParseResult): void {
+    if (result.success && result.text.trim() !== '') {
+      attachment.processState = AttachmentProcessState.PARSED
+      attachment.parsedText = result.text
+      attachment.parseEngine = result.engine
+      attachment.parseError = result.warning
+      this.refreshPendingAttachments()
+      return
+    }
+    const error = result.success ? '未提取到可用文本' : result.error
+    if (this.isPasswordProtectedParseError(error)) {
+      attachment.processState = AttachmentProcessState.PASSWORD_REQUIRED
+      attachment.parseError = '文件可能已加密'
+    } else {
+      attachment.processState = AttachmentProcessState.PARSE_FAILED
+      attachment.parseError = this.normalizeDocumentParseError(error)
+    }
+    this.refreshPendingAttachments()
+  }
+
+  private isPendingAttachmentActive(attachment: MessageAttachment): boolean {
+    for (let i = 0; i < this.pendingAttachments.length; i++) {
+      const current = this.pendingAttachments[i]
+      if (current === attachment) {
+        return true
+      }
+      if (current.id === attachment.id &&
+        current.filePath === attachment.filePath &&
+        current.name === attachment.name) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private refreshPendingAttachments(): void {
+    this.pendingAttachments = [...this.pendingAttachments]
+  }
+
+  private isPasswordProtectedParseError(error: string): boolean {
+    const normalized = error.toLowerCase()
+    return normalized.includes('password') ||
+      normalized.includes('encrypted') ||
+      normalized.includes('加密')
+  }
+
+  private normalizeDocumentParseError(error: string): string {
+    const normalized = error.trim()
+    if (normalized === '' || normalized === 'undefined' || normalized === 'null') {
+      return '未知错误'
+    }
+    if (normalized.includes('document_parser_not_ready')) {
+      return '解析沙箱未就绪'
+    }
+    if (normalized.includes('empty_file_data')) {
+      return '文件内容为空'
+    }
+    if (normalized.includes('unsupported_file_type')) {
+      return '暂不支持该文件类型'
+    }
+    if (normalized.length > 80) {
+      return normalized.substring(0, 80)
+    }
+    return normalized
+  }
+
+  private stringifyDocumentParseError(error: Object): string {
+    const text = `${error}`.trim()
+    if (text !== '' && text !== '[object Object]') {
+      return text
+    }
+    try {
+      return JSON.stringify(error)
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  private getAttachmentBlockingReason(): string {
+    this.preparePendingDocumentAttachments()
+    return DocumentParsePolicy.getBlockingReason(this.pendingAttachments)
+  }
+
+  private guardAttachmentReadyForSend(): boolean {
+    const blockingReason = this.getAttachmentBlockingReason()
+    if (blockingReason === '') {
+      return true
+    }
+    this.showChatSnack(blockingReason, 2500, SnackBarTone.DEFAULT)
+    return false
   }
 
   // 切换附件面板
@@ -3157,7 +3425,9 @@ export struct ChatPage {
     }
     try {
       const inputMethodController = inputMethod.getController()
-      inputMethodController.stopInputSession()
+      inputMethodController.stopInputSession().catch((error: Error): void => {
+        console.error('ChatPage', `Stop input session failed: ${JSON.stringify(error)}`)
+      })
     } catch (error) {
       console.error('ChatPage', `Stop input session failed: ${JSON.stringify(error)}`)
     }
@@ -3487,6 +3757,9 @@ export struct ChatPage {
     if (this.isSendDispatching || this.isSending) {
       return
     }
+    if (!this.guardAttachmentReadyForSend()) {
+      return
+    }
     this.isSendDispatching = true
     try {
       const prepareResult = this.getSendFlow().prepareSendRequest(
@@ -3560,6 +3833,7 @@ export struct ChatPage {
       this.titleGenerateFailed = false
     }
     this.inputText = savedContent
+    this.resetDocumentParseQueue()
     this.pendingAttachments = savedAttachments
     this.handleSend()
   }
@@ -3787,6 +4061,7 @@ export struct ChatPage {
     this.isNewChatTransition = true
     this.routeParams = {} as ChatPageRouteParams
     this.inputText = ''
+    this.resetDocumentParseQueue()
     this.pendingAttachments = []
     // 清空当前消息
     this.clearMessages()
@@ -3867,7 +4142,9 @@ export struct ChatPage {
     this.editingMessageId = message.id
     this.editingMessageIsUser = message.role === MessageRole.USER
     this.inputText = message.content
+    this.resetDocumentParseQueue()
     this.pendingAttachments = [...message.attachments]
+    this.preparePendingDocumentAttachments()
     const messageIndex = findMessageIndexById(this.messages, message.id)
     const toolContext = messageIndex >= 0 ?
       this.resolveEditedMessageToolContext(messageIndex) :
@@ -3898,6 +4175,7 @@ export struct ChatPage {
   private handleCancelEdit(): void {
     // 恢复原始内容
     this.inputText = ''
+    this.resetDocumentParseQueue()
     this.pendingAttachments = []
 
     // 退出编辑模式
@@ -3916,6 +4194,9 @@ export struct ChatPage {
 
   // 内联编辑模式：保存并发送
   private async handleSaveAndSendInline(): Promise<void> {
+    if (!this.guardAttachmentReadyForSend()) {
+      return
+    }
     this.stopActiveGenerationBeforeMessageRewrite()
     await this.getInlineEditFlow().saveAndSendInline(
       this.editingMessageId,

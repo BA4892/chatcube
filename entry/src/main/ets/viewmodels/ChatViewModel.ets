@@ -250,12 +250,19 @@ export class ChatViewModel {
         attachments[i].size
       )
       attachment.base64Data = attachments[i].base64Data
+      attachment.processState = attachments[i].processState
+      attachment.parseEngine = attachments[i].parseEngine
+      attachment.parsedText = attachments[i].parsedText
+      attachment.parseError = attachments[i].parseError
       cloned.push(attachment)
     }
     return cloned
   }
 
   private async ensureAttachmentBase64Data(attachment: MessageAttachment): Promise<boolean> {
+    if (attachment.parsedText !== '') {
+      return true
+    }
     if (attachment.base64Data !== '') {
       return true
     }
@@ -3427,6 +3434,9 @@ ${limitedSearchContext}
 
         for (let j = 0; j < msg.attachments.length; j++) {
           const att = msg.attachments[j]
+          if (att.parsedText !== '') {
+            continue
+          }
           if (att.base64Data !== '') {
             continue
           }

@@ -1,0 +1,253 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document Parser</title>
+  <script src="./xlsx.full.min.js"></script>
+  <script src="./mammoth.browser.min.js"></script>
+  <script src="./pdf.min.js"></script>
+</head>
+<body>
+<script>
+  (function () {
+    const MAX_PDF_PAGES = 200;
+    let currentTask = null;
+    let chunks = [];
+    let currentResult = "";
+    let isParsing = false;
+    let parseToken = 0;
+
+    function extensionOf(fileName) {
+      const index = fileName.lastIndexOf(".");
+      return index >= 0 ? fileName.substring(index).toLowerCase() : "";
+    }
+
+    function bytesFromBase64(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    function truncateText(text, maxChars) {
+      if (!text) {
+        return { text: "", truncated: false };
+      }
+      if (text.length <= maxChars) {
+        return { text, truncated: false };
+      }
+      return {
+        text: text.substring(0, maxChars) + "\n\n[内容已截断，仅包含前 " + maxChars + " 个字符]",
+        truncated: true
+      };
+    }
+
+    function success(engine, text, task, warning) {
+      const truncated = truncateText(text, task.maxChars || 120000);
+      return JSON.stringify({
+        success: true,
+        engine,
+        text: truncated.text,
+        warning: warning || "",
+        truncated: truncated.truncated
+      });
+    }
+
+    function failure(engine, error) {
+      const message = error && error.message ? error.message : String(error || "unknown_error");
+      return JSON.stringify({
+        success: false,
+        engine,
+        error: message
+      });
+    }
+
+    function normalizeCellValue(value) {
+      if (value === undefined || value === null) {
+        return "";
+      }
+      return String(value).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+    }
+
+    function worksheetToMarkdown(name, worksheet) {
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, blankrows: false });
+      const lines = ["## Sheet: " + name, ""];
+      const maxRows = Math.min(rows.length, 10000);
+      for (let r = 0; r < maxRows; r++) {
+        const row = rows[r] || [];
+        const values = [];
+        for (let c = 0; c < row.length; c++) {
+          values.push(normalizeCellValue(row[c]).replace(/\|/g, "\\|"));
+        }
+        if (values.join("").trim() !== "") {
+          lines.push("| " + values.join(" | ") + " |");
+        }
+      }
+      if (rows.length > maxRows) {
+        lines.push("");
+        lines.push("[Sheet 行数过多，仅解析前 " + maxRows + " 行]");
+      }
+      return lines.join("\n");
+    }
+
+    function ensureActive(token) {
+      if (token !== parseToken) {
+        throw new Error("canceled");
+      }
+    }
+
+    function parseWorkbook(bytes, task, token) {
+      ensureActive(token);
+      const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
+      ensureActive(token);
+      const sheetNames = workbook.SheetNames || [];
+      const maxSheets = Math.min(sheetNames.length, 20);
+      const sections = [];
+      for (let i = 0; i < maxSheets; i++) {
+        ensureActive(token);
+        const name = sheetNames[i];
+        sections.push(worksheetToMarkdown(name, workbook.Sheets[name]));
+      }
+      let warning = "";
+      if (sheetNames.length > maxSheets) {
+        warning = "工作表数量过多，仅解析前 " + maxSheets + " 个";
+      }
+      return success("sheetjs", sections.join("\n\n"), task, warning);
+    }
+
+    async function parseDocx(bytes, task, token) {
+      ensureActive(token);
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      ensureActive(token);
+      const warning = (result.messages || []).map(item => item.message || "").filter(Boolean).join("\n");
+      return success("mammoth", result.value || "", task, warning);
+    }
+
+    async function parsePdf(bytes, task, token) {
+      ensureActive(token);
+      if (typeof pdfjsLib === "undefined") {
+        return failure("pdfjs", "pdfjs_not_loaded");
+      }
+      if (pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "./pdf.worker.min.js";
+      }
+      const loadingTask = pdfjsLib.getDocument({
+        data: bytes,
+        disableWorker: true,
+        useWorkerFetch: false,
+        isEvalSupported: false
+      });
+      const pdf = await loadingTask.promise;
+      ensureActive(token);
+      const maxPages = Math.min(pdf.numPages, MAX_PDF_PAGES);
+      const sections = [];
+      for (let pageNumber = 1; pageNumber <= maxPages; pageNumber++) {
+        ensureActive(token);
+        const page = await pdf.getPage(pageNumber);
+        const textContent = await page.getTextContent();
+        ensureActive(token);
+        const line = (textContent.items || []).map(item => item.str || "").join(" ").replace(/\s+/g, " ").trim();
+        sections.push("---\nPage " + pageNumber + ":\n" + line);
+      }
+      let warning = "";
+      if (pdf.numPages > maxPages) {
+        warning = "PDF 页数过多，仅解析前 " + maxPages + " 页";
+      }
+      return success("pdfjs", sections.join("\n\n"), task, warning);
+    }
+
+    async function parseCurrentTask(task, taskChunks, token) {
+      ensureActive(token);
+      const base64 = taskChunks.join("");
+      const bytes = bytesFromBase64(base64);
+      ensureActive(token);
+      const ext = extensionOf(task.fileName || "");
+      const mime = (task.mimeType || "").toLowerCase();
+      if (ext === ".xlsx" || ext === ".xls" ||
+        mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+        mime === "application/vnd.ms-excel") {
+        return parseWorkbook(bytes, task, token);
+      }
+      if (ext === ".docx" ||
+        mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        return parseDocx(bytes, task, token);
+      }
+      if (ext === ".pdf" || mime === "application/pdf") {
+        return parsePdf(bytes, task, token);
+      }
+      return failure("document-parser", "unsupported_file_type");
+    }
+
+    window.DocumentParserBridge = {
+      start: function (task) {
+        currentTask = task || {};
+        chunks = [];
+        currentResult = "";
+        isParsing = false;
+        return "ok";
+      },
+      append: function (chunk) {
+        chunks.push(chunk || "");
+        return "ok";
+      },
+      finish: function () {
+        try {
+          if (!currentTask) {
+            currentResult = failure("document-parser", "task_not_started");
+            return currentResult;
+          }
+          const task = currentTask;
+          const taskChunks = chunks;
+          currentTask = null;
+          chunks = [];
+          currentResult = "";
+          isParsing = true;
+          const token = ++parseToken;
+          parseCurrentTask(task, taskChunks, token)
+            .then(function (result) {
+              if (token === parseToken) {
+                currentResult = result;
+              }
+            })
+            .catch(function (error) {
+              if (token === parseToken) {
+                currentResult = failure("document-parser", error);
+              }
+            })
+            .finally(function () {
+              if (token === parseToken) {
+                isParsing = false;
+              }
+            });
+          return "pending";
+        } catch (error) {
+          currentResult = failure("document-parser", error);
+          isParsing = false;
+          currentTask = null;
+          chunks = [];
+          return currentResult;
+        }
+      },
+      getResult: function () {
+        if (currentResult) {
+          return currentResult;
+        }
+        return isParsing ? "pending" : "";
+      },
+      cancel: function () {
+        parseToken++;
+        currentTask = null;
+        chunks = [];
+        currentResult = failure("document-parser", "canceled");
+        isParsing = false;
+        return "ok";
+      }
+    };
+  })();
+</script>
+</body>
+</html>

@@ -427,6 +427,17 @@ export enum AttachmentType {
   FILE = 'file'
 }
 
+export enum AttachmentProcessState {
+  IDLE = 'idle',
+  COPYING = 'copying',
+  QUEUED = 'queued',
+  PARSING = 'parsing',
+  PARSED = 'parsed',
+  PARSE_FAILED = 'parse_failed',
+  TOO_LARGE = 'too_large',
+  PASSWORD_REQUIRED = 'password_required'
+}
+
 // 附件信息
 export class MessageAttachment {
   id: string
@@ -437,6 +448,11 @@ export class MessageAttachment {
   size: number           // 文件大小（字节）
   // 临时字段：用于发送 API 前加载
   base64Data: string = ''
+  // 文档解析状态。旧数据库记录可为空，加载后会按默认状态或持久化字段恢复。
+  processState: string = AttachmentProcessState.IDLE
+  parseEngine: string = ''
+  parsedText: string = ''
+  parseError: string = ''
 
   constructor(
     id: string,
