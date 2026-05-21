@@ -22,6 +22,8 @@ export struct ChatInputBar {
   @Local sendBtnPressed: boolean = false
   @Local sendBtnScale: number = 1
   @Local sendBtnRotation: number = 0
+  @Local controlsSwapScale: number = 1
+  @Local controlsSwapOpacity: number = 1
   @Local modelBtnPressed: boolean = false
   @Param inputText: string = ''
   @Event onInputTextChange: (value: string) => void = (_value: string): void => {}
@@ -90,6 +92,7 @@ export struct ChatInputBar {
   }
   private lastHasContent: boolean = false
   private breatheTimerId: number = -1
+  private controlsSwapTimerId: number = -1
   // 焦点控制器
 
   private getCurrentModelIconPath(): string {
@@ -127,6 +130,7 @@ export struct ChatInputBar {
 
   aboutToDisappear(): void {
     this.stopBreathing()
+    this.stopControlsSwapAnimation()
   }
 
   // 监听 autoFocus 变化
@@ -309,9 +313,9 @@ export struct ChatInputBar {
     Row() {
       if (this.sendButtonOnLeft) {
         this.SendButton()
-        this.ModelButton()
-        this.InputTextArea()
         this.AttachmentButton()
+        this.InputTextArea()
+        this.ModelButton()
       } else {
         this.ModelButton()
         this.InputTextArea()
@@ -326,6 +330,9 @@ export struct ChatInputBar {
         top: 6,
         bottom: 6
       })
+      .opacity(this.controlsSwapOpacity)
+      .scale({ x: this.controlsSwapScale, y: this.controlsSwapScale })
+      .animation({ duration: 220, curve: Curve.EaseInOut })
   }
 
   build() {
@@ -667,6 +674,28 @@ export struct ChatInputBar {
     this.attachIconTrigger++
   }
 
+  @Monitor('sendButtonOnLeft')
+  onSendButtonSideChanged(): void {
+    this.stopControlsSwapAnimation()
+    this.getUIContext().animateTo({
+      duration: 90,
+      curve: Curve.EaseOut
+    }, () => {
+      this.controlsSwapScale = 0.98
+      this.controlsSwapOpacity = 0.88
+    })
+    this.controlsSwapTimerId = setTimeout(() => {
+      this.controlsSwapTimerId = -1
+      this.getUIContext().animateTo({
+        duration: 160,
+        curve: Curve.EaseInOut
+      }, () => {
+        this.controlsSwapScale = 1
+        this.controlsSwapOpacity = 1
+      })
+    }, 90)
+  }
+
   // 发送按钮状态切换动画
   private animateSendButton(): void {
     this.getUIContext().animateTo({
@@ -713,5 +742,14 @@ export struct ChatInputBar {
     clearInterval(this.breatheTimerId)
     this.breatheTimerId = -1
     this.breathOpacity = 1
+  }
+
+  private stopControlsSwapAnimation(): void {
+    if (this.controlsSwapTimerId >= 0) {
+      clearTimeout(this.controlsSwapTimerId)
+      this.controlsSwapTimerId = -1
+    }
+    this.controlsSwapScale = 1
+    this.controlsSwapOpacity = 1
   }
 }
