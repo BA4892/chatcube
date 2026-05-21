@@ -1,5 +1,6 @@
 import { ModelProvider, OutputMode } from '../../models/ChatModels'
 import { ModelSelectorContent } from '../ModelSelector'
+import { CubeSpinnerLight } from '../loading/CubeSpinner'
 
 @ComponentV2
 export struct ImageGenerationModelSheet {
@@ -14,13 +15,11 @@ export struct ImageGenerationModelSheet {
     Column() {
       if (!this.isProvidersLoaded) {
         Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
+          CubeSpinnerLight({ sizeVp: 32 })
           Text($r('app.string.loading'))
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
-            .margin({ top: 12 })
+            .margin({ top: 14 })
         }
         .width('100%')
         .height('100%')

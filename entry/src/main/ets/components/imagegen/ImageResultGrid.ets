@@ -2,6 +2,7 @@ import { GeneratedMedia } from '../../models/ImageGenerationModels'
 import { getAppUiState } from '../../state/AppUiState'
 import { getImageGenerationPreviewId } from './ImageGenerationPreviewUtil'
 import { AdaptiveImageThumbnail } from '../AdaptiveImageThumbnail'
+import { CubeSpinnerAssemble } from '../loading/CubeSpinner'
 
 @ComponentV2
 export struct ImageResultGrid {
@@ -32,14 +33,11 @@ export struct ImageResultGrid {
   @Builder
   private LoadingState() {
     Column() {
-      LoadingProgress()
-        .width(44)
-        .height(44)
-        .color(getAppUiState().themePrimary)
+      CubeSpinnerAssemble({ sizeVp: 64, color: getAppUiState().themePrimary })
       Text(this.isEditing ? $r('app.string.image_generation_editing') : $r('app.string.image_generation_generating'))
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
-        .margin({ top: 12 })
+        .margin({ top: 16 })
     }
     .width('100%')
     .height('100%')

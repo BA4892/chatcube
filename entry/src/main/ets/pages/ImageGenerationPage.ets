@@ -385,17 +385,96 @@ struct ImageGenerationPage {
     }
   }
 
+  // 加号按钮语义: 新建会话
+  // - 在生成中 → disable (避免静默清 currentImages 但任务仍在跑的状态错位)
+  // - 在生成 Tab 且业务状态全空 → disable (没东西可清, 避免"点了没反应")
+  // - 在图库 Tab 点 → 允许 (顺带切回生成 Tab 有可见反馈)
+  private canStartNewSession(): boolean {
+    if (this.viewModel.isGenerating) {
+      return false
+    }
+    return this.viewModel.prompt !== ''
+      || this.viewModel.currentImages.length > 0
+      || this.viewModel.referenceImages.length > 0
+      || this.currentTabIndex !== 0
+  }
+
+  private startNewSession(): void {
+    // 二次防御: 不能打断生成中的请求
+    // (按钮 enabled 状态是顶层拦截, 这里防点击瞬间状态变化的竞态)
+    if (this.viewModel.isGenerating) {
+      return
+    }
+    const hasContent: boolean = this.viewModel.prompt !== ''
+      || this.viewModel.currentImages.length > 0
+      || this.viewModel.referenceImages.length > 0
+    const needSwitchTab: boolean = this.currentTabIndex !== 0
+
+    if (needSwitchTab) {
+      try {
+        this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+          this.currentTabIndex = 0
+        })
+      } catch (_error) {
+        this.currentTabIndex = 0
+      }
+    }
+
+    if (hasContent) {
+      this.viewModel.clearSession().catch((error: Object): void => {
+        console.error('ImageGenerationPage', `clearSession failed: ${JSON.stringify(error)}`)
+      })
+    }
+  }
+
+  private switchTab(index: number): void {
+    if (this.currentTabIndex === index) {
+      return
+    }
+    try {
+      this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+        this.currentTabIndex = index
+      })
+    } catch (_error) {
+      this.currentTabIndex = index
+    }
+  }
+
   build() {
     Stack() {
       Column() {
         this.Header()
         this.TabBar()
 
-        if (this.currentTabIndex === 0) {
-          this.GenerateTab()
-        } else {
-          this.GalleryTab()
+        // Tab 内容: if/else 单挂载 + TransitionEffect 处理进出场动画
+        // (之前用双挂载 + hitTestBehavior.None, 但 None 在 Stack 同层兄弟间不能可靠穿透点击, 会拦截底部按钮)
+        Stack() {
+          if (this.currentTabIndex === 0) {
+            Column() {
+              this.GenerateTab()
+            }
+            .width('100%')
+            .height('100%')
+            .transition(
+              TransitionEffect.OPACITY
+                .combine(TransitionEffect.translate({ x: -16 }))
+                .animation({ duration: 280, curve: Curve.Friction })
+            )
+          } else {
+            Column() {
+              this.GalleryTab()
+            }
+            .width('100%')
+            .height('100%')
+            .transition(
+              TransitionEffect.OPACITY
+                .combine(TransitionEffect.translate({ x: 16 }))
+                .animation({ duration: 280, curve: Curve.Friction })
+            )
+          }
         }
+        .width('100%')
+        .layoutWeight(1)
       }
       .width('100%')
       .height('100%')
@@ -469,14 +548,15 @@ struct ImageGenerationPage {
       Button() {
         SymbolGlyph($r('sys.symbol.plus'))
           .fontSize(20)
-          .fontColor([this.themePrimary])
+          .fontColor([this.canStartNewSession() ? this.themePrimary : $r('app.color.text_tertiary')])
       }
       .type(ButtonType.Circle)
       .width(40)
       .height(40)
       .backgroundColor(Color.Transparent)
+      .enabled(this.canStartNewSession())
       .onClick(() => {
-        this.viewModel.clearSession()
+        this.startNewSession()
       })
     }
     .width('100%')
@@ -525,29 +605,47 @@ struct ImageGenerationPage {
     .hitTestBehavior(HitTestMode.Transparent)
   }
 
+  // Segmented control 风格: 单个圆角胶囊外壳 + 浮动主题色指示器 + 双 cell 文字
+  // currentTabIndex 变化被 animateTo 包裹, 指示器 translate + 文字 fontColor + 内容区 opacity/translate 全部插值过渡
   @Builder
   private TabBar() {
-    Row({ space: 8 }) {
-      this.TabButton(0, $r('app.string.image_generation_tab_generate'))
-      this.TabButton(1, $r('app.string.image_generation_tab_gallery'))
+    Stack({ alignContent: Alignment.TopStart }) {
+      // 1. 浮动指示器 (背景层)
+      Column()
+        .width('50%')
+        .height('100%')
+        .borderRadius(9)
+        .backgroundColor(this.themePrimary)
+        .translate({ x: this.currentTabIndex === 0 ? 0 : '100%' })
+
+      // 2. 双 cell 文字层 (前景, 透明背景)
+      Row() {
+        this.SegmentCell(0, $r('app.string.image_generation_tab_generate'))
+        this.SegmentCell(1, $r('app.string.image_generation_tab_gallery'))
+      }
+      .width('100%')
+      .height('100%')
     }
     .width('100%')
-    .padding({ left: 16, right: 16, bottom: 8 })
+    .height(34)
+    .borderRadius(11)
+    .backgroundColor(this.themeSurface)
+    .clip(true)
+    .margin({ left: 16, right: 16, bottom: 8 })
   }
 
   @Builder
-  private TabButton(index: number, label: Resource) {
-    Button({ type: ButtonType.Capsule, stateEffect: false }) {
+  private SegmentCell(index: number, label: Resource) {
+    Stack() {
       Text(label)
         .fontSize(14)
         .fontWeight(this.currentTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.currentTabIndex === index ? this.themePrimary : $r('app.color.text_secondary'))
+        .fontColor(this.currentTabIndex === index ? Color.White : $r('app.color.text_secondary'))
     }
-    .height(36)
     .layoutWeight(1)
-    .backgroundColor(this.currentTabIndex === index ? getAppUiState().themePrimaryLight : this.themeSurface)
+    .height('100%')
     .onClick(() => {
-      this.currentTabIndex = index
+      this.switchTab(index)
     })
   }
 

@@ -59,6 +59,30 @@ struct AboutPage {
   @Local isOpeningGroup: boolean = false
   @Local versionName: string = ''
   private compactScroller: Scroller = new Scroller()
+  // DEV: 版本号 5 连点进入 CubeSpinnerPreview 动效预览页 (定稿后可移除)
+  private versionTapCount: number = 0
+  private versionTapResetTimer: number = -1
+
+  private handleVersionTap(): void {
+    this.versionTapCount = this.versionTapCount + 1
+    if (this.versionTapResetTimer !== -1) {
+      clearTimeout(this.versionTapResetTimer)
+    }
+    this.versionTapResetTimer = setTimeout((): void => {
+      this.versionTapCount = 0
+      this.versionTapResetTimer = -1
+    }, 1500)
+    if (this.versionTapCount >= 5) {
+      this.versionTapCount = 0
+      if (this.versionTapResetTimer !== -1) {
+        clearTimeout(this.versionTapResetTimer)
+        this.versionTapResetTimer = -1
+      }
+      if (aboutPagePathStack !== null) {
+        aboutPagePathStack.pushPath({ name: 'CubeSpinnerPreview' })
+      }
+    }
+  }
 
   private px2vp(px: number): number {
     return px / (this.getUIContext().getHostContext()?.resourceManager.getDeviceCapabilitySync().screenDensity ?? 3) * 160
@@ -130,6 +154,9 @@ struct AboutPage {
             Text(`v${this.versionName}`)
               .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
+              .onClick((): void => {
+                this.handleVersionTap()
+              })
 
             Text($r('app.string.about_page_slogan'))
               .fontSize(13)

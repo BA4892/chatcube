@@ -37,6 +37,7 @@ import {
   reorderProvidersWithinTab
 } from '../config/ProviderOrderUtils'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { CubeSpinnerLight } from '../components/loading/CubeSpinner'
 
 let modelManagePagePathStack: NavPathStack | null = null
 let modelManageInternalBackHandler: (() => boolean) | null = null
@@ -1034,15 +1035,12 @@ struct ModelManagePage {
   @Builder
   LoadingView() {
     Column() {
-      LoadingProgress()
-        .width(48)
-        .height(48)
-        .color(this.themePrimary)
+      CubeSpinnerLight({ sizeVp: 40, color: this.themePrimary })
 
       Text($r('app.string.loading'))
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
-        .margin({ top: 16 })
+        .margin({ top: 18 })
     }
     .width('100%')
     .layoutWeight(1)

@@ -114,6 +114,11 @@
       "name": "InvitationPage",
       "pageSourceFile": "src/main/ets/pages/InvitationPage.ets",
       "buildFunction": "InvitationPageBuilder"
+    },
+    {
+      "name": "CubeSpinnerPreview",
+      "pageSourceFile": "src/main/ets/pages/CubeSpinnerPreview.ets",
+      "buildFunction": "CubeSpinnerPreviewBuilder"
     }
   ]
 }

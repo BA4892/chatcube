@@ -2,17 +2,17 @@
  * ChatCube 品牌 Loading 动效组件 — 围绕 app icon 卡通形象设计
  *
  * 四种变体 (export 名保留, 实现已重写):
- *   A) CubeSpinnerLight     - 笑脸眨眼: 主题色圆角脸 + 双白点眼睛
- *                             眼睛在睁眼态 (●●) ↔ 笑眯眯态 (⌒⌒) 之间循环
+ *   A) CubeSpinnerLight     - 看四周笑脸: 主题色圆角脸 + 双白点眼睛
+ *                             眼睛同步左右扫视 (中→右→中→左) + 整体微呼吸
+ *                             AI "在搜寻 / 思考" 的 loading 隐喻
  *                             适合: 标题旁小指示器、通用 loading (12 - 32vp)
  *
  *   B) CubeSpinnerBubble    - 立体气泡: TypingDots 气泡 + 后侧暗色厚度面 + 微 Y 轴摆动
  *                             视觉上像 icon 上的右前对话面在轻微转动
  *                             适合: 聊天里 AI 思考中
  *
- *   C) CubeSpinnerAssemble  - 老虎机方块: 正方形圆角外壳 (呼应 app icon 底座)
- *                             3 个 reel 错峰滚动, 中间穿插圆环 / 菱形 / 迷你笑脸 ChatCube,
- *                             最终全部停在三个白点 — 呼应 icon 上的三点
+ *   C) CubeSpinnerAssemble  - 像素扫描: 圆角方框 + 4×4 主题色格子从左上到右下逐格点亮
+ *                             点亮是离散切换 (不插值) 以保留 8-bit / 生图 AI 逐步渲染感
  *                             适合: 生图占位 (≥ 56vp)
  *
  *   D) CubeSpinner3D        - 跑步小人: 完整 ChatCube 形象 (身子 + 双手 + 双腿 + 椭圆阴影)
@@ -28,18 +28,18 @@
 
 import { getAppUiState } from '../../state/AppUiState'
 import { TypingDots } from '../TypingDots'
-import { curves } from '@kit.ArkUI'
 
 // =============================================================================
-// 变体 A: CubeSpinnerLight - 笑脸眨眼 + 微呼吸
+// 变体 A: CubeSpinnerLight - 看四周笑脸 + 微呼吸
 // =============================================================================
 @ComponentV2
 export struct CubeSpinnerLight {
   @Param sizeVp: number = 32
   @Param color: string = ''
-  @Local private blinkPhase: number = 0  // 0 = 睁眼, 1 = 笑眯眯
+  @Local private eyeOffsetX: number = 0
   @Local private breathScale: number = 1.0
-  private blinkTimer: number = -1
+  private scanTimer: number = -1
+  private scanPhase: number = 0
   private started: boolean = false
 
   private get faceColor(): string {
@@ -47,9 +47,9 @@ export struct CubeSpinnerLight {
   }
 
   aboutToDisappear(): void {
-    if (this.blinkTimer !== -1) {
-      clearInterval(this.blinkTimer)
-      this.blinkTimer = -1
+    if (this.scanTimer !== -1) {
+      clearInterval(this.scanTimer)
+      this.scanTimer = -1
     }
   }
 
@@ -57,7 +57,7 @@ export struct CubeSpinnerLight {
     if (this.started) return
     this.started = true
     this.startBreath()
-    this.startBlinkLoop()
+    this.startScanLoop()
   }
 
   private startBreath(): void {
@@ -75,23 +75,26 @@ export struct CubeSpinnerLight {
     }
   }
 
-  private startBlinkLoop(): void {
-    if (this.blinkTimer !== -1) return
-    let phase: number = 0
-    this.blinkTimer = setInterval((): void => {
-      phase = (phase + 1) % 2
-      const targetPhase: number = phase
+  // 左右扫视: 中 → 右 → 中 → 左 → 中, 每阶段 700ms (整轮 2.8s)
+  // 模拟 AI "环顾思考" 的动作, 比眨眼更能传达 loading 语义
+  private startScanLoop(): void {
+    if (this.scanTimer !== -1) return
+    const scanAmt: number = this.sizeVp * 0.05
+    const targets: number[] = [scanAmt, 0, -scanAmt, 0]
+    this.scanTimer = setInterval((): void => {
+      const target: number = targets[this.scanPhase]
+      this.scanPhase = (this.scanPhase + 1) % 4
       try {
         this.getUIContext().animateTo({
-          duration: 220,
+          duration: 380,
           curve: Curve.EaseInOut
         }, (): void => {
-          this.blinkPhase = targetPhase
+          this.eyeOffsetX = target
         })
       } catch (_error) {
-        this.blinkPhase = targetPhase
+        this.eyeOffsetX = target
       }
-    }, 1400)
+    }, 700)
   }
 
   build() {
@@ -102,11 +105,12 @@ export struct CubeSpinnerLight {
         .height(this.sizeVp * 0.92)
         .backgroundColor(this.faceColor)
         .borderRadius(this.sizeVp * 0.22)
-      // 双眼
+      // 双眼 (Row 整体左右扫视 — 两眼同步)
       Row({ space: this.sizeVp * 0.20 }) {
         this.Eye()
         this.Eye()
       }
+      .translate({ x: this.eyeOffsetX })
     }
     .width(this.sizeVp)
     .height(this.sizeVp)
@@ -116,30 +120,13 @@ export struct CubeSpinnerLight {
     })
   }
 
-  // 单只眼: 睁眼 = 实心圆白点, 笑眼 = 上凸弧 ⌒
   @Builder
   private Eye() {
-    Stack({ alignContent: Alignment.Center }) {
-      // 睁眼态
-      Column()
-        .width(this.sizeVp * 0.16)
-        .height(this.sizeVp * 0.16)
-        .borderRadius(this.sizeVp * 0.08)
-        .backgroundColor('#FFFFFF')
-        .opacity(this.blinkPhase === 0 ? 1 : 0)
-      // 笑眼态 (上凸弧)
-      Path()
-        .width(this.sizeVp * 0.22)
-        .height(this.sizeVp * 0.16)
-        .commands(`M 0 ${this.sizeVp * 0.12} Q ${this.sizeVp * 0.11} 0 ${this.sizeVp * 0.22} ${this.sizeVp * 0.12}`)
-        .stroke('#FFFFFF')
-        .strokeWidth(this.sizeVp * 0.05)
-        .strokeLineCap(LineCapStyle.Round)
-        .fillOpacity(0)
-        .opacity(this.blinkPhase === 0 ? 0 : 1)
-    }
-    .width(this.sizeVp * 0.22)
-    .height(this.sizeVp * 0.20)
+    Column()
+      .width(this.sizeVp * 0.16)
+      .height(this.sizeVp * 0.16)
+      .borderRadius(this.sizeVp * 0.08)
+      .backgroundColor('#FFFFFF')
   }
 }
 
@@ -232,175 +219,112 @@ export struct CubeSpinnerBubble {
 }
 
 // =============================================================================
-// 老虎机内部组件: 单个 reel
-// =============================================================================
-@ComponentV2
-struct SlotReel {
-  @Param dotSize: number = 8
-  @Param dotColor: string = '#FFFFFF'
-  @Param accentColor: string = ''   // 迷你笑脸眼睛颜色 (传入主题色 = 外壳背景, 让眼睛看起来像从外壳抠出的 dot)
-  @Param delayMs: number = 0
-  @Local private translateY: number = 0
-  private started: boolean = false
-
-  // 一个位置占的纵向间距 (留 60% 间隙, 看起来有 "下一个元素来了" 的感觉)
-  private get dotStep(): number {
-    return this.dotSize * 1.6
-  }
-
-  private get eyeColor(): string {
-    return this.accentColor !== '' ? this.accentColor : getAppUiState().themePrimary
-  }
-
-  private startReel(): void {
-    if (this.started) return
-    this.started = true
-    try {
-      this.getUIContext().animateTo({
-        duration: 1500,
-        curve: curves.cubicBezierCurve(0, 0.7, 0.4, 1.0),
-        iterations: -1,
-        delay: this.delayMs,
-        playMode: PlayMode.Normal,
-        expectedFrameRateRange: { min: 30, max: 120, expected: 60 }
-      }, (): void => {
-        // 滚动 5 个 dotStep。序列起点 (索引 0) 与终点 (索引 5) 都是白点, 循环回弹无缝
-        this.translateY = -this.dotStep * 5
-      })
-    } catch (_error) {
-    }
-  }
-
-  build() {
-    Column() {
-      Column() {
-        // 错峰老虎机动画: 起点白点 → 环 → 迷你笑脸 → 菱形 → 环 → 白点终止
-        // 三个 reel 同步后, 终点永远是三个白点 (呼应 app icon)
-        this.Dot()
-        this.Ring()
-        this.MiniFace()
-        this.Diamond()
-        this.Ring()
-        this.Dot()
-      }
-      .translate({ y: this.translateY })
-    }
-    .width(this.dotSize * 1.4)
-    .height(this.dotSize * 1.4)  // viewport 只显示 1 个元素区域
-    .clip(true)
-    .onAppear((): void => {
-      this.startReel()
-    })
-  }
-
-  // 索引 0 / 5: 白点 (品牌起止 — icon 上的三点)
-  @Builder
-  private Dot() {
-    Column()
-      .width(this.dotSize)
-      .height(this.dotSize)
-      .borderRadius(this.dotSize / 2)
-      .backgroundColor(this.dotColor)
-      .margin({
-        top: (this.dotStep - this.dotSize) / 2,
-        bottom: (this.dotStep - this.dotSize) / 2
-      })
-  }
-
-  // 索引 1 / 4: 环 (空心圆点, 滚动中闪一下)
-  @Builder
-  private Ring() {
-    Column()
-      .width(this.dotSize)
-      .height(this.dotSize)
-      .borderRadius(this.dotSize / 2)
-      .border({ width: this.dotSize * 0.22, color: this.dotColor })
-      .margin({
-        top: (this.dotStep - this.dotSize) / 2,
-        bottom: (this.dotStep - this.dotSize) / 2
-      })
-  }
-
-  // 索引 2: 迷你 ChatCube 笑脸 (品牌彩蛋)
-  @Builder
-  private MiniFace() {
-    Stack({ alignContent: Alignment.Center }) {
-      Column()
-        .width(this.dotSize)
-        .height(this.dotSize)
-        .borderRadius(this.dotSize * 0.22)
-        .backgroundColor(this.dotColor)
-      Row({ space: this.dotSize * 0.20 }) {
-        Column()
-          .width(this.dotSize * 0.18)
-          .height(this.dotSize * 0.18)
-          .borderRadius(this.dotSize * 0.09)
-          .backgroundColor(this.eyeColor)
-        Column()
-          .width(this.dotSize * 0.18)
-          .height(this.dotSize * 0.18)
-          .borderRadius(this.dotSize * 0.09)
-          .backgroundColor(this.eyeColor)
-      }
-    }
-    .margin({
-      top: (this.dotStep - this.dotSize) / 2,
-      bottom: (this.dotStep - this.dotSize) / 2
-    })
-  }
-
-  // 索引 3: 菱形 (圆角小方块旋转 45°)
-  @Builder
-  private Diamond() {
-    Column()
-      .width(this.dotSize * 0.72)
-      .height(this.dotSize * 0.72)
-      .borderRadius(this.dotSize * 0.12)
-      .backgroundColor(this.dotColor)
-      .rotate({ angle: 45 })
-      .margin({
-        top: (this.dotStep - this.dotSize * 0.72) / 2,
-        bottom: (this.dotStep - this.dotSize * 0.72) / 2
-      })
-  }
-}
-
-// =============================================================================
-// 变体 C: CubeSpinnerAssemble - 老虎机 (3 个 reel 错峰滚动)
+// 变体 C: CubeSpinnerAssemble - 像素扫描 (4×4 格子逐个点亮 → 停顿 → 清空 → 重来)
 // =============================================================================
 @ComponentV2
 export struct CubeSpinnerAssemble {
   @Param sizeVp: number = 64
   @Param color: string = ''
+  // litCount: 已点亮的格子数 (0 ~ 16)
+  // cell.opacity 直接依赖该值, 离散切换 — 保留“像素咣一下亮”的质感, 所以不用 animateTo 插值
+  @Local private litCount: number = 0
+  private tick: number = -1
+  private tickTimer: number = -1
+  private started: boolean = false
 
-  private get bgColor(): string {
+  private get accentColor(): string {
     return this.color !== '' ? this.color : getAppUiState().themePrimary
   }
 
-  private get dotSize(): number {
-    return this.sizeVp * 0.18
+  // 单格尺寸: 4 格 + 3 gap + 2 padding 的水平布局
+  // (0.18 × 4) + (0.025 × 3) + (0.1025 × 2) ≈ 1.0 × sizeVp
+  private get cellSize(): number { return this.sizeVp * 0.18 }
+  private get cellGap(): number { return this.sizeVp * 0.025 }
+
+  aboutToDisappear(): void {
+    if (this.tickTimer !== -1) {
+      clearInterval(this.tickTimer)
+      this.tickTimer = -1
+    }
   }
 
-  private get reelSpacing(): number {
-    return this.sizeVp * 0.08
+  private startScan(): void {
+    if (this.started) return
+    this.started = true
+    // 20 tick 一轮 × 80ms = 1600ms:
+    //   tick  0~15: 依次点亮 cell 0~15
+    //   tick 16~18: 全亮停顿 240ms
+    //   tick   19: 一轮结束, 整体清空
+    this.tickTimer = setInterval((): void => {
+      this.tick = (this.tick + 1) % 20
+      if (this.tick <= 15) {
+        this.litCount = this.tick + 1
+      } else if (this.tick === 19) {
+        this.litCount = 0
+      }
+    }, 80)
   }
 
   build() {
-    // 外壳: 正方形圆角 (与 HarmonyOS app icon 圆角一致), reel 行 H/V 居中
-    Column() {
-      Row({ space: this.reelSpacing }) {
-        SlotReel({ dotSize: this.dotSize, dotColor: '#FFFFFF', accentColor: this.bgColor, delayMs: 0 })
-        SlotReel({ dotSize: this.dotSize, dotColor: '#FFFFFF', accentColor: this.bgColor, delayMs: 200 })
-        SlotReel({ dotSize: this.dotSize, dotColor: '#FFFFFF', accentColor: this.bgColor, delayMs: 400 })
-      }
+    Stack({ alignContent: Alignment.Center }) {
+      // 1. 底色 (主题色淺化, 图片占位背景)
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.accentColor)
+        .opacity(0.10)
+
+      // 2. 4×4 像素网格
+      this.GridPanel()
     }
     .width(this.sizeVp)
     .height(this.sizeVp)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(this.bgColor)
     .borderRadius(this.sizeVp * 0.22)
     .clip(true)
+    .onAppear((): void => {
+      this.startScan()
+    })
+  }
+
+  @Builder
+  private GridPanel() {
+    Column({ space: this.cellGap }) {
+      Row({ space: this.cellGap }) {
+        this.Cell(0)
+        this.Cell(1)
+        this.Cell(2)
+        this.Cell(3)
+      }
+      Row({ space: this.cellGap }) {
+        this.Cell(4)
+        this.Cell(5)
+        this.Cell(6)
+        this.Cell(7)
+      }
+      Row({ space: this.cellGap }) {
+        this.Cell(8)
+        this.Cell(9)
+        this.Cell(10)
+        this.Cell(11)
+      }
+      Row({ space: this.cellGap }) {
+        this.Cell(12)
+        this.Cell(13)
+        this.Cell(14)
+        this.Cell(15)
+      }
+    }
+  }
+
+  // 单个像素格: 未亮时 25% 主题色 (作为"骨架"), 点亮后 100% 主题色
+  @Builder
+  private Cell(index: number) {
+    Column()
+      .width(this.cellSize)
+      .height(this.cellSize)
+      .borderRadius(this.cellSize * 0.20)
+      .backgroundColor(this.accentColor)
+      .opacity(index < this.litCount ? 1.0 : 0.25)
   }
 }
 
@@ -483,9 +407,11 @@ export struct CubeSpinner3D {
         // 2b. 右腿
         this.Leg(this.sizeVp * 0.54, this.sizeVp * 0.55, this.rightLegAngle)
         // 2c. 左手 (绕肩旋转, 在身子两侧)
+        // 注: Arm Column 实宽 = max(细条 0.04, 手圆 0.07) = 0.07, 视觉中心 = position.x + 0.035
+        // 左右对称要求: rightX = 1 - leftX - columnWidth = 1 - 0.18 - 0.07 = 0.75
         this.Arm(this.sizeVp * 0.18, this.sizeVp * 0.25, this.leftArmAngle)
         // 2d. 右手
-        this.Arm(this.sizeVp * 0.78, this.sizeVp * 0.25, this.rightArmAngle)
+        this.Arm(this.sizeVp * 0.75, this.sizeVp * 0.25, this.rightArmAngle)
         // 2e. 身子: 圆角脸 + 双白眼 (放最后, 盖住四肢根部)
         Stack({ alignContent: Alignment.Center }) {
           Column()

@@ -18,6 +18,10 @@ export struct AdaptiveImageThumbnail {
   @Param maxHeight: number = 120
   @Param radius: number = 8
   @Param fallbackAspectRatio: number = 1
+  // 限制极端比例图片, 避免瀑布流单列被拉爆 (0 = 不限制)
+  // minAspectRatio: 窄图下限 (如 0.7 = 5:7, 更窄的裁切); maxAspectRatio: 横图上限
+  @Param minAspectRatio: number = 0
+  @Param maxAspectRatio: number = 0
   @Param fillWidth: boolean = false
   @Param clickable: boolean = true
   @Event onPreview: () => void = () => {}
@@ -41,6 +45,24 @@ export struct AdaptiveImageThumbnail {
       return this.fallbackAspectRatio
     }
     return 1
+  }
+
+  // 原图比例在 [min, max] 范围内原样返回, 超出则 clamp 到边界 (用于限制实际渲染尺寸)
+  private getEffectiveAspectRatio(): number {
+    const raw = this.getSafeAspectRatio()
+    let result = raw
+    if (this.minAspectRatio > 0 && result < this.minAspectRatio) {
+      result = this.minAspectRatio
+    }
+    if (this.maxAspectRatio > 0 && result > this.maxAspectRatio) {
+      result = this.maxAspectRatio
+    }
+    return result
+  }
+
+  // 被限制裁切时返回 true, 用 ImageFit.Cover 填满容器; 未裁切用 Contain 保留完整图
+  private isClipped(): boolean {
+    return this.getEffectiveAspectRatio() !== this.getSafeAspectRatio()
   }
 
   private getBoundedWidth(): number {
@@ -88,7 +110,7 @@ export struct AdaptiveImageThumbnail {
           .fontColor([$r('app.color.text_tertiary')])
       }
       .width('100%')
-      .aspectRatio(this.getSafeAspectRatio())
+      .aspectRatio(this.getEffectiveAspectRatio())
       .borderRadius(this.radius)
       .backgroundColor($r('app.color.divider'))
       .justifyContent(FlexAlign.Center)
@@ -113,8 +135,8 @@ export struct AdaptiveImageThumbnail {
     Image(this.src)
       .id(this.previewId)
       .width('100%')
-      .aspectRatio(this.getSafeAspectRatio())
-      .objectFit(ImageFit.Contain)
+      .aspectRatio(this.getEffectiveAspectRatio())
+      .objectFit(this.isClipped() ? ImageFit.Cover : ImageFit.Contain)
       .interpolation(ImageInterpolation.Medium)
       .borderRadius(this.radius)
       .clip(true)

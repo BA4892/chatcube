@@ -16,10 +16,12 @@ export struct ImageGalleryGrid {
     if (this.items.length === 0) {
       this.EmptyState()
     } else {
-      Grid() {
+      // 用 WaterFlow 而不是 Grid: WaterFlow 每列独立流式排列, 避免 Grid 行齐导致的右侧留白
+      // (例如左列一张极窄图拉到 700dp 时, Grid 会让右列同行也是 700dp)
+      WaterFlow() {
         Repeat<GeneratedMedia>(this.items)
           .each((obj: RepeatItem<GeneratedMedia>) => {
-            GridItem() {
+            FlowItem() {
               this.MediaCard(obj.item)
             }
           })
@@ -110,6 +112,10 @@ export struct ImageGalleryGrid {
       previewId: this.getPreviewSourceId(item),
       fillWidth: true,
       fallbackAspectRatio: 1,
+      // 窺图下限 0.7 (≈5:7) / 横图上限 1.6 (≈8:5),
+      // 超出范围的极端比例图片裁切显示, 避免单张图让瀑布流列被拉爆
+      minAspectRatio: 0.7,
+      maxAspectRatio: 1.6,
       radius: 8,
       onPreview: () => {
         this.onPreview(this.indexOfItem(item.id))
