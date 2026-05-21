@@ -27,6 +27,7 @@
  */
 
 import { getAppUiState } from '../../state/AppUiState'
+import { withColorAlpha } from '../../utils/ColorAlphaUtils'
 import { TypingDots } from '../TypingDots'
 
 // =============================================================================
@@ -36,14 +37,20 @@ import { TypingDots } from '../TypingDots'
 export struct CubeSpinnerLight {
   @Param sizeVp: number = 32
   @Param color: string = ''
+  @Param motionScale: number = 1
   @Local private eyeOffsetX: number = 0
   @Local private breathScale: number = 1.0
+  @Local private headTilt: number = -2
   private scanTimer: number = -1
   private scanPhase: number = 0
   private started: boolean = false
 
   private get faceColor(): string {
     return this.color !== '' ? this.color : getAppUiState().themePrimary
+  }
+
+  private get effectiveMotionScale(): number {
+    return Math.max(0.5, this.motionScale)
   }
 
   aboutToDisappear(): void {
@@ -63,13 +70,13 @@ export struct CubeSpinnerLight {
   private startBreath(): void {
     try {
       this.getUIContext().animateTo({
-        duration: 1600,
+        duration: 1300,
         curve: Curve.EaseInOut,
         iterations: -1,
         playMode: PlayMode.Alternate,
         expectedFrameRateRange: { min: 30, max: 120, expected: 60 }
       }, (): void => {
-        this.breathScale = 1.04
+        this.breathScale = 1 + 0.055 * this.effectiveMotionScale
       })
     } catch (_error) {
     }
@@ -79,22 +86,27 @@ export struct CubeSpinnerLight {
   // 模拟 AI "环顾思考" 的动作, 比眨眼更能传达 loading 语义
   private startScanLoop(): void {
     if (this.scanTimer !== -1) return
-    const scanAmt: number = this.sizeVp * 0.05
+    const scanAmt: number = this.sizeVp * 0.05 * this.effectiveMotionScale
+    const tiltAmt: number = 2.5 * this.effectiveMotionScale
     const targets: number[] = [scanAmt, 0, -scanAmt, 0]
+    const tilts: number[] = [tiltAmt, -tiltAmt * 0.55, -tiltAmt, tiltAmt * 0.55]
     this.scanTimer = setInterval((): void => {
       const target: number = targets[this.scanPhase]
+      const tilt: number = tilts[this.scanPhase]
       this.scanPhase = (this.scanPhase + 1) % 4
       try {
         this.getUIContext().animateTo({
-          duration: 380,
+          duration: 460,
           curve: Curve.EaseInOut
         }, (): void => {
           this.eyeOffsetX = target
+          this.headTilt = tilt
         })
       } catch (_error) {
         this.eyeOffsetX = target
+        this.headTilt = tilt
       }
-    }, 700)
+    }, 640)
   }
 
   build() {
@@ -115,6 +127,7 @@ export struct CubeSpinnerLight {
     .width(this.sizeVp)
     .height(this.sizeVp)
     .scale({ x: this.breathScale, y: this.breathScale, centerX: '50%', centerY: '50%' })
+    .rotate({ angle: this.headTilt, centerX: '50%', centerY: '50%' })
     .onAppear((): void => {
       this.startAnimations()
     })
@@ -138,18 +151,40 @@ export struct CubeSpinnerBubble {
   @Param dotSize: number = 7
   @Param spacing: number = 5
   @Param bubbleColor: string = ''
+  @Param dotColor: string = ''
   @Param useShadow: boolean = true
   @Local private bubbleScale: number = 0.96
   @Local private tiltY: number = -3
   private started: boolean = false
 
   private get bgColor(): string {
-    return this.bubbleColor !== '' ? this.bubbleColor : getAppUiState().themeAiBubble
+    if (this.bubbleColor !== '') {
+      return this.bubbleColor
+    }
+    const uiState = getAppUiState()
+    return uiState.isDarkMode ? withColorAlpha(uiState.themePrimary, '24') : uiState.themeAiBubble
   }
 
   // 后侧"厚度"色 (用主题色, 半透明)
   private get sideColor(): string {
     return getAppUiState().themePrimary
+  }
+
+  private get frontBorderColor(): string {
+    const uiState = getAppUiState()
+    return withColorAlpha(uiState.themePrimary, uiState.isDarkMode ? '80' : '26')
+  }
+
+  private get frontDotColor(): string {
+    if (this.dotColor !== '') {
+      return this.dotColor
+    }
+    const uiState = getAppUiState()
+    return uiState.isDarkMode ? uiState.themeMarkdownLink : uiState.themePrimary
+  }
+
+  private get shadowColor(): string {
+    return getAppUiState().isDarkMode ? withColorAlpha(getAppUiState().themePrimary, '33') : 'rgba(0, 0, 0, 0.05)'
   }
 
   private startAnimations(): void {
@@ -186,7 +221,7 @@ export struct CubeSpinnerBubble {
       // 后面"厚度": 同尺寸气泡, 暗色 + 半透明 + 偏移
       // 用 opacity 0 的 TypingDots 撑出与前面气泡相同的尺寸
       Row() {
-        TypingDots({ dotSize: this.dotSize, spacing: this.spacing })
+        TypingDots({ dotSize: this.dotSize, spacing: this.spacing, color: this.frontDotColor })
           .opacity(0)
       }
       .padding({ left: 14, right: 14, top: 10, bottom: 10 })
@@ -197,17 +232,18 @@ export struct CubeSpinnerBubble {
 
       // 前面气泡
       Row() {
-        TypingDots({ dotSize: this.dotSize, spacing: this.spacing })
+        TypingDots({ dotSize: this.dotSize, spacing: this.spacing, color: this.frontDotColor })
       }
       .padding({ left: 14, right: 14, top: 10, bottom: 10 })
       .backgroundColor(this.bgColor)
       .borderRadius({ topLeft: 4, topRight: 18, bottomLeft: 18, bottomRight: 18 })
+      .border({ width: getAppUiState().isDarkMode ? 1 : 0.5, color: this.frontBorderColor })
       .clip(true)
       .shadow(this.useShadow ? {
-        radius: 8,
-        color: 'rgba(0, 0, 0, 0.05)',
+        radius: getAppUiState().isDarkMode ? 12 : 8,
+        color: this.shadowColor,
         offsetX: 0,
-        offsetY: 1
+        offsetY: getAppUiState().isDarkMode ? 2 : 1
       } : { radius: 0, color: 'rgba(0,0,0,0)', offsetX: 0, offsetY: 0 })
     }
     .scale({ x: this.bubbleScale, y: this.bubbleScale, centerX: '50%', centerY: '50%' })

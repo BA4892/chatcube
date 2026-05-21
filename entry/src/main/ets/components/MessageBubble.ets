@@ -17,7 +17,7 @@ import { AskUserCard } from './AskUserCard'
 import { HtmlPreviewCard } from './HtmlPreviewCard'
 import { MermaidPreviewCard } from './MermaidPreviewCard'
 import { TypingDots } from './TypingDots'
-import { CubeSpinnerBubble } from './loading/CubeSpinner'
+import { CubeSpinnerBubble, CubeSpinnerLight } from './loading/CubeSpinner'
 import { AssistantAvatarView } from './AssistantAvatar'
 import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 import { hilog } from '@kit.PerformanceAnalysisKit'
@@ -191,7 +191,7 @@ export struct MessageBubble {
   private static readonly MULTI_SELECT_TAP_THRESHOLD_VP: number = 8
 
   // ========== 流式渲染优化 ==========
-  // lv-markdown-in 自带流式渲染，无需手动节流
+  // lv-markdown-in 负责 Markdown 渲染；上游 ThrottleUtil 控制状态刷新频率。
   private boundMessageId: string = ''
   private translationRequestToken: number = 0
   // Reasoning 计时
@@ -231,6 +231,7 @@ export struct MessageBubble {
   private cachedPreviewImageGridRows: number[] = []
   private cachedMessageImageGridRows: number[] = []
   private derivedCacheSignature: string = ''
+  private markdownRuntimeOptionsSignature: string = ''
   private finalizedMarkdownRenderTextCache: Map<string, string> = new Map()
 
   @Event onRegenerate: () => void = () => {}
@@ -429,6 +430,7 @@ export struct MessageBubble {
     this.syncMessageScopedState()
     this.syncDerivedRenderCaches()
     this.syncReasoningRuntime()
+    this.syncMarkdownRuntimeOptions()
   }
 
   @Monitor('previewContent')
@@ -483,6 +485,7 @@ export struct MessageBubble {
     this.currentTranslateLang = ''
     this.partMarkdownControllers.clear()
     this.partMarkdownControllerTexts.clear()
+    this.markdownRuntimeOptionsSignature = ''
     this.finalizedMarkdownRenderTextCache.clear()
     // latex 预览状态: 切换消息时若上一条打开过预览, 必须复位避免新消息加载旧 pixelMap
     this.showLatexPreview = false
@@ -644,6 +647,42 @@ export struct MessageBubble {
     this.cachedMessageImageGridRows = this.buildImageGridRows(this.cachedMessageImageEntries.length)
   }
 
+  private getMarkdownRuntimeOptionsSignature(): string {
+    return this.message.isGenerating ? 'generating' : 'stable'
+  }
+
+  private shouldEnableMarkdownTextSelection(): boolean {
+    // lv-markdown-in 懒渲染在文本选择开启时会自动回退普通渲染。
+    // 生成中优先保证长文实时渲染性能，结束后恢复文本选择/复制能力。
+    return !this.message.isGenerating
+  }
+
+  private applyMarkdownLazyRender(controller: MarkdownController): void {
+    controller
+      .setLazyRender(true)
+      .setLazyPreloadBlockCount(3)
+  }
+
+  private applyMarkdownTextSelection(controller: MarkdownController): void {
+    controller.setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
+  }
+
+  private syncMarkdownRuntimeOptions(force: boolean = false): void {
+    const nextSignature = this.getMarkdownRuntimeOptionsSignature()
+    if (!force && nextSignature === this.markdownRuntimeOptionsSignature) {
+      return
+    }
+    this.markdownRuntimeOptionsSignature = nextSignature
+    this.applyMarkdownLazyRender(this.markdownController)
+    this.applyMarkdownTextSelection(this.markdownController)
+    this.applyMarkdownLazyRender(this.reasoningMarkdownController)
+    this.applyMarkdownLazyRender(this.translationMarkdownController)
+    this.partMarkdownControllers.forEach((controller: MarkdownController) => {
+      this.applyMarkdownLazyRender(controller)
+      this.applyMarkdownTextSelection(controller)
+    })
+  }
+
   // 配置 Markdown 样式
   private configureMarkdownStyles(): void {
     const uiState = getAppUiState()
@@ -719,10 +758,11 @@ export struct MessageBubble {
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
-      .setTextSelectionEnable(true)
+      .setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
       .setTextSelectionCopyListener((text: string) => {
         this.copyToClipboard(text)
       })
+    this.applyMarkdownLazyRender(markdownController)
     markdownController.setBlockSpacing(mainBlockSpacing)
 
     // 配置推理内容 Markdown（更紧凑）
@@ -765,6 +805,7 @@ export struct MessageBubble {
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
+    this.applyMarkdownLazyRender(reasoningMarkdownController)
     reasoningMarkdownController.setBlockSpacing(compactBlockSpacing)
 
     // 配置翻译内容 Markdown
@@ -807,8 +848,10 @@ export struct MessageBubble {
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
+    this.applyMarkdownLazyRender(translationMarkdownController)
     translationMarkdownController.setBlockSpacing(compactBlockSpacing)
     this.configurePartMarkdownControllers()
+    this.syncMarkdownRuntimeOptions(true)
   }
 
   private configurePartMarkdownController(controller: MarkdownController): void {
@@ -869,10 +912,11 @@ export struct MessageBubble {
       .setCodeCopyListener((code: string) => {
         this.copyToClipboard(code)
       })
-      .setTextSelectionEnable(true)
+      .setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
       .setTextSelectionCopyListener((text: string) => {
         this.copyToClipboard(text)
       })
+    this.applyMarkdownLazyRender(controller)
     controller.setBlockSpacing(getMarkdownBlockSpacing(mainTextSize))
   }
 
@@ -937,6 +981,8 @@ export struct MessageBubble {
 
       if (this.message.role === MessageRole.USER) {
         this.UserMessage()
+      } else if (this.shouldShowStandaloneTypingIndicator()) {
+        this.StandaloneTypingIndicator()
       } else {
         this.AssistantMessage()
       }
@@ -951,6 +997,18 @@ export struct MessageBubble {
     // 缩到 150ms + 去掉 translate 让 GPU 走 compositor-only, 减少叠加可见性。
     // 真正消除重建开销需要给 MessageBubble 加 @Reusable, 后续单独 PoC。
     .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut }))
+  }
+
+  private shouldShowStandaloneTypingIndicator(): boolean {
+    return this.message.role === MessageRole.ASSISTANT &&
+      this.message.isGenerating &&
+      !this.message.isSearching &&
+      this.message.parts.length === 0 &&
+      this.message.content.length === 0 &&
+      this.message.reasoningContent.length === 0 &&
+      !this.message.hasAttachments() &&
+      this.message.toolCalls.length === 0 &&
+      this.message.toolResults.length === 0
   }
 
   // 处理翻译
@@ -1677,6 +1735,17 @@ export struct MessageBubble {
         .contentFontColor($r('app.color.status_error'))
         .onClick(() => { this.onDelete() })
     }
+  }
+
+  @Builder
+  StandaloneTypingIndicator() {
+    Row() {
+      CubeSpinnerLight({ sizeVp: 44, color: this.themePrimary, motionScale: 1.7 })
+    }
+    .width('100%')
+    .padding({ top: 16, bottom: 16 })
+    .justifyContent(FlexAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 150 }))
   }
 
   // 用户消息更多菜单（分享/多选/删除）

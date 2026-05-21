@@ -4,8 +4,8 @@ const DOMAIN = 0x0002
 const TAG = 'ThrottleUtil'
 
 /**
- * 节流与打字机平滑差值工具类
- * 用于实现大模型流式输出（SSE）的字字平滑渲染，提升用户视觉上的流畅度。
+ * 节流与打字机平滑差值工具类。
+ * Markdown 流式渲染默认按时间片批量刷新，避免逐字触发长文本解析和布局。
  */
 export class ThrottleUtil {
   // 上次执行时间（非打字机节流模式使用）
@@ -20,8 +20,8 @@ export class ThrottleUtil {
   private enabled: boolean = true
 
   // ============ 打字机平滑差值相关属性 ============
-  // 是否开启打字机效果，默认开启，可实现真正的逐字平滑渲染
-  private useTypewriter: boolean = true
+  // 是否开启打字机效果。Markdown 长文本实时渲染时逐字刷新会放大解析和布局成本，默认使用批量节流。
+  private useTypewriter: boolean = false
   // 打字机待输出的字符缓冲区
   private typewriterBuffer: string = ''
   // 打字机定时器 ID
@@ -31,8 +31,9 @@ export class ThrottleUtil {
   // 当前执行的回调函数
   private activeCallback: ((content: string) => void) | null = null
 
-  constructor(interval: number = 150) {
+  constructor(interval: number = 150, useTypewriter: boolean = false) {
     this.interval = interval
+    this.useTypewriter = useTypewriter
     hilog.debug(DOMAIN, TAG, '🚀 ThrottleUtil 初始化 (间隔: %{public}dms)', interval)
   }
 
@@ -204,6 +205,6 @@ export class ThrottleUtil {
  * @param interval 节流间隔（毫秒），默认 150ms
  * @returns ThrottleUtil 实例
  */
-export function createThrottle(interval: number = 150): ThrottleUtil {
-  return new ThrottleUtil(interval)
+export function createThrottle(interval: number = 150, useTypewriter: boolean = false): ThrottleUtil {
+  return new ThrottleUtil(interval, useTypewriter)
 }

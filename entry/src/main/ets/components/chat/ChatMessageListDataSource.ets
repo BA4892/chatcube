@@ -1,5 +1,5 @@
 import { ChatMessage, MessageAttachment, SearchReference, ToolCall, ToolResult } from '../../models/ChatModels'
-import { serializeMessageParts } from '../../models/MessageParts'
+import { MessagePart } from '../../models/MessageParts'
 import { fingerprintLongString } from '../../utils/MessageSignatureUtils'
 
 function encodeValue(value: string): string {
@@ -100,6 +100,38 @@ function buildToolResultListSignature(toolResults: ToolResult[]): string {
   return buildStringListSignature(signatures)
 }
 
+function buildMessagePartSignature(part: MessagePart): string {
+  return [
+    encodeValue(part.kind),
+    encodeValue(fingerprintLongString(part.text)),
+    encodeNumber(part.reasoningCreatedAt),
+    encodeNumber(part.reasoningFinishedAt),
+    encodeValue(part.toolCallId),
+    encodeValue(part.toolName),
+    encodeValue(part.toolDisplayName),
+    encodeValue(fingerprintLongString(part.toolArguments)),
+    encodeValue(fingerprintLongString(part.toolResult)),
+    encodeBoolean(part.toolIsError),
+    encodeValue(part.toolStatus),
+    encodeValue(part.toolSourceType),
+    encodeValue(part.toolSourceLabel),
+    encodeValue(part.toolPermissionLevel),
+    encodeValue(part.toolApprovalReason),
+    buildSearchReferenceListSignature(part.toolSearchReferences),
+    encodeValue(part.mediaUrl),
+    encodeValue(part.mediaMime),
+    encodeValue(part.mediaName)
+  ].join('')
+}
+
+function buildMessagePartListRenderSignature(parts: MessagePart[]): string {
+  let signature = encodeNumber(parts.length)
+  for (let i = 0; i < parts.length; i++) {
+    signature += encodeValue(buildMessagePartSignature(parts[i]))
+  }
+  return signature
+}
+
 export function buildChatMessageRowRenderSignature(
   message: ChatMessage,
   showDateDivider: boolean,
@@ -172,7 +204,7 @@ export function buildChatMessageContentRenderSignature(
     buildSearchReferenceListSignature(message.searchReferences),
     buildToolCallListSignature(message.toolCalls),
     buildToolResultListSignature(message.toolResults),
-    encodeValue(fingerprintLongString(serializeMessageParts(message.parts))),
+    buildMessagePartListRenderSignature(message.parts),
     encodeValue(message.toolCallId),
     encodeValue(isEditing ? previewContent : ''),
     isEditing ? buildAttachmentSignature(previewAttachments) : buildAttachmentSignature([])
