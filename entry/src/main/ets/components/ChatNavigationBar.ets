@@ -318,7 +318,7 @@ export struct ChatNavigationBar {
 
             if (this.hasMessages) {
               Button({ type: ButtonType.Circle }) {
-                SymbolGlyph($r('sys.symbol.plus'))
+                SymbolGlyph($r('sys.symbol.message_badge_plus'))
                   .fontSize(18)
                   .fontColor([$r('app.color.text_primary')])
               }

@@ -211,7 +211,7 @@ export struct ChatToolPickerSheetContent {
           if (this.availableChatTools.length === 0) {
             Column({ space: 8 }) {
               Column() {
-                SymbolGlyph($r('sys.symbol.gearshape'))
+                SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
                   .fontSize(22)
                   .fontColor([this.themePrimary])
               }

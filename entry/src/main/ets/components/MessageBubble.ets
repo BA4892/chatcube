@@ -1908,7 +1908,7 @@ export struct MessageBubble {
   SearchingIndicatorInline() {
     Row() {
       Row({ space: 6 }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        SymbolGlyph($r('sys.symbol.international_insurance'))
           .fontSize(13)
           .fontColor([this.themePrimary])
 
@@ -2636,7 +2636,7 @@ export struct MessageBubble {
           .borderRadius(10)
           .backgroundColor(this.getTimelineBackgroundColor())
         if (step.kind === MessagePartKind.REASONING) {
-          SymbolGlyph($r('sys.symbol.lightbulb'))
+          SymbolGlyph($r('sys.symbol.AI_deep_thinking'))
             .fontSize(13)
             .fontColor([$r('app.color.text_secondary')])
         } else {

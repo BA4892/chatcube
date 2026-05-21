@@ -12,8 +12,8 @@ interface ThemeOption {
 
 const THEME_OPTIONS: ThemeOption[] = [
   { mode: ThemeMode.SYSTEM, label: $r('app.string.onboarding_theme_system'), symbol: $r('sys.symbol.gearshape') },
-  { mode: ThemeMode.LIGHT, label: $r('app.string.onboarding_theme_light'), symbol: $r('sys.symbol.lightbulb') },
-  { mode: ThemeMode.DARK, label: $r('app.string.onboarding_theme_dark'), symbol: $r('sys.symbol.cloud') }
+  { mode: ThemeMode.LIGHT, label: $r('app.string.onboarding_theme_light'), symbol: $r('sys.symbol.sun') },
+  { mode: ThemeMode.DARK, label: $r('app.string.onboarding_theme_dark'), symbol: $r('sys.symbol.moon') }
 ]
 
 @ComponentV2

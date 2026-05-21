@@ -259,7 +259,7 @@ export struct ChatNavigationTitleContent {
   @Builder
   private NewChatButtonBuilder() {
     Button({ type: ButtonType.Circle }) {
-      SymbolGlyph($r('sys.symbol.plus'))
+      SymbolGlyph($r('sys.symbol.message_badge_plus'))
         .fontSize(17)
         .fontColor([$r('app.color.text_primary')])
     }

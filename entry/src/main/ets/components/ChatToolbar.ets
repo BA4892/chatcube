@@ -102,7 +102,7 @@ export struct ChatToolbar {
       if (this.webSearchAvailable) {
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Row() {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            SymbolGlyph($r('sys.symbol.international_insurance'))
               .fontSize(16)
               .fontColor([this.webSearchEnabled ? this.themePrimary : $r('app.color.text_secondary')])
 
@@ -143,7 +143,7 @@ export struct ChatToolbar {
       if (this.toolSelectionAvailable) {
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Row() {
-            SymbolGlyph($r('sys.symbol.gearshape'))
+            SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
               .fontSize(16)
               .fontColor([this.hasSelectedTools ? this.themePrimary : $r('app.color.text_secondary')])
 
@@ -176,7 +176,7 @@ export struct ChatToolbar {
         // 旧版同时显示 "推理 + level" 在小屏会和联网/工具 chip 一起把工具栏挤满, 这里精简为单 Text。
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Row() {
-            SymbolGlyph($r('sys.symbol.lightbulb'))
+            SymbolGlyph($r('sys.symbol.AI_deep_thinking'))
               .fontSize(16)
               .fontColor([this.isReasoningEnabled() ? this.themePrimary : $r('app.color.text_secondary')])
 

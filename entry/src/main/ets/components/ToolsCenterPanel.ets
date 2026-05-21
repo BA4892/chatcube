@@ -2538,7 +2538,7 @@ struct SearchEngineCardItem {
   build() {
     Row({ space: 12 }) {
       Column() {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        SymbolGlyph($r('sys.symbol.international_insurance'))
           .renderingStrategy(SymbolRenderingStrategy.SINGLE)
           .fontSize(19)
           .fontColor([this.engineEnabled ? this.themePrimary : $r('app.color.text_secondary')])

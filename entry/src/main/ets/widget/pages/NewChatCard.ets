@@ -27,7 +27,7 @@ struct NewChatCard {
           .textAlign(TextAlign.Start)
 
         Row() {
-          SymbolGlyph($r('sys.symbol.plus'))
+          SymbolGlyph($r('sys.symbol.message_badge_plus'))
             .fontSize(18)
             .fontColor([Color.White])
         }

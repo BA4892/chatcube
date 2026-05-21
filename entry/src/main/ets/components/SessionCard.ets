@@ -169,7 +169,7 @@ export struct SessionCard {
   @Builder
   private PrefixContent() {
     Column() {
-      SymbolGlyph($r('sys.symbol.ellipsis_message_fill'))
+      SymbolGlyph($r('sys.symbol.message_on_message_fill'))
         .fontSize(18)
         .fontColor([this.themePrimary])
     }
@@ -214,7 +214,7 @@ export struct SessionCard {
         }
 
         Row() {
-          SymbolGlyph($r('sys.symbol.message'))
+          SymbolGlyph($r('sys.symbol.message_on_message'))
             .fontSize(10)
             .fontColor([this.getMetaTextColor()])
           Text(this.session.messageCount.toString())

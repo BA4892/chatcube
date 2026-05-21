@@ -621,8 +621,8 @@ export struct ThemeAppearanceSettingsView {
   private MiniTabBarSettings() {
     IndexBottomTabItem({
       active: this.previewTabIndex === PREVIEW_TAB_INDEX_SETTINGS,
-      activeIcon: $r('sys.symbol.gearshape_fill'),
-      inactiveIcon: $r('sys.symbol.gearshape'),
+      activeIcon: $r('sys.symbol.wrench_and_screwdriver_fill'),
+      inactiveIcon: $r('sys.symbol.wrench_and_screwdriver'),
       label: $r('app.string.tab_settings')
     })
   }

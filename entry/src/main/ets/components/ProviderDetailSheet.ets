@@ -1767,7 +1767,7 @@ export struct ProviderDetailPanel {
             .borderRadius(14)
 
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.gearshape'))
+              SymbolGlyph($r('sys.symbol.AI_model'))
                 .fontSize(12)
                 .fontColor([$r('app.color.text_secondary')])
               Text(this.getCurrentApiStyleName())

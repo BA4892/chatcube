@@ -133,10 +133,9 @@ import { HOLDING_HAND_STATUS_UNKNOWN, isExplicitHoldingHandStatus } from '../uti
 struct Index {
   private static readonly COMPACT_TABS_BAR_HEIGHT: number = 56
   private static readonly COMPACT_TABS_FLOATING_SIDE_MARGIN: number = 16
-  private static readonly COMPACT_TABS_HIDE_SCROLL_OFFSET_PX: number = 2
-  private static readonly COMPACT_TABS_SHOW_SCROLL_OFFSET_PX: number = 2
-  private static readonly COMPACT_TABS_SHOW_SCROLL_SPEED_PX_PER_MS: number = 0.45
-  private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 260
+  private static readonly COMPACT_TABS_HIDE_SCROLL_OFFSET_PX: number = 1
+  private static readonly COMPACT_TABS_SHOW_SCROLL_OFFSET_PX: number = 1
+  private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 220
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -363,7 +362,6 @@ struct Index {
   private settingsRootScroller: Scroller = new Scroller()
   private compactTabsVisibleByScroll: boolean = true
   private compactTabsAnimationGuardTimerId: number = -1
-  private lastSessionListScrollAt: number = 0
   private settingsCallback: SettingsChangeCallback | null = null
   private holdingHandSubscribed: boolean = false
   private handAdaptiveLoadSeq: number = 0
@@ -607,7 +605,6 @@ struct Index {
   }
 
   private resetCompactTabsScrollState(): void {
-    this.lastSessionListScrollAt = 0
     this.clearCompactTabsAnimationGuardTimer()
     this.compactTabsVisibleByScroll = true
   }
@@ -636,7 +633,6 @@ struct Index {
   }
 
   private showCompactTabsFromNonScrollChange(): void {
-    this.lastSessionListScrollAt = 0
     this.clearCompactTabsAnimationGuardTimer()
     if (this.compactTabsVisibleByScroll) {
       return
@@ -650,12 +646,8 @@ struct Index {
 
   private handleSessionListDidScroll(scrollOffset: number, scrollState: ScrollState): void {
     if (!this.canApplyCompactTabsScrollAnimation() || scrollState === ScrollState.Idle) {
-      this.lastSessionListScrollAt = 0
       return
     }
-    const now = Date.now()
-    const elapsed = this.lastSessionListScrollAt > 0 ? Math.max(now - this.lastSessionListScrollAt, 1) : 16
-    this.lastSessionListScrollAt = now
 
     if (scrollOffset > Index.COMPACT_TABS_HIDE_SCROLL_OFFSET_PX) {
       this.applyCompactTabsScrollAnimation(false)
@@ -664,10 +656,7 @@ struct Index {
     if (scrollOffset >= -Index.COMPACT_TABS_SHOW_SCROLL_OFFSET_PX) {
       return
     }
-    const speedPxPerMs = Math.abs(scrollOffset) / elapsed
-    if (speedPxPerMs >= Index.COMPACT_TABS_SHOW_SCROLL_SPEED_PX_PER_MS) {
-      this.applyCompactTabsScrollAnimation(true)
-    }
+    this.applyCompactTabsScrollAnimation(true)
   }
 
   private handleChatListPaneAreaChange(newArea: Area): void {
@@ -3331,7 +3320,7 @@ struct Index {
   @Builder
   private AssistantModelChipIcon(assistant: Assistant) {
     if (this.findAssistantProviderForChip(assistant).length === 0) {
-      SymbolGlyph($r('sys.symbol.lightbulb'))
+      SymbolGlyph($r('sys.symbol.AI_model'))
         .fontSize(18)
         .fontColor([$r('app.color.text_tertiary')])
     } else {
@@ -4168,7 +4157,7 @@ struct Index {
 
         if (this.isSearchExpanded) {
           Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            SymbolGlyph($r('sys.symbol.international_insurance'))
               .fontSize(18)
               .fontColor([$r('app.color.text_tertiary')])
 
@@ -4280,7 +4269,7 @@ struct Index {
           }
 
           IndexEmptyStateCard({
-            icon: $r('sys.symbol.ellipsis_message'),
+            icon: $r('sys.symbol.message_badge_plus'),
             title: $r('app.string.no_sessions'),
             description: $r('app.string.start_new_chat'),
             showButton: true,
@@ -4475,7 +4464,7 @@ struct Index {
   @Builder
   FloatingActionButton() {
     Button() {
-      SymbolGlyph($r('sys.symbol.plus'))
+      SymbolGlyph($r('sys.symbol.message_badge_plus'))
         .fontSize(24)
         .fontColor([Color.White])
     }

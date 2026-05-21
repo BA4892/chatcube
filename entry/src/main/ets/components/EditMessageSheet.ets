@@ -75,7 +75,7 @@ export struct EditMessageSheet {
     Row() {
       if (this.hasSelectedTools) {
         Row() {
-          SymbolGlyph($r('sys.symbol.gearshape'))
+          SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
             .fontSize(14)
             .fontColor([Color.White])
           Text('工具')
@@ -92,7 +92,7 @@ export struct EditMessageSheet {
         // 推理控制按钮
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Row() {
-            SymbolGlyph($r('sys.symbol.lightbulb'))
+            SymbolGlyph($r('sys.symbol.AI_deep_thinking'))
               .fontSize(14)
               .fontColor([this.isReasoningEnabled() ? Color.White : $r('app.color.text_secondary')])
             Text($r('app.string.chat_toolbar_reasoning'))

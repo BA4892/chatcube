@@ -44,11 +44,11 @@ function matchesAny(name: string, keywords: string[]): boolean {
 export function resolveToolSymbol(functionName: string): Resource {
   const raw = functionName as string | null | undefined
   if (raw === undefined || raw === null || raw.trim() === '') {
-    return $r('sys.symbol.gearshape')
+    return $r('sys.symbol.wrench_and_screwdriver')
   }
   const name = normalizeToolFunctionName(raw)
   if (isSearchWebFunctionName(name)) {
-    return $r('sys.symbol.magnifyingglass')
+    return $r('sys.symbol.international_insurance')
   }
   if (isScrapeWebFunctionName(name)) {
     return $r('sys.symbol.globe_badge_message')
@@ -71,5 +71,5 @@ export function resolveToolSymbol(functionName: string): Resource {
   if (matchesAny(name, SKILL_KEYWORDS)) {
     return $r('sys.symbol.wand_and_stars')
   }
-  return $r('sys.symbol.gearshape')
+  return $r('sys.symbol.wrench_and_screwdriver')
 }
