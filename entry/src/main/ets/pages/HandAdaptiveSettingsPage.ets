@@ -97,9 +97,8 @@ struct HandAdaptiveSettingsPage {
 
   private async loadSettings(): Promise<void> {
     const enabled = await this.preferencesService.getBoolean(PreferenceKeys.HAND_ADAPTIVE_ENABLED, false)
-    const newChatEnabled = await this.preferencesService.getBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, enabled)
     this.handAdaptiveEnabled = enabled
-    this.handAdaptiveNewChat = enabled ? newChatEnabled : false
+    this.handAdaptiveNewChat = enabled
     this.handAdaptiveUnsupported = enabled ? !this.isHoldingHandSupported() : false
   }
 
@@ -118,10 +117,10 @@ struct HandAdaptiveSettingsPage {
 
   private async persistSettings(): Promise<void> {
     await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
-    await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveNewChat)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveNewChat)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED, this.handAdaptiveUnsupported)
+    await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveEnabled)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveEnabled)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED, this.handAdaptiveUnsupported)
     setAppUiStateValue(AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT, Date.now())
   }
 
@@ -129,9 +128,6 @@ struct HandAdaptiveSettingsPage {
     const callbacks = new IndexSettingsSheetActionCallbacks()
     callbacks.onToggleHandAdaptiveEnabled = (value: boolean): void => {
       this.applyMasterSetting(value)
-    }
-    callbacks.onToggleHandAdaptiveNewChat = (value: boolean): void => {
-      this.applyNewChatSetting(value)
     }
     return callbacks
   }
@@ -151,10 +147,7 @@ struct HandAdaptiveSettingsPage {
   }
 
   private applyNewChatSetting(value: boolean): void {
-    this.handAdaptiveNewChat = value
-    this.persistSettings().catch((error: Error): void => {
-      console.error('HandAdaptiveSettingsPage', `Failed to persist new chat setting: ${JSON.stringify(error)}`)
-    })
+    this.applyMasterSetting(value)
   }
 
   @Builder

@@ -25,6 +25,7 @@ export struct ScrollToBottomButton {
   @Param progress: number = -1
   // 额外纵向偏移（用于多按钮错位摆放）
   @Param extraOffsetY: number = 0
+  @Param placeOnLeft: boolean = false
   // 点击回调
   @Event onScrollToBottom: () => void = () => {}
   @Event onScrollToTop: () => void = () => {}
@@ -118,9 +119,9 @@ export struct ScrollToBottomButton {
           this.onScrollToBottom()
         }
       })
-      .position({ x: '100%', y: '100%' })
+      .position({ x: this.placeOnLeft ? 0 : '100%', y: '100%' })
       .translate({
-        x: -56,
+        x: this.placeOnLeft ? 16 : -56,
         y: -(this.fixedBottomOffset + this.bottomAvoidHeight) + this.extraOffsetY
       })
       // translate.y 跟随 inputAreaHeightVp(ScreenshotBanner / 多行输入 / 附件预览出现时)变化时,

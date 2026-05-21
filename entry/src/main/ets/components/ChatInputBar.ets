@@ -43,6 +43,7 @@ export struct ChatInputBar {
   @Param currentProviderBrandColor: ResourceColor = ''
   // 是否自动聚焦输入框
   @Param autoFocus: boolean = false
+  @Param sendButtonOnLeft: boolean = false
   // 主题颜色（从 ThemeService 同步）
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -139,6 +140,194 @@ export struct ChatInputBar {
     }
   }
 
+  @Builder
+  private ModelButton() {
+    Button({ type: ButtonType.Circle }) {
+      if (this.currentModelId !== '') {
+        if (this.hasCurrentModelIcon()) {
+          Column() {
+            if (this.isRawfileCurrentModelIcon()) {
+              Image($rawfile(this.getCurrentModelIconResourcePath()))
+                .width(18)
+                .height(18)
+                .objectFit(ImageFit.Contain)
+            } else {
+              Image(this.getCurrentModelIconResourcePath())
+                .width(18)
+                .height(18)
+                .objectFit(ImageFit.Contain)
+            }
+          }
+          .width(28)
+          .height(28)
+          .borderRadius(7)
+          .backgroundColor($r('app.color.model_icon_bg'))
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Column() {
+            SymbolGlyph($r('sys.symbol.ai_edit'))
+              .fontSize(14)
+              .fontColor([$r('app.color.text_tertiary')])
+          }
+          .width(28)
+          .height(28)
+          .borderRadius(7)
+          .backgroundColor($r('app.color.model_icon_bg'))
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        }
+      } else {
+        SymbolGlyph($r('sys.symbol.ai_edit'))
+          .fontSize(22)
+          .fontColor([$r('app.color.text_secondary')])
+      }
+    }
+    .width(40)
+    .height(40)
+    .backgroundColor(this.modelBtnPressed ? this.themeDivider : this.themeAiBubble)
+    .scale({ x: this.modelBtnPressed ? 0.95 : 1, y: this.modelBtnPressed ? 0.95 : 1 })
+    .animation({ duration: 150, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.modelBtnPressed = true
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.modelBtnPressed = false
+      }
+    })
+    .onClick(() => {
+      this.onModelIconClick()
+    })
+  }
+
+  @Builder
+  private InputTextArea() {
+    TextArea({ text: this.inputText, placeholder: $r('app.string.input_placeholder') })
+      .id('chatInputTextArea')
+      .placeholderColor($r('app.color.text_tertiary'))
+      .placeholderFont({ size: 16 })
+      .enterKeyType(this.chatInputEnterKeySend ? EnterKeyType.Send : EnterKeyType.NEW_LINE)
+      .fontSize(16)
+      .fontColor($r('app.color.text_primary'))
+      .backgroundColor(Color.Transparent)
+      .layoutWeight(1)
+      .constraintSize({ minHeight: 40, maxHeight: 120 })
+      .padding({
+        left: 12,
+        right: 12,
+        top: 10,
+        bottom: 10
+      })
+      .onChange((value: string) => {
+        this.onInputTextChange(value)
+      })
+      .onSubmit(() => {
+        if (!this.chatInputEnterKeySend) {
+          return
+        }
+        if (!this.isSending && this.computeHasContent()) {
+          this.onSend()
+        }
+      })
+      .onFocus(() => {
+        this.onInputFocus()
+      })
+      .onBlur(() => {
+        this.onInputBlur()
+      })
+  }
+
+  @Builder
+  private AttachmentButton() {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph(this.getAttachmentButtonSymbol())
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+        .symbolEffect(
+          new ReplaceSymbolEffect(EffectScope.WHOLE),
+          this.attachIconTrigger
+        )
+    }
+    .width(40)
+    .height(40)
+    .backgroundColor(Color.Transparent)
+    .onClick(() => {
+      this.onAttachmentClick()
+    })
+  }
+
+  @Builder
+  private SendButton() {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph(this.getSendButtonSymbol())
+        .fontSize(this.isSending ? 20 : 22)
+        .fontColor([Color.White])
+        .symbolEffect(
+          new ReplaceSymbolEffect(EffectScope.WHOLE),
+          this.iconTrigger
+        )
+        .opacity(this.breathOpacity)
+        .animation({ duration: 850, curve: Curve.EaseInOut })
+    }
+    .width(40)
+    .height(40)
+    .backgroundColor(this.themeUserBubble)
+    .opacity(this.getSendButtonOpacity())
+    .shadow({
+      radius: this.sendBtnPressed ? 24 : 16,
+      color: this.themeUserBubble + (this.sendBtnPressed ? '66' : '40'),
+      offsetX: 0,
+      offsetY: this.sendBtnPressed ? 6 : 4
+    })
+    .scale({
+      x: this.sendBtnPressed ? 0.95 * this.sendBtnScale : this.sendBtnScale,
+      y: this.sendBtnPressed ? 0.95 * this.sendBtnScale : this.sendBtnScale
+    })
+    .rotate({ angle: this.sendBtnRotation })
+    .animation({ duration: 200, curve: Curve.EaseInOut })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.sendBtnPressed = true
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.sendBtnPressed = false
+      }
+    })
+    .onClick(() => {
+      if (this.isSending && !this.isEditing) {
+        this.onStop()
+      } else {
+        if (!this.computeHasContent()) {
+          return
+        }
+        this.onSend()
+      }
+    })
+  }
+
+  @Builder
+  private InputBarRow() {
+    Row() {
+      if (this.sendButtonOnLeft) {
+        this.SendButton()
+        this.ModelButton()
+        this.InputTextArea()
+        this.AttachmentButton()
+      } else {
+        this.ModelButton()
+        this.InputTextArea()
+        this.AttachmentButton()
+        this.SendButton()
+      }
+    }
+      .width('100%')
+      .padding({
+        left: 6,
+        right: 6,
+        top: 6,
+        bottom: 6
+      })
+  }
+
   build() {
     Column() {
       // 隐藏的 RecentPhotoComponent 用于检测截图
@@ -167,171 +356,7 @@ export struct ChatInputBar {
       // 附件预览区域
       this.AttachmentPreview()
 
-      // 输入栏主体
-      Row() {
-        // 模型图标按钮 - 点击触发快速切换（编辑模式下也可点击切换模型）
-        Button({ type: ButtonType.Circle }) {
-          if (this.currentModelId !== '') {
-            if (this.hasCurrentModelIcon()) {
-              Column() {
-                if (this.isRawfileCurrentModelIcon()) {
-                  Image($rawfile(this.getCurrentModelIconResourcePath()))
-                    .width(18)
-                    .height(18)
-                    .objectFit(ImageFit.Contain)
-                } else {
-                  Image(this.getCurrentModelIconResourcePath())
-                    .width(18)
-                    .height(18)
-                    .objectFit(ImageFit.Contain)
-                }
-              }
-              .width(28)
-              .height(28)
-              .borderRadius(7)
-              .backgroundColor($r('app.color.model_icon_bg'))
-              .justifyContent(FlexAlign.Center)
-              .alignItems(HorizontalAlign.Center)
-            } else {
-              Column() {
-                SymbolGlyph($r('sys.symbol.ai_edit'))
-                  .fontSize(14)
-                  .fontColor([$r('app.color.text_tertiary')])
-              }
-              .width(28)
-              .height(28)
-              .borderRadius(7)
-              .backgroundColor($r('app.color.model_icon_bg'))
-              .justifyContent(FlexAlign.Center)
-              .alignItems(HorizontalAlign.Center)
-            }
-          } else {
-            SymbolGlyph($r('sys.symbol.ai_edit'))
-              .fontSize(22)
-              .fontColor([$r('app.color.text_secondary')])
-          }
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(this.modelBtnPressed ? this.themeDivider : this.themeAiBubble)
-        .scale({ x: this.modelBtnPressed ? 0.95 : 1, y: this.modelBtnPressed ? 0.95 : 1 })
-        .animation({ duration: 150, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.modelBtnPressed = true
-          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.modelBtnPressed = false
-          }
-        })
-        .onClick(() => {
-          this.onModelIconClick()
-        })
-
-        // 输入框
-        TextArea({ text: this.inputText, placeholder: $r('app.string.input_placeholder') })
-          .id('chatInputTextArea')
-          .placeholderColor($r('app.color.text_tertiary'))
-          .placeholderFont({ size: 16 })
-          .enterKeyType(this.chatInputEnterKeySend ? EnterKeyType.Send : EnterKeyType.NEW_LINE)
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .backgroundColor(Color.Transparent)
-          .layoutWeight(1)
-          .constraintSize({ minHeight: 40, maxHeight: 120 })
-          .padding({
-            left: 12,
-            right: 12,
-            top: 10,
-            bottom: 10
-          })
-          .onChange((value: string) => {
-            this.onInputTextChange(value)
-          })
-          .onSubmit(() => {
-            if (!this.chatInputEnterKeySend) {
-              return
-            }
-            if (!this.isSending && this.computeHasContent()) {
-              this.onSend()
-            }
-          })
-          .onFocus(() => {
-            this.onInputFocus()
-          })
-          .onBlur(() => {
-            this.onInputBlur()
-          })
-
-        // 附件按钮（+号 / x号）
-        Button({ type: ButtonType.Circle, stateEffect: false }) {
-          SymbolGlyph(this.getAttachmentButtonSymbol())
-            .fontSize(20)
-            .fontColor([$r('app.color.text_secondary')])
-            .symbolEffect(
-              new ReplaceSymbolEffect(EffectScope.WHOLE),
-              this.attachIconTrigger
-            )
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.onAttachmentClick()
-        })
-
-        // 发送/停止按钮（编辑模式下为"保存并发送"）
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph(this.getSendButtonSymbol())
-            .fontSize(this.isSending ? 20 : 22)
-            .fontColor([Color.White])
-            .symbolEffect(
-              new ReplaceSymbolEffect(EffectScope.WHOLE),
-              this.iconTrigger
-            )
-            .opacity(this.breathOpacity)
-            .animation({ duration: 850, curve: Curve.EaseInOut })
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(this.themeUserBubble)
-        .opacity(this.getSendButtonOpacity())
-        .shadow({
-          radius: this.sendBtnPressed ? 24 : 16,
-          color: this.themeUserBubble + (this.sendBtnPressed ? '66' : '40'),
-          offsetX: 0,
-          offsetY: this.sendBtnPressed ? 6 : 4
-        })
-        .scale({
-          x: this.sendBtnPressed ? 0.95 * this.sendBtnScale : this.sendBtnScale,
-          y: this.sendBtnPressed ? 0.95 * this.sendBtnScale : this.sendBtnScale
-        })
-        .rotate({ angle: this.sendBtnRotation })
-        .animation({ duration: 200, curve: Curve.EaseInOut })
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.sendBtnPressed = true
-          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.sendBtnPressed = false
-          }
-        })
-        .onClick(() => {
-          if (this.isSending && !this.isEditing) {
-            this.onStop()
-          } else {
-            if (!this.computeHasContent()) {
-              return
-            }
-            this.onSend()
-          }
-        })
-      }
-      .width('100%')
-      .padding({
-        left: 6,
-        right: 6,
-        top: 6,
-        bottom: 6
-      })
+      this.InputBarRow()
     }
     .width('100%')
     .borderRadius(24)

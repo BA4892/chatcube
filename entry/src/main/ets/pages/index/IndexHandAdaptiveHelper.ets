@@ -1,4 +1,4 @@
-import { motion } from '@kit.MultimodalAwarenessKit'
+import { shouldUseLeftHandAdaptiveLayout } from '../../utils/HandAdaptiveUtils'
 
 export const INDEX_NEW_CHAT_FAB_SIZE = 58
 export const INDEX_NEW_CHAT_FAB_STACK_WIDTH = 58
@@ -9,19 +9,13 @@ export const INDEX_NEW_CHAT_FAB_BOTTOM_SPACING = 20
 export const INDEX_ASSISTANT_FAB_WIDTH = 132
 export const INDEX_ASSISTANT_FAB_HEIGHT = 50
 
-export function isHandAdaptiveActiveForIndex(enabled: boolean, newChatEnabled: boolean): boolean {
-  if (!enabled) {
-    return false
-  }
-  return newChatEnabled
+export function isHandAdaptiveActiveForIndex(enabled: boolean): boolean {
+  return enabled
 }
 
-export function shouldPlaceFabOnLeftForIndex(handAdaptiveEnabled: boolean, handAdaptiveNewChat: boolean,
-  handAdaptiveUnsupported: boolean, currentHoldingHand: motion.HoldingHandStatus): boolean {
-  if (!handAdaptiveEnabled || !handAdaptiveNewChat || handAdaptiveUnsupported) {
-    return false
-  }
-  return currentHoldingHand === motion.HoldingHandStatus.LEFT_HAND_HELD
+export function shouldPlaceFabOnLeftForIndex(handAdaptiveEnabled: boolean, handAdaptiveUnsupported: boolean,
+  currentHoldingHand: number): boolean {
+  return shouldUseLeftHandAdaptiveLayout(handAdaptiveEnabled, handAdaptiveUnsupported, currentHoldingHand)
 }
 
 export function getFabOffsetXForIndex(placeOnLeft: boolean): number {

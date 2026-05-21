@@ -40,6 +40,7 @@ export struct ChatInputAreaSection {
   @Param hasRecentScreenshot: boolean = false
   @Param bottomAvoidHeight: number = 0
   @Param contentMaxWidth: number = 99999
+  @Param sendButtonOnLeft: boolean = false
   @Event onCancelEdit: () => void = () => {}
   @Event onSend: () => void = () => {}
   @Event onStop: () => void = () => {}
@@ -121,6 +122,7 @@ export struct ChatInputAreaSection {
           currentProviderCustomImagePath: this.currentProviderCustomImagePath,
           currentProviderBrandColor: this.currentProviderBrandColor,
           autoFocus: this.autoFocus,
+          sendButtonOnLeft: this.sendButtonOnLeft,
           isEditing: this.isEditing,
           onCancelEdit: (): void => {
             this.onCancelEdit()

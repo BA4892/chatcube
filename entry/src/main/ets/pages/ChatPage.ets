@@ -108,6 +108,7 @@ import { getSearchToolIds, isSearchToolFunctionName, isSearchToolId } from '../u
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
 import { savePreviewImageToAlbum } from '../utils/ImagePreviewSaveUtil'
 import { DocumentParsePolicy, DocumentParseResult, WebDocumentParserService } from '../services/DocumentParseService'
+import { shouldUseLeftHandAdaptiveLayout } from '../utils/HandAdaptiveUtils'
 
 const DOMAIN = 0x0003
 const TAG = 'ChatPage'
@@ -267,6 +268,19 @@ export struct ChatPage {
   }
   private get windowHeightVp(): number {
     return getAppUiState().windowHeightVp
+  }
+  private get handAdaptiveEnabled(): boolean {
+    return getAppUiState().settingHandAdaptiveEnabled
+  }
+  private get handAdaptiveUnsupported(): boolean {
+    return getAppUiState().settingHandAdaptiveUnsupported
+  }
+  private get holdingHandStatus(): number {
+    return getAppUiState().holdingHandStatus
+  }
+  private shouldUseLeftHandLayout(): boolean {
+    return shouldUseLeftHandAdaptiveLayout(this.handAdaptiveEnabled, this.handAdaptiveUnsupported,
+      this.holdingHandStatus)
   }
   // 主题颜色
   private get themePrimary(): string {
@@ -2313,6 +2327,7 @@ export struct ChatPage {
           buttonDirection: 1,
           progress: this.scrollProgress,
           extraOffsetY: this.shouldShowStandardScrollToBottomButton() ? -48 : 0,
+          placeOnLeft: this.shouldUseLeftHandLayout(),
           onScrollToTop: () => {
             this.handleScrollToTopRequest()
           }
@@ -2324,6 +2339,7 @@ export struct ChatPage {
           bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
           fixedBottomOffset: this.getScrollButtonBaselineVp(),
           buttonDirection: 0,
+          placeOnLeft: this.shouldUseLeftHandLayout(),
           onScrollToBottom: () => {
             this.scrollToBottomWithAnimation()
           }
@@ -2334,6 +2350,7 @@ export struct ChatPage {
           isVisible: this.shouldShowScrollToBottomLoadingButton(),
           fixedBottomOffset: this.getScrollButtonBaselineVp(),
           bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
+          placeOnLeft: this.shouldUseLeftHandLayout(),
           onScrollToBottom: () => {
             this.scrollToBottomWithAnimation()
           }
@@ -2390,6 +2407,7 @@ export struct ChatPage {
               hasRecentScreenshot: this.hasRecentScreenshot,
               bottomAvoidHeight: this.getComposerBottomAvoidHeightVp(),
               contentMaxWidth: this.getChatContentMaxWidth(),
+              sendButtonOnLeft: this.shouldUseLeftHandLayout(),
               onCancelEdit: (): void => {
                 this.handleCancelEdit()
               },

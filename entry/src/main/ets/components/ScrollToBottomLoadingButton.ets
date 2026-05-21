@@ -16,6 +16,7 @@ export struct ScrollToBottomLoadingButton {
   // 按钮"左上角距屏幕底"基线(vp), 与 ScrollToBottomButton 共享同一基线
   @Param fixedBottomOffset: number = 128
   @Param bottomAvoidHeight: number = 0
+  @Param placeOnLeft: boolean = false
   @Event onScrollToBottom: () => void = () => {}
 
   @Local private btnPressed: boolean = false
@@ -96,9 +97,9 @@ export struct ScrollToBottomLoadingButton {
           this.onScrollToBottom()
         })
       }
-      .position({ x: '50%', y: '100%' })
+      .position({ x: this.placeOnLeft ? 0 : '50%', y: '100%' })
       .translate({
-        x: '-50%',
+        x: this.placeOnLeft ? 16 : '-50%',
         y: -(this.fixedBottomOffset + this.bottomAvoidHeight)
       })
       // 与 ScrollToBottomButton 同步, 跟随输入区高度变化时平滑过渡

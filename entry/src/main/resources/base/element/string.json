@@ -250,7 +250,7 @@
     },
     {
       "name": "hand_adaptive_master_desc",
-      "value": "Detect holding hand and adapt the New Chat button position for one-handed operation."
+      "value": "Detect holding hand and adapt New Chat, chat floating buttons, and the send button for one-handed operation."
     },
     {
       "name": "hand_adaptive_new_chat_title",
@@ -266,7 +266,7 @@
     },
     {
       "name": "hand_adaptive_unsupported_tip",
-      "value": "This device may not support holding-hand sensing (error 801). The buttons stay in default positions."
+      "value": "This device may not support holding-hand sensing (error 801). Related buttons stay in default positions."
     },
     {
       "name": "settings_notifications",

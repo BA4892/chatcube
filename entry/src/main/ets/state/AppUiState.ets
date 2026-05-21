@@ -3,6 +3,7 @@ import { AppStorageKeys } from '../config/AppStorageKeys'
 import { LayoutSizeClass } from '../config/LayoutProfile'
 import { ThemeColorConfig } from '../models/ThemeColors'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
+import { HOLDING_HAND_STATUS_UNKNOWN } from '../utils/HandAdaptiveUtils'
 
 const APP_UI_STATE_KEY = 'chatbox_app_ui_state'
 
@@ -31,6 +32,10 @@ export class AppUiState {
   @Trace layoutSizeClass: string = LayoutSizeClass.COMPACT
   @Trace settingsDetailPresentationMode: string = SettingsPagePresentationMode.PAGE
   @Trace settingsHandAdaptiveChangedAt: number = 0
+  @Trace settingHandAdaptiveEnabled: boolean = false
+  @Trace settingHandAdaptiveNewChat: boolean = false
+  @Trace settingHandAdaptiveUnsupported: boolean = false
+  @Trace holdingHandStatus: number = HOLDING_HAND_STATUS_UNKNOWN
   @Trace colorTheme: string = ''
   @Trace themePrimary: string = '#4E6F9E'
   @Trace themePrimaryLight: string = '#D8E2EE'
@@ -142,6 +147,18 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
       return
     case AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT:
       state.settingsHandAdaptiveChangedAt = value as number
+      return
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED:
+      state.settingHandAdaptiveEnabled = value as boolean
+      return
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT:
+      state.settingHandAdaptiveNewChat = value as boolean
+      return
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED:
+      state.settingHandAdaptiveUnsupported = value as boolean
+      return
+    case AppStorageKeys.HOLDING_HAND_STATUS:
+      state.holdingHandStatus = value as number
       return
     case AppStorageKeys.COLOR_THEME:
       state.colorTheme = value as string
@@ -284,6 +301,14 @@ function createAppUiStateFromStorage(): AppUiState {
     readStorageValue<string>(AppStorageKeys.SETTINGS_DETAIL_PRESENTATION_MODE, SettingsPagePresentationMode.PAGE))
   applyAppUiStateValue(state, AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT,
     readStorageValue<number>(AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT, 0))
+  applyAppUiStateValue(state, AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED,
+    readStorageValue<boolean>(AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED, false))
+  applyAppUiStateValue(state, AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT,
+    readStorageValue<boolean>(AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT, false))
+  applyAppUiStateValue(state, AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED,
+    readStorageValue<boolean>(AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED, false))
+  applyAppUiStateValue(state, AppStorageKeys.HOLDING_HAND_STATUS,
+    readStorageValue<number>(AppStorageKeys.HOLDING_HAND_STATUS, HOLDING_HAND_STATUS_UNKNOWN))
   applyAppUiStateValue(state, AppStorageKeys.COLOR_THEME, readStorageValue<string>(AppStorageKeys.COLOR_THEME, ''))
   applyAppUiStateValue(state, AppStorageKeys.THEME_PRIMARY,
     readStorageValue<string>(AppStorageKeys.THEME_PRIMARY, state.themePrimary))
@@ -382,6 +407,10 @@ export function syncAppUiStateFromStorage(): void {
   state.layoutSizeClass = freshState.layoutSizeClass
   state.settingsDetailPresentationMode = freshState.settingsDetailPresentationMode
   state.settingsHandAdaptiveChangedAt = freshState.settingsHandAdaptiveChangedAt
+  state.settingHandAdaptiveEnabled = freshState.settingHandAdaptiveEnabled
+  state.settingHandAdaptiveNewChat = freshState.settingHandAdaptiveNewChat
+  state.settingHandAdaptiveUnsupported = freshState.settingHandAdaptiveUnsupported
+  state.holdingHandStatus = freshState.holdingHandStatus
   state.colorTheme = freshState.colorTheme
   state.themePrimary = freshState.themePrimary
   state.themePrimaryLight = freshState.themePrimaryLight
@@ -489,6 +518,14 @@ function resolveAppUiStatePath(path: string): string {
       return 'settingsDetailPresentationMode'
     case AppStorageKeys.SETTINGS_HAND_ADAPTIVE_CHANGED_AT:
       return 'settingsHandAdaptiveChangedAt'
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED:
+      return 'settingHandAdaptiveEnabled'
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT:
+      return 'settingHandAdaptiveNewChat'
+    case AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED:
+      return 'settingHandAdaptiveUnsupported'
+    case AppStorageKeys.HOLDING_HAND_STATUS:
+      return 'holdingHandStatus'
     case AppStorageKeys.COLOR_THEME:
       return 'colorTheme'
     case AppStorageKeys.THEME_PRIMARY:

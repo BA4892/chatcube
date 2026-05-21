@@ -126,6 +126,7 @@ import { TRANSPARENT_BG_COLOR } from '../utils/IconGeneratorUtils'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { parseOpenNewChatWithPromptPayload } from '../config/PresetPrompts'
+import { HOLDING_HAND_STATUS_UNKNOWN, isExplicitHoldingHandStatus } from '../utils/HandAdaptiveUtils'
 
 @Entry
 @ComponentV2
@@ -155,7 +156,7 @@ struct Index {
   private get handAdaptiveSettingsChangedAt(): number {
     return getAppUiState().settingsHandAdaptiveChangedAt
   }
-  @Local currentHoldingHand: motion.HoldingHandStatus = motion.HoldingHandStatus.UNKNOWN_STATUS
+  @Local currentHoldingHand: number = HOLDING_HAND_STATUS_UNKNOWN
   @Local fabPressed: boolean = false
   @Local currentColorTheme: ColorTheme = ColorTheme.DEFAULT
   @Local showSettingsSheet: boolean = false
@@ -373,7 +374,11 @@ struct Index {
   private handledAssistantAvatarRefreshAt: number = 0
   private searchInputFocusId: string = 'index_session_search_input'
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void = (status: motion.HoldingHandStatus): void => {
+    if (!isExplicitHoldingHandStatus(status)) {
+      return
+    }
     this.currentHoldingHand = status
+    setAppUiStateValue(AppStorageKeys.HOLDING_HAND_STATUS, status)
   }
 
   private showIndexSnack(message: string | Resource, duration: number = 2000,
@@ -1290,9 +1295,10 @@ struct Index {
     AppStorage.setOrCreate('setting_notify_enabled', this.notifyEnabled)
     AppStorage.setOrCreate('setting_notify_on_complete', this.notifyOnComplete)
     AppStorage.setOrCreate('setting_notify_on_failed', this.notifyOnFailed)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveNewChat)
-    AppStorage.setOrCreate(AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED, this.handAdaptiveUnsupported)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveNewChat)
+    setAppUiStateValue(AppStorageKeys.SETTING_HAND_ADAPTIVE_UNSUPPORTED, this.handAdaptiveUnsupported)
+    setAppUiStateValue(AppStorageKeys.HOLDING_HAND_STATUS, this.currentHoldingHand)
     setAppUiStateValue(AppStorageKeys.CHAT_FONT_SIZE, this.chatFontSize)
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
     setAppUiStateValue(AppStorageKeys.MATERIAL_TYPE, this.materialType)
@@ -1304,7 +1310,6 @@ struct Index {
     const seq = this.handAdaptiveLoadSeq + 1
     this.handAdaptiveLoadSeq = seq
     const enabled = await this.preferencesService.getBoolean(PreferenceKeys.HAND_ADAPTIVE_ENABLED, false)
-    const newChatEnabled = await this.preferencesService.getBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, enabled)
     if (seq !== this.handAdaptiveLoadSeq) {
       return
     }
@@ -1313,9 +1318,9 @@ struct Index {
     if (!enabled) {
       this.handAdaptiveNewChat = false
       this.handAdaptiveUnsupported = false
-      this.currentHoldingHand = motion.HoldingHandStatus.UNKNOWN_STATUS
+      this.resetCurrentHoldingHand()
     } else {
-      this.handAdaptiveNewChat = newChatEnabled
+      this.handAdaptiveNewChat = true
     }
 
     this.updateHoldingHandSubscription()
@@ -1323,7 +1328,7 @@ struct Index {
   }
 
   private isHandAdaptiveActive(): boolean {
-    return isHandAdaptiveActiveForIndex(this.handAdaptiveEnabled, this.handAdaptiveNewChat)
+    return isHandAdaptiveActiveForIndex(this.handAdaptiveEnabled)
   }
 
   private updateHoldingHandSubscription(): void {
@@ -1334,6 +1339,11 @@ struct Index {
     this.subscribeHoldingHand()
   }
 
+  private resetCurrentHoldingHand(): void {
+    this.currentHoldingHand = HOLDING_HAND_STATUS_UNKNOWN
+    setAppUiStateValue(AppStorageKeys.HOLDING_HAND_STATUS, this.currentHoldingHand)
+  }
+
   private subscribeHoldingHand(): void {
     if (this.holdingHandSubscribed || this.handAdaptiveUnsupported) {
       return
@@ -1341,7 +1351,7 @@ struct Index {
     try {
       motion.on('holdingHandChanged', this.holdingHandCallback)
       this.holdingHandSubscribed = true
-      this.currentHoldingHand = motion.HoldingHandStatus.UNKNOWN_STATUS
+      this.resetCurrentHoldingHand()
     } catch (err) {
       const error = err as BusinessError
       if (error.code === 801) {
@@ -1349,7 +1359,8 @@ struct Index {
       }
       console.error('Index', `Failed to subscribe holdingHandChanged, code: ${error.code}`)
       this.holdingHandSubscribed = false
-      this.currentHoldingHand = motion.HoldingHandStatus.UNKNOWN_STATUS
+      this.resetCurrentHoldingHand()
+      this.syncSettingsSummaryToStorage()
     }
   }
 
@@ -1364,12 +1375,11 @@ struct Index {
       console.error('Index', `Failed to unsubscribe holdingHandChanged, code: ${error.code}`)
     }
     this.holdingHandSubscribed = false
-    this.currentHoldingHand = motion.HoldingHandStatus.UNKNOWN_STATUS
+    this.resetCurrentHoldingHand()
   }
 
   private shouldPlaceFabOnLeft(): boolean {
-    return shouldPlaceFabOnLeftForIndex(this.handAdaptiveEnabled, this.handAdaptiveNewChat, this.handAdaptiveUnsupported,
-      this.currentHoldingHand)
+    return shouldPlaceFabOnLeftForIndex(this.handAdaptiveEnabled, this.handAdaptiveUnsupported, this.currentHoldingHand)
   }
 
   private getFabOffsetX(): number {
@@ -1465,7 +1475,7 @@ struct Index {
 
   private async persistHandAdaptiveSettings(): Promise<void> {
     await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_ENABLED, this.handAdaptiveEnabled)
-    await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveNewChat)
+    await this.preferencesService.setBoolean(PreferenceKeys.HAND_ADAPTIVE_NEW_CHAT, this.handAdaptiveEnabled)
   }
 
   private async handleHandAdaptiveEnabledChanged(value: boolean): Promise<void> {
@@ -1477,7 +1487,7 @@ struct Index {
     } else {
       this.handAdaptiveNewChat = false
       this.handAdaptiveUnsupported = false
-      this.currentHoldingHand = motion.HoldingHandStatus.UNKNOWN_STATUS
+      this.resetCurrentHoldingHand()
     }
     this.syncSettingsSummaryToStorage()
     await this.persistHandAdaptiveSettings()
@@ -1486,7 +1496,14 @@ struct Index {
 
   private async handleHandAdaptiveNewChatChanged(value: boolean): Promise<void> {
     this.handAdaptiveLoadSeq = this.handAdaptiveLoadSeq + 1
+    this.handAdaptiveEnabled = value
     this.handAdaptiveNewChat = value
+    if (value) {
+      this.handAdaptiveUnsupported = false
+    } else {
+      this.handAdaptiveUnsupported = false
+      this.resetCurrentHoldingHand()
+    }
     this.syncSettingsSummaryToStorage()
     await this.persistHandAdaptiveSettings()
     this.updateHoldingHandSubscription()

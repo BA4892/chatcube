@@ -105,22 +105,12 @@ export struct IndexSettingsSheetContent {
           this.callbacks.onToggleHandAdaptiveEnabled(value)
         })
 
-      if (this.handAdaptiveEnabled) {
-        Divider().color($r('app.color.divider'))
-
-        this.HandAdaptiveToggleItem($r('app.string.hand_adaptive_new_chat_title'),
-          $r('app.string.hand_adaptive_new_chat_desc'), this.handAdaptiveNewChat, this.handAdaptiveEnabled,
-          (value: boolean) => {
-            this.callbacks.onToggleHandAdaptiveNewChat(value)
-          })
-
-        if (this.handAdaptiveUnsupported) {
-          Text($r('app.string.hand_adaptive_unsupported_tip'))
-            .fontSize(12)
-            .fontColor($r('app.color.status_error'))
-            .lineHeight(18)
-            .margin({ left: 8, right: 8, top: 12 })
-        }
+      if (this.handAdaptiveEnabled && this.handAdaptiveUnsupported) {
+        Text($r('app.string.hand_adaptive_unsupported_tip'))
+          .fontSize(12)
+          .fontColor($r('app.color.status_error'))
+          .lineHeight(18)
+          .margin({ left: 8, right: 8, top: 12 })
       }
     }
     .width('100%')

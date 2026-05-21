@@ -33,6 +33,7 @@ export class AppStorageKeys {
   static readonly SETTING_HAND_ADAPTIVE_ENABLED: string = 'setting_hand_adaptive_enabled'
   static readonly SETTING_HAND_ADAPTIVE_NEW_CHAT: string = 'setting_hand_adaptive_new_chat'
   static readonly SETTING_HAND_ADAPTIVE_UNSUPPORTED: string = 'setting_hand_adaptive_unsupported'
+  static readonly HOLDING_HAND_STATUS: string = 'holding_hand_status'
 
   // 主题键
   static readonly COLOR_THEME: string = 'color_theme'
