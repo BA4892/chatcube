@@ -3023,9 +3023,10 @@ struct Index {
           .swipeAction({
             end: this.AssistantEndSwipePanel(assistant)
           })
-          .borderRadius(16)
-          .clip(true)
+          // 不能加 .clip(true): dragPreview 浮层在长按拖动时会被 ListItem 边界裁切, 同时系统默认放大动画会让卡片溢出 ListItem 范围被切掉
+          // 卡片自身 (AssistantJumpCard) 已有 borderRadius + 内部 clip 处理圆角, swipeAction 面板自己也带 borderRadius
           .dragPreview(this.AssistantDragPreview(assistant))
+          .dragPreviewOptions({ mode: DragPreviewMode.DISABLE_SCALE })
         }, (assistant: Assistant) => this.getAssistantRenderKey(assistant))
           .onMove((from: number, to: number) => {
             if (from === to || from < 0 || to < 0 || from >= this.assistants.length ||
