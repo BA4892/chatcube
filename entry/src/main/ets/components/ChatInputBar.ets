@@ -311,14 +311,20 @@ export struct ChatInputBar {
   @Builder
   private InputBarRow() {
     Row() {
+      // 左侧按钮区: 随握姿翻转
       if (this.sendButtonOnLeft) {
         this.SendButton()
         this.AttachmentButton()
-        this.InputTextArea()
-        this.ModelButton()
       } else {
         this.ModelButton()
-        this.InputTextArea()
+      }
+      // 中间输入区: 固定位置, 不在 if/else 内, 切换握姿时 TextArea 实例保留,
+      // 焦点和 input method 会话跨切换不丢失, 键盘不会闪烁收起再弹起
+      this.InputTextArea()
+      // 右侧按钮区: 随握姿翻转
+      if (this.sendButtonOnLeft) {
+        this.ModelButton()
+      } else {
         this.AttachmentButton()
         this.SendButton()
       }
@@ -676,6 +682,8 @@ export struct ChatInputBar {
 
   @Monitor('sendButtonOnLeft')
   onSendButtonSideChanged(): void {
+    // 注: InputTextArea 已移出 if/else 块, 握姿切换时 TextArea 实例保留,
+    // 焦点和键盘会话不丢失, 这里只负责左右按钮区翻转的 swap 动画
     this.stopControlsSwapAnimation()
     this.getUIContext().animateTo({
       duration: 90,
