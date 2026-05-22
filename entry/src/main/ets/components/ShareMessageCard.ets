@@ -37,6 +37,12 @@ export struct ShareMessageCard {
     return getAppUiState().themeAiBubble
   }
 
+  private applyMarkdownTableTextColors(controller: MarkdownController, titleColor: ResourceColor, textColor: ResourceColor): void {
+    controller.setTableTitleTextColor(titleColor)
+    controller.setTableNormalTextColor(textColor)
+    controller.setTableInterleaveTextColor(textColor)
+  }
+
   // 配置 Markdown 样式（与聊天页面保持一致，避免深色模式下不可读）
   private configureMarkdownController(controller: MarkdownController): void {
     const titleColor = $r('app.color.markdown_title')
@@ -81,6 +87,7 @@ export struct ShareMessageCard {
       .setUlPointColor(textColor)
       .setLineColor(tableBorderColor)
       .setFootnoteTextColor(linkColor)
+    this.applyMarkdownTableTextColors(controller, titleColor, textColor)
     controller.setBlockSpacing(getMarkdownBlockSpacing(textSize))
   }
 

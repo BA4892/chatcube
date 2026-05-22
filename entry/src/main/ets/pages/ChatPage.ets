@@ -182,6 +182,7 @@ export struct ChatPage {
   @Local isAtTop: boolean = false
   @Local currentScrollOffsetVp: number = 0
   @Local scrollProgress: number = 0
+  @Local scrollShortcutButtonsVisible: boolean = false
   private firstVisibleListIndex: number = 0
   private lastVisibleListIndex: number = 0
   // 输入框显示状态（true=显示，false=隐藏）
@@ -370,6 +371,8 @@ export struct ChatPage {
   private scrollUiFlow: ChatScrollUiFlow | null = null
   private draftAutosaveTimerId: number = -1
   private readonly draftAutosaveDelayMs: number = 400
+  private scrollShortcutIdleTimerId: number = -1
+  private readonly scrollShortcutIdleHideDelayMs: number = 1800
   private appUiStateDisposers: Array<() => void> = []
   private initialBottomAlignmentRetryTimerIds: number[] = []
   private initialBottomAlignmentCompletionTimerId: number = -1
@@ -536,6 +539,7 @@ export struct ChatPage {
     this.ttsService.destroy()
     this.clearInitialBottomAlignmentRetries()
     this.clearPendingToolInteractionSyncTimer()
+    this.clearScrollShortcutIdleTimer()
     this.clearRuntimeStateWatchdog()
     this.flushDraftAutosave(true).catch((error: Error): void => {
       console.error('ChatPage', `Failed to flush draft on disappear: ${JSON.stringify(error)}`)
@@ -3519,6 +3523,9 @@ export struct ChatPage {
   }
 
   private shouldShowScrollToTopButton(): boolean {
+    if (!this.scrollShortcutButtonsVisible) {
+      return false
+    }
     if (this.isEditingMessage || this.hasDraftContent() || this.showImagePreview) {
       return false
     }
@@ -3537,12 +3544,37 @@ export struct ChatPage {
   }
 
   private shouldShowStandardScrollToBottomButton(): boolean {
+    if (!this.scrollShortcutButtonsVisible) {
+      return false
+    }
     return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
       this.messages.length > 0 && !this.isAtBottom &&
       !this.isMultiSelectMode && !this.isSending
   }
 
+  private clearScrollShortcutIdleTimer(): void {
+    if (this.scrollShortcutIdleTimerId < 0) {
+      return
+    }
+    clearTimeout(this.scrollShortcutIdleTimerId)
+    this.scrollShortcutIdleTimerId = -1
+  }
+
+  private scheduleHideScrollShortcutButtonsAfterIdle(): void {
+    this.clearScrollShortcutIdleTimer()
+    this.scrollShortcutIdleTimerId = setTimeout((): void => {
+      this.scrollShortcutIdleTimerId = -1
+      this.scrollShortcutButtonsVisible = false
+    }, this.scrollShortcutIdleHideDelayMs)
+  }
+
+  private revealScrollShortcutButtonsTemporarily(): void {
+    this.scrollShortcutButtonsVisible = true
+    this.scheduleHideScrollShortcutButtonsAfterIdle()
+  }
+
   private handleMessageListDidScroll(scrollOffset: number, scrollState: ScrollState): void {
+    this.revealScrollShortcutButtonsTemporarily()
     if (this.showAttachmentPicker && (scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling)) {
       this.closeAttachmentPanel()
     }

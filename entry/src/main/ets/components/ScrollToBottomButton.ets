@@ -4,9 +4,7 @@
  */
 
 import {
-  createButtonTouchHandler,
-  getButtonScale,
-  getButtonAnimation
+  createButtonTouchHandler
 } from '../utils/ButtonAnimationUtils'
 import { getAppUiState } from '../state/AppUiState'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
@@ -71,69 +69,70 @@ export struct ScrollToBottomButton {
     return this.buttonDirection === 1 && this.progress >= 0
   }
 
-  build() {
-    if (this.isVisible) {
-      Button({ type: ButtonType.Circle }) {
-        Stack({ alignContent: Alignment.Center }) {
-          if (this.shouldShowProgressRing()) {
-            Progress({ value: this.resolveProgressPercent(), total: 100, type: ProgressType.Ring })
-              .width(36)
-              .height(36)
-              .color(this.themePrimary)
-              .backgroundColor(this.ringTrackColor)
-              .style({
-                strokeWidth: 2.4,
-                shadow: false,
-                enableScanEffect: false
-              })
-          }
+  private getButtonVisibleScale(): ScaleOptions {
+    const pressedScale = this.scrollBtnPressed ? 0.95 : 1
+    const visibleScale = this.isVisible ? 1 : 0.86
+    const scale = pressedScale * visibleScale
+    return { x: scale, y: scale }
+  }
 
-          SymbolGlyph(this.buttonDirection === 1 ? $r('sys.symbol.arrow_up_to_line') : $r('sys.symbol.chevron_down'))
-            .fontSize(this.shouldShowProgressRing() ? 16 : 20)
-            .fontColor([this.themePrimary])
+  build() {
+    Button({ type: ButtonType.Circle }) {
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.shouldShowProgressRing()) {
+          Progress({ value: this.resolveProgressPercent(), total: 100, type: ProgressType.Ring })
+            .width(36)
+            .height(36)
+            .color(this.themePrimary)
+            .backgroundColor(this.ringTrackColor)
+            .style({
+              strokeWidth: 2.4,
+              shadow: false,
+              enableScanEffect: false
+            })
         }
+
+        SymbolGlyph(this.buttonDirection === 1 ? $r('sys.symbol.arrow_up_to_line') : $r('sys.symbol.chevron_down'))
+          .fontSize(this.shouldShowProgressRing() ? 16 : 20)
+          .fontColor([this.themePrimary])
       }
-      .width(40)
-      .height(40)
-      .backgroundColor(this.materialBg)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-      .border({
-        width: 0.5,
-        color: this.materialBorder
-      })
-      .shadow({
-        radius: this.scrollBtnPressed ? 16 : 8,
-        color: this.scrollBtnPressed ? withColorAlpha(this.themePrimary, '33') : this.materialShadowColor,
-        offsetX: 0,
-        offsetY: this.scrollBtnPressed ? 4 : 2
-      })
-      .scale(getButtonScale(this.scrollBtnPressed))
-      .animation(getButtonAnimation())
-      .onTouch(createButtonTouchHandler((pressed: boolean) => {
-        this.scrollBtnPressed = pressed
-      }))
-      .onClick(() => {
-        if (this.buttonDirection === 1) {
-          this.onScrollToTop()
-        } else {
-          this.onScrollToBottom()
-        }
-      })
-      .position({ x: this.placeOnLeft ? 0 : '100%', y: '100%' })
-      .translate({
-        x: this.placeOnLeft ? 16 : -56,
-        y: -(this.fixedBottomOffset + this.bottomAvoidHeight) + this.extraOffsetY
-      })
-      // translate.y 跟随 inputAreaHeightVp(ScreenshotBanner / 多行输入 / 附件预览出现时)变化时,
-      // 让按钮平滑滑到新位置, 避免"瞬移"。.animation 只影响布局/位移类属性, 与下面 .transition
-      // 的入退场动画作用域不重叠。
-      .animation({ duration: 200, curve: Curve.EaseOut })
-      .zIndex(12)
-      .transition(
-        TransitionEffect.OPACITY.combine(
-          TransitionEffect.scale({ x: 0.8, y: 0.8 })
-        ).animation({ duration: 200, curve: Curve.EaseOut })
-      )
     }
+    .width(40)
+    .height(40)
+    .backgroundColor(this.materialBg)
+    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
+    .border({
+      width: 0.5,
+      color: this.materialBorder
+    })
+    .shadow({
+      radius: this.scrollBtnPressed ? 16 : 8,
+      color: this.scrollBtnPressed ? withColorAlpha(this.themePrimary, '33') : this.materialShadowColor,
+      offsetX: 0,
+      offsetY: this.scrollBtnPressed ? 4 : 2
+    })
+    .opacity(this.isVisible ? 1 : 0)
+    .scale(this.getButtonVisibleScale())
+    .animation({ duration: 180, curve: Curve.EaseOut })
+    .hitTestBehavior(this.isVisible ? HitTestMode.Default : HitTestMode.None)
+    .onTouch(createButtonTouchHandler((pressed: boolean) => {
+      this.scrollBtnPressed = pressed
+    }))
+    .onClick(() => {
+      if (!this.isVisible) {
+        return
+      }
+      if (this.buttonDirection === 1) {
+        this.onScrollToTop()
+      } else {
+        this.onScrollToBottom()
+      }
+    })
+    .position({ x: this.placeOnLeft ? 0 : '100%', y: '100%' })
+    .translate({
+      x: this.placeOnLeft ? 16 : -56,
+      y: -(this.fixedBottomOffset + this.bottomAvoidHeight) + this.extraOffsetY
+    })
+    .zIndex(12)
   }
 }

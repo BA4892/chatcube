@@ -685,6 +685,17 @@ export struct MessageBubble {
     })
   }
 
+  private applyMarkdownTableTextColors(
+    controller: MarkdownController,
+    titleColor: ResourceColor,
+    normalTextColor: ResourceColor,
+    interleaveTextColor: ResourceColor
+  ): void {
+    controller.setTableTitleTextColor(titleColor)
+    controller.setTableNormalTextColor(normalTextColor)
+    controller.setTableInterleaveTextColor(interleaveTextColor)
+  }
+
   // 配置 Markdown 样式
   private configureMarkdownStyles(): void {
     const uiState = getAppUiState()
@@ -765,6 +776,7 @@ export struct MessageBubble {
         this.copyToClipboard(text)
       })
     this.applyMarkdownLazyRender(markdownController)
+    this.applyMarkdownTableTextColors(markdownController, titleColor, textColor, textColor)
     markdownController.setBlockSpacing(mainBlockSpacing)
 
     // 配置推理内容 Markdown（更紧凑）
@@ -808,6 +820,7 @@ export struct MessageBubble {
         this.copyToClipboard(code)
       })
     this.applyMarkdownLazyRender(reasoningMarkdownController)
+    this.applyMarkdownTableTextColors(reasoningMarkdownController, reasoningTextColor, reasoningTextColor, reasoningTextColor)
     reasoningMarkdownController.setBlockSpacing(compactBlockSpacing)
 
     // 配置翻译内容 Markdown
@@ -851,6 +864,7 @@ export struct MessageBubble {
         this.copyToClipboard(code)
       })
     this.applyMarkdownLazyRender(translationMarkdownController)
+    this.applyMarkdownTableTextColors(translationMarkdownController, titleColor, textColor, textColor)
     translationMarkdownController.setBlockSpacing(compactBlockSpacing)
     this.configurePartMarkdownControllers()
     this.syncMarkdownRuntimeOptions(true)
@@ -919,6 +933,7 @@ export struct MessageBubble {
         this.copyToClipboard(text)
       })
     this.applyMarkdownLazyRender(controller)
+    this.applyMarkdownTableTextColors(controller, titleColor, textColor, textColor)
     controller.setBlockSpacing(getMarkdownBlockSpacing(mainTextSize))
   }
 
