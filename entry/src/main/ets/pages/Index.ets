@@ -2641,6 +2641,11 @@ struct Index {
     return this.isExpandedLayout() ? 20 : 16
   }
 
+  // 大屏(>=720vp) 助手列表用 2 列; List.lanes 与 swipeAction/dragPreview 兼容
+  private getAssistantListLanes(): number {
+    return this.windowWidthVp >= 720 ? 2 : 1
+  }
+
   private openAssistantManageForNew(): void {
     this.openAssistantEditorForNew()
   }
@@ -3051,6 +3056,9 @@ struct Index {
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
       .cachedCount(4)
+      // 大屏(>=720vp) 改 2 列, 列间距 8;swipeAction / dragPreview / onMove 不受影响
+      .lanes(this.getAssistantListLanes(), 8)
+      .alignListItem(ListItemAlign.Start)
     }
   }
 
@@ -3172,44 +3180,60 @@ struct Index {
 
   @Builder
   private AssistantJumpCard(assistant: Assistant, featured: boolean = false) {
-    Column() {
-      this.AssistantJumpCardContent(assistant, featured)
+    // Stack 浮层放左侧 4dp 助手色带, 主层走原 Column 内容
+    // active 状态用色带饱和 + 阴影增强表达, 取代原 1.5px accent border 叠加
+    Stack({ alignContent: Alignment.Start }) {
+      Column() {
+        this.AssistantJumpCardContent(assistant, featured)
+      }
+      .width('100%')
+      .backgroundColor(this.themeSurface)
+      .borderRadius(20)
+      .border({
+        width: 1,
+        color: $r('app.color.divider')
+      })
+      .shadow({
+        radius: assistant.id === this.currentAssistantId ? 12 : 4,
+        color: assistant.id === this.currentAssistantId ?
+          withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '30' : '18') : 'rgba(0,0,0,0.04)',
+        offsetX: 0,
+        offsetY: 2
+      })
+      .scale({
+        x: this.openingAssistantId === assistant.id ? 0.985 : 1,
+        y: this.openingAssistantId === assistant.id ? 0.985 : 1
+      })
+      .opacity(this.openingAssistantId === assistant.id ? 0.92 : 1)
+      .animation({ duration: 220, curve: Curve.EaseOut })
+      .clip(true)
+      .onClick(() => {
+        this.openAssistantNewChat(assistant)
+      })
+
+      // 4dp 色带: active 用饱和助手色, 否则 35% 透明度
+      Column()
+        .width(4)
+        .height('100%')
+        .backgroundColor(assistant.id === this.currentAssistantId ?
+          this.getAssistantAccentColor(assistant) :
+          withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '55' : '40'))
+        .borderRadius({ topLeft: 20, bottomLeft: 20 })
+        .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
-    .backgroundColor(this.themeSurface)
-    .borderRadius(20)
-    .border({
-      width: assistant.id === this.currentAssistantId || this.openingAssistantId === assistant.id ? 1.5 : 1,
-      color: assistant.id === this.currentAssistantId || this.openingAssistantId === assistant.id ?
-        this.getAssistantAccentColor(assistant) : $r('app.color.divider')
-    })
-    .shadow({
-      radius: assistant.id === this.currentAssistantId ? 12 : 4,
-      color: assistant.id === this.currentAssistantId ?
-        withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '30' : '18') : 'rgba(0,0,0,0.04)',
-      offsetX: 0,
-      offsetY: assistant.id === this.currentAssistantId ? 2 : 2
-    })
-    .scale({
-      x: this.openingAssistantId === assistant.id ? 0.985 : 1,
-      y: this.openingAssistantId === assistant.id ? 0.985 : 1
-    })
-    .opacity(this.openingAssistantId === assistant.id ? 0.92 : 1)
-    .animation({ duration: 220, curve: Curve.EaseOut })
-    .clip(true)
-    .onClick(() => {
-      this.openAssistantSessions(assistant)
-    })
   }
 
   /**
-   * 助手英雄卡片内容: 分为渐变 Hero 头部 + 干净信息区
+   * 助手英雄卡片内容: Hero 头部 + 提示词预览 + 右下角 meta chip
+   * - "新建对话" / "更多" 都放 Hero 行右上, 移除原底部独立 footer 行
+   * - 整卡 click = openAssistantNewChat (高频意图), "查看历史会话" 走更多菜单
    */
   @Builder
   private AssistantJumpCardContent(assistant: Assistant, featured: boolean) {
     Column() {
-      // ========== Hero 头部: 助手色渐变背景 + 头像 + 名称 ==========
-      Row({ space: 14 }) {
+      // ========== Hero 头部: 助手色渐变 + 头像 + 名称 + 新建/更多按钮 ==========
+      Row({ space: 12 }) {
         this.AssistantAvatarBadge(assistant.avatarSymbol, this.getAssistantAvatarColor(assistant),
           featured ? 52 : 48, featured ? 16 : 14, featured ? 26 : 24,
           assistant.defaultProviderId, assistant.defaultModelId, assistant.defaultModelName)
@@ -3237,6 +3261,22 @@ struct Index {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
+        // 新建对话主操作: 圆形填充按钮, 用 onTouch 拦截避免冒泡到整卡 click
+        Button() {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(18)
+            .fontColor([Color.White])
+        }
+        .width(36)
+        .height(36)
+        .borderRadius(18)
+        .padding(0)
+        .backgroundColor(this.getAssistantAccentColor(assistant))
+        .stateEffect(true)
+        .onClick(() => {
+          this.openAssistantNewChat(assistant)
+        })
+
         Button() {
           SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
             .fontSize(18)
@@ -3256,7 +3296,7 @@ struct Index {
         })
       }
       .width('100%')
-      .padding({ left: 16, right: 12, top: 14, bottom: 12 })
+      .padding({ left: 16, right: 10, top: 14, bottom: 12 })
       .alignItems(VerticalAlign.Center)
       .linearGradient({
         angle: 135,
@@ -3267,8 +3307,8 @@ struct Index {
         ]
       })
 
-      // ========== 信息区: 系统提示词预览 + 底部操作 ==========
-      Column({ space: 8 }) {
+      // ========== 提示词预览 + 右下角 meta chip ==========
+      Column({ space: 6 }) {
         Text(this.getAssistantPromptPreviewText(assistant))
           .fontSize(13)
           .fontColor($r('app.color.text_tertiary'))
@@ -3277,15 +3317,11 @@ struct Index {
           .lineHeight(18)
           .width('100%')
 
-        Row({ space: 8 }) {
+        Row() {
           this.AssistantCardFooterMeta(assistant)
-
-          this.AssistantCardActionButton($r('sys.symbol.plus'), $r('app.string.new_chat'), true, (): void => {
-            this.openAssistantNewChat(assistant)
-          })
         }
         .width('100%')
-        .alignItems(VerticalAlign.Center)
+        .justifyContent(FlexAlign.End)
       }
       .width('100%')
       .padding({ left: 16, right: 14, top: 2, bottom: 12 })
@@ -3341,16 +3377,14 @@ struct Index {
 
   @Builder
   private AssistantCardFooterMeta(assistant: Assistant) {
-    Row() {
-      Row({ space: 3 }) {
-        Text(this.getAssistantSessionCount(assistant.id).toString())
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-        Text($r('app.string.assistant_sessions_label'))
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-      }
-      .alignItems(VerticalAlign.Center)
+    // 紧凑 meta chip: "#3 · 2小时前" 放右下角, layoutWeight 取消, 让 Row 反向对齐
+    Row({ space: 3 }) {
+      Text('#')
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
+      Text(this.getAssistantSessionCount(assistant.id).toString())
+        .fontSize(11)
+        .fontColor($r('app.color.text_tertiary'))
 
       if (this.getAssistantLastChatTimestamp(assistant.id) > 0) {
         Text(' · ')
@@ -3360,41 +3394,22 @@ struct Index {
         this.AssistantRelativeTimeText(this.getAssistantLastChatTimestamp(assistant.id))
       }
     }
-    .layoutWeight(1)
     .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private AssistantCardActionButton(symbol: Resource, label: ResourceStr, primary: boolean, onTap: () => void) {
-    Button() {
-      Row({ space: 5 }) {
-        SymbolGlyph(symbol)
-          .fontSize(14)
-          .fontColor([primary ? Color.White : this.themePrimary])
-
-        Text(label)
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(primary ? Color.White : this.themePrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-    }
-    .height(32)
-    .borderRadius(16)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor(primary ? this.themePrimary : this.themePrimaryLight)
-    .stateEffect(true)
-    .onClick(() => {
-      onTap()
-    })
   }
 
   @Builder
   private AssistantCardMoreMenu(assistant: Assistant) {
     Menu() {
+      // "查看历史会话" 作为第一项, 替代原整卡 click 的 openAssistantSessions 入口
+      MenuItem({
+        startIcon: $r('sys.symbol.clock'),
+        content: $r('app.string.assistant_view_sessions')
+      })
+        .contentFont({ size: 14 })
+        .onClick(() => {
+          this.openAssistantSessions(assistant)
+        })
+
       MenuItem({
         startIcon: $r('sys.symbol.square_and_pencil'),
         content: $r('app.string.edit_assistant_short')

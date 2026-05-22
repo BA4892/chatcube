@@ -2317,6 +2317,10 @@
       "value": "编辑"
     },
     {
+      "name": "assistant_view_sessions",
+      "value": "查看历史会话"
+    },
+    {
       "name": "assistant_no_chat_time",
       "value": "暂无对话"
     },

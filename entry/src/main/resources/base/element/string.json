@@ -2317,6 +2317,10 @@
       "value": "Edit"
     },
     {
+      "name": "assistant_view_sessions",
+      "value": "View sessions"
+    },
+    {
       "name": "assistant_no_chat_time",
       "value": "No chats"
     },
