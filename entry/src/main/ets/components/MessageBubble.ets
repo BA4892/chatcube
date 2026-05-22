@@ -1863,8 +1863,6 @@ export struct MessageBubble {
             }
           }
           .width('100%')
-          .constraintSize({ maxWidth: '100%' })
-          .clip(true)
           .onClick(() => {
             if (!this.isMultiSelectMode && (this.speakingMessageId === this.message.id)) {
               this.onTTSStop()
@@ -1922,7 +1920,6 @@ export struct MessageBubble {
           }
         }
         .width('100%')
-        .constraintSize({ maxWidth: '100%' })
         .margin({ top: this.showHeader ? 8 : 0 })
         .padding({ left: 12, right: 12, top: 10, bottom: 10 })
           .backgroundColor(this.isMultiSelectMode && this.isSelected
@@ -1937,8 +1934,6 @@ export struct MessageBubble {
       }
       .enabled(!this.isMultiSelectMode)
       .layoutWeight(1)
-      .constraintSize({ maxWidth: '100%' })
-      .clip(true)
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
@@ -2063,14 +2058,10 @@ export struct MessageBubble {
                 controller: this.translationMarkdownController,
                 text: this.getReadonlyTranslatedText()
               })
-                .width('100%')
                 .constraintSize({ maxWidth: '100%' })
-                .clip(true)
                 .backgroundColor(Color.Transparent)
             }
             .width('100%')
-            .constraintSize({ maxWidth: '100%' })
-            .clip(true)
             .padding({ left: 12, right: 12, bottom: 12 })
           }
         }
@@ -2588,8 +2579,6 @@ export struct MessageBubble {
 	      })
 	    }
 	    .width('100%')
-	    .constraintSize({ maxWidth: '100%' })
-	    .clip(true)
 	  }
 
 	  @Builder
@@ -2604,8 +2593,6 @@ export struct MessageBubble {
 	      })
 	    }
 	    .width('100%')
-	    .constraintSize({ maxWidth: '100%' })
-	    .clip(true)
 	    .margin({ bottom: 8 })
 	  }
 
@@ -2642,8 +2629,6 @@ export struct MessageBubble {
 	                  text: segment.renderContent
 	                })
 	                  .width('100%')
-	                  .constraintSize({ maxWidth: '100%' })
-	                  .clip(true)
 	                  .backgroundColor(Color.Transparent)
 	              }
 	            },
@@ -2658,16 +2643,12 @@ export struct MessageBubble {
 	            text: this.getMarkdownRenderText(part.text)
 	          })
 	            .width('100%')
-	            .constraintSize({ maxWidth: '100%' })
-	            .clip(true)
 	            .backgroundColor(Color.Transparent)
 	            .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
 	        }
 	      }
 	    }
 	    .width('100%')
-	    .constraintSize({ maxWidth: '100%' })
-	    .clip(true)
 	  }
 
 	  // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
@@ -2700,16 +2681,10 @@ export struct MessageBubble {
           })
         }
         .width('100%')
-        .constraintSize({ maxWidth: '100%' })
-        .clip(true)
       }
       .width('100%')
-      .constraintSize({ maxWidth: '100%' })
-      .clip(true)
     }
     .width('100%')
-    .constraintSize({ maxWidth: '100%' })
-    .clip(true)
     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
     .backgroundColor(this.getTimelineBackgroundColor())
     .borderRadius(12)
@@ -2750,13 +2725,9 @@ export struct MessageBubble {
         }
       }
       .layoutWeight(1)
-      .constraintSize({ maxWidth: '100%' })
-      .clip(true)
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .constraintSize({ maxWidth: '100%' })
-    .clip(true)
     .padding({ top: 3, bottom: 3 })
     .alignItems(VerticalAlign.Center)
   }
@@ -2788,14 +2759,10 @@ export struct MessageBubble {
             controller: this.reasoningMarkdownController,
             text: this.getMarkdownRenderText(step.text)
           })
-            .width('100%')
             .constraintSize({ maxWidth: '100%' })
-            .clip(true)
             .backgroundColor(Color.Transparent)
         }
         .width('100%')
-        .constraintSize({ maxWidth: '100%' })
-        .clip(true)
         .margin({ top: 6 })
         .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
       }
