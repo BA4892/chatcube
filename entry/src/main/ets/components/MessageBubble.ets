@@ -60,13 +60,15 @@ interface TranslateLanguage {
 enum ContentSegmentType {
   MARKDOWN = 'markdown',
   HTML = 'html',
-  MERMAID = 'mermaid'
+  MERMAID = 'mermaid',
+  CODE = 'code'
 }
 
 // 内容分段（用于可预览代码块内联渲染）
 interface ContentSegment {
   type: ContentSegmentType
   renderContent: string
+  language?: string
 }
 
 interface ImageAttachmentEntry {
@@ -1060,6 +1062,139 @@ export struct MessageBubble {
 
   private hasPreviewableCodeBlocks(content: string): boolean {
     return this.hasHtmlBlocks(content) || this.hasMermaidBlocks(content)
+  }
+
+  private isCodeFenceAtLineStart(content: string, index: number): boolean {
+    if (index < 0 || index >= content.length) {
+      return false
+    }
+    if (content.substring(index, index + 3) !== '```') {
+      return false
+    }
+    let lineStart = index
+    while (lineStart > 0 && content.charAt(lineStart - 1) !== '\n') {
+      lineStart--
+    }
+    const prefix = content.substring(lineStart, index)
+    return prefix.length <= 3 && prefix.trim().length === 0
+  }
+
+  private isClosingCodeFenceLine(line: string): boolean {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('```')) {
+      return false
+    }
+    for (let i = 0; i < trimmed.length; i++) {
+      if (trimmed.charAt(i) !== '`') {
+        return false
+      }
+    }
+    return true
+  }
+
+  private findNextCodeFenceStart(content: string, startIndex: number): number {
+    let index = content.indexOf('```', startIndex)
+    while (index >= 0) {
+      if (this.isCodeFenceAtLineStart(content, index)) {
+        return index
+      }
+      index = content.indexOf('```', index + 3)
+    }
+    return -1
+  }
+
+  private findClosingCodeFenceStart(content: string, startIndex: number): number {
+    let index = this.findNextCodeFenceStart(content, startIndex)
+    while (index >= 0) {
+      const lineEnd = content.indexOf('\n', index)
+      const fenceLine = content.substring(index, lineEnd >= 0 ? lineEnd : content.length).trim()
+      if (this.isClosingCodeFenceLine(fenceLine)) {
+        return index
+      }
+      index = this.findNextCodeFenceStart(content, index + 3)
+    }
+    return -1
+  }
+
+  private normalizeCodeFenceLanguage(info: string): string {
+    const trimmed = info.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    const spaceIndex = trimmed.search(/\s/)
+    const language = spaceIndex >= 0 ? trimmed.substring(0, spaceIndex) : trimmed
+    return language.length > 24 ? language.substring(0, 24) : language
+  }
+
+  private pushStreamingMarkdownSegment(segments: ContentSegment[], content: string): void {
+    if (content.trim().length === 0) {
+      return
+    }
+    segments.push({
+      type: ContentSegmentType.MARKDOWN,
+      renderContent: content
+    } as ContentSegment)
+  }
+
+  private splitStreamingContentToSegments(content: string): ContentSegment[] {
+    const segments: ContentSegment[] = []
+    let cursor = 0
+    let fenceStart = this.findNextCodeFenceStart(content, cursor)
+
+    while (fenceStart >= 0) {
+      this.pushStreamingMarkdownSegment(segments, content.substring(cursor, fenceStart))
+      const openerLineEnd = content.indexOf('\n', fenceStart)
+      const infoEnd = openerLineEnd >= 0 ? openerLineEnd : content.length
+      const language = this.normalizeCodeFenceLanguage(content.substring(fenceStart + 3, infoEnd))
+
+      if (openerLineEnd < 0) {
+        segments.push({
+          type: ContentSegmentType.CODE,
+          renderContent: '',
+          language: language
+        } as ContentSegment)
+        cursor = content.length
+        break
+      }
+
+      const codeStart = openerLineEnd + 1
+      const closingFenceStart = this.findClosingCodeFenceStart(content, codeStart)
+      if (closingFenceStart >= 0) {
+        segments.push({
+          type: ContentSegmentType.CODE,
+          renderContent: content.substring(codeStart, closingFenceStart),
+          language: language
+        } as ContentSegment)
+        const closingLineEnd = content.indexOf('\n', closingFenceStart)
+        cursor = closingLineEnd >= 0 ? closingLineEnd + 1 : content.length
+      } else {
+        segments.push({
+          type: ContentSegmentType.CODE,
+          renderContent: content.substring(codeStart),
+          language: language
+        } as ContentSegment)
+        cursor = content.length
+        break
+      }
+
+      fenceStart = this.findNextCodeFenceStart(content, cursor)
+    }
+
+    if (cursor < content.length) {
+      this.pushStreamingMarkdownSegment(segments, content.substring(cursor))
+    }
+    return segments
+  }
+
+  private hasStreamingCodeFence(content: string): boolean {
+    return this.findNextCodeFenceStart(content, 0) >= 0
+  }
+
+  private getStreamingCodeBlockTitle(language: string | undefined): string {
+    if (language === undefined || language.trim() === '') {
+      return '代码'
+    }
+    return language.trim()
   }
 
   private normalizeMarkdownImageSource(src: string): string {
@@ -2604,7 +2739,26 @@ export struct MessageBubble {
 	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
 	      if (part.text.trim() !== '') {
-	        if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(part.text)) {
+	        if (this.message.isGenerating && this.hasStreamingCodeFence(part.text)) {
+	          ForEach(this.splitStreamingContentToSegments(part.text),
+	            (segment: ContentSegment, index: number) => {
+	              if (segment.type === ContentSegmentType.CODE) {
+	                this.StreamingCodeBlock(segment)
+	              } else {
+	                Markdown({
+	                  controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
+	                  text: segment.renderContent
+	                })
+	                  .width('100%')
+	                  .backgroundColor(Color.Transparent)
+	              }
+	            },
+	            (segment: ContentSegment, index: number) => {
+	              return 'stream_part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
+	                segment.type + '_' + index.toString() + '_' + segment.renderContent.length.toString()
+	            }
+	          )
+	        } else if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(part.text)) {
 	          ForEach(this.splitContentToSegments(part.text),
 	            (segment: ContentSegment, index: number) => {
 	              if (segment.type === ContentSegmentType.HTML) {
@@ -2650,6 +2804,54 @@ export struct MessageBubble {
 	    }
 	    .width('100%')
 	  }
+
+  @Builder
+  StreamingCodeBlock(segment: ContentSegment) {
+    Column() {
+      Row() {
+        Text(this.getStreamingCodeBlockTitle(segment.language))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.isDarkMode ? '#D7C4A9' : '#8F5E45')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+
+        Row() {
+          SymbolGlyph($r('sys.symbol.checkmark_square_on_square'))
+            .fontSize(14)
+            .fontColor([$r('app.color.text_tertiary')])
+        }
+        .width(28)
+        .height(28)
+        .borderRadius(14)
+        .justifyContent(FlexAlign.Center)
+        .opacity(segment.renderContent.length > 0 ? 1 : 0.45)
+        .enabled(segment.renderContent.length > 0)
+        .onClick(() => {
+          this.copyToClipboard(segment.renderContent)
+        })
+      }
+      .width('100%')
+      .height(34)
+      .padding({ left: 12, right: 8 })
+      .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '1C' : '12'))
+
+      Text(segment.renderContent.length > 0 ? segment.renderContent : ' ')
+        .fontSize(Math.max(11, this.chatFontSize - 3))
+        .fontFamily('monospace')
+        .fontColor(this.isDarkMode ? '#E0E0E0' : '#333333')
+        .lineHeight(Math.round(Math.max(11, this.chatFontSize - 3) * 1.5))
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 12 })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.code_background'))
+    .borderRadius(10)
+    .border({ width: 0.5, color: $r('app.color.markdown_table_border') })
+    .clip(true)
+    .margin({ top: 4, bottom: 8 })
+  }
 
 	  // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
 	  // 为了最小改动,这里不复用 ChainOfThought 组件,直接在 MessageBubble 里内联 Row/Column。

@@ -29,7 +29,8 @@ export struct MermaidPreviewCard {
   private get themePrimaryLight(): string {
     return getAppUiState().themePrimaryLight
   }
-  @Local activeTab: number = 1
+  @Local activeTab: number = 0
+  @Local previewLoaded: boolean = false
   @Local showFullScreen: boolean = false
   @Local copyBtnPressed: boolean = false
   @Local fullScreenBtnPressed: boolean = false
@@ -83,6 +84,9 @@ export struct MermaidPreviewCard {
   }
 
   private renderPreview(): void {
+    if (!this.previewLoaded) {
+      return
+    }
     this.renderWithController(this.previewWebController, this.isPreviewWebReady && this.isPreviewPageReady)
   }
 
@@ -132,6 +136,12 @@ export struct MermaidPreviewCard {
     }
   }
 
+  private activatePreview(): void {
+    this.previewLoaded = true
+    this.activeTab = 1
+    this.renderPreview()
+  }
+
   build() {
     Column() {
       Row() {
@@ -170,7 +180,7 @@ export struct MermaidPreviewCard {
         .borderRadius(8)
         .margin({ left: 4 })
         .onClick(() => {
-          this.activeTab = 1
+          this.activatePreview()
         })
 
         Blank()
@@ -248,21 +258,23 @@ export struct MermaidPreviewCard {
         .backgroundColor($r('app.color.code_background'))
       }
 
-      Web({ src: MERMAID_PREVIEW_URL, controller: this.previewWebController })
-        .width('100%')
-        .height(this.activeTab === 1 ? 300 : 0)
-        .visibility(this.activeTab === 1 ? Visibility.Visible : Visibility.Hidden)
-        .onControllerAttached(() => {
-          this.isPreviewWebReady = true
-          hilog.info(DOMAIN, TAG, 'Preview Web controller attached')
-        })
-        .onPageEnd(() => {
-          this.isPreviewPageReady = true
-          this.renderPreview()
-        })
-        .javaScriptAccess(true)
-        .fileAccess(false)
-        .backgroundColor(this.getPreviewBackground())
+      if (this.previewLoaded) {
+        Web({ src: MERMAID_PREVIEW_URL, controller: this.previewWebController })
+          .width('100%')
+          .height(this.activeTab === 1 ? 300 : 0)
+          .visibility(this.activeTab === 1 ? Visibility.Visible : Visibility.Hidden)
+          .onControllerAttached(() => {
+            this.isPreviewWebReady = true
+            hilog.info(DOMAIN, TAG, 'Preview Web controller attached')
+          })
+          .onPageEnd(() => {
+            this.isPreviewPageReady = true
+            this.renderPreview()
+          })
+          .javaScriptAccess(true)
+          .fileAccess(false)
+          .backgroundColor(this.getPreviewBackground())
+      }
     }
     .width('100%')
     .backgroundColor($r('app.color.surface'))

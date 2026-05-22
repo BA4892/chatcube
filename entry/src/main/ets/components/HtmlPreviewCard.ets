@@ -18,7 +18,8 @@ export struct HtmlPreviewCard {
   private get themePrimaryLight(): string {
     return getAppUiState().themePrimaryLight
   }
-  @Local activeTab: number = 1
+  @Local activeTab: number = 0
+  @Local previewLoaded: boolean = false
   @Local showFullScreen: boolean = false
   @Local copyBtnPressed: boolean = false
   @Local fullScreenBtnPressed: boolean = false
@@ -58,7 +59,7 @@ export struct HtmlPreviewCard {
   }
 
   private reloadPreview(): void {
-    if (this.isPreviewWebReady) {
+    if (this.previewLoaded && this.isPreviewWebReady) {
       try {
         this.previewWebController.loadUrl(this.getDataUrl())
       } catch (e) {
@@ -99,6 +100,11 @@ export struct HtmlPreviewCard {
     } catch (error) {
       hilog.error(DOMAIN, TAG, `Copy to clipboard failed: ${JSON.stringify(error)}`)
     }
+  }
+
+  private activatePreview(): void {
+    this.previewLoaded = true
+    this.activeTab = 1
   }
 
   build() {
@@ -142,7 +148,7 @@ export struct HtmlPreviewCard {
         .borderRadius(8)
         .margin({ left: 4 })
         .onClick(() => {
-          this.activeTab = 1
+          this.activatePreview()
         })
 
         Blank()
@@ -223,18 +229,20 @@ export struct HtmlPreviewCard {
         .backgroundColor($r('app.color.code_background'))
       }
 
-      // 预览 Web 视图（始终渲染，用 visibility 切换，避免 WebView 销毁重建）
-      Web({ src: this.getDataUrl(), controller: this.previewWebController })
-        .width('100%')
-        .height(this.activeTab === 1 ? 300 : 0)
-        .visibility(this.activeTab === 1 ? Visibility.Visible : Visibility.Hidden)
-        .onControllerAttached(() => {
-          this.isPreviewWebReady = true
-          hilog.info(DOMAIN, TAG, 'Preview Web controller attached')
-        })
-        .javaScriptAccess(true)
-        .domStorageAccess(true)
-        .backgroundColor(this.isDarkMode ? '#1a1a1a' : '#ffffff')
+      // 预览 WebView 首次切换到预览时再创建;创建后保留实例,避免来回切换重建。
+      if (this.previewLoaded) {
+        Web({ src: this.getDataUrl(), controller: this.previewWebController })
+          .width('100%')
+          .height(this.activeTab === 1 ? 300 : 0)
+          .visibility(this.activeTab === 1 ? Visibility.Visible : Visibility.Hidden)
+          .onControllerAttached(() => {
+            this.isPreviewWebReady = true
+            hilog.info(DOMAIN, TAG, 'Preview Web controller attached')
+          })
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .backgroundColor(this.isDarkMode ? '#1a1a1a' : '#ffffff')
+      }
     }
     .width('100%')
     .backgroundColor($r('app.color.surface'))
