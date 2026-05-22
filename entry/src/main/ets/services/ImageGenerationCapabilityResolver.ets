@@ -103,13 +103,13 @@ export class ImageGenerationCapabilityResolver {
   }
 
   static normalizeModeration(
-    value: ImageGenerationModeration,
+    _value: ImageGenerationModeration,
     capabilities: ImageGenerationRouteCapabilities
   ): ImageGenerationModeration {
     if (!capabilities.supportsModeration) {
       return ImageGenerationModeration.AUTO
     }
-    return value === ImageGenerationModeration.LOW ? ImageGenerationModeration.LOW : ImageGenerationModeration.AUTO
+    return ImageGenerationModeration.LOW
   }
 
   static normalizeOutputCompression(

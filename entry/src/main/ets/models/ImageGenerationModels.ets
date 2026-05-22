@@ -52,7 +52,7 @@ export class ImageGenerationRequest {
   quality: ImageGenerationQuality = ImageGenerationQuality.AUTO
   outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG
   outputCompression: number = -1
-  moderation: ImageGenerationModeration = ImageGenerationModeration.AUTO
+  moderation: ImageGenerationModeration = ImageGenerationModeration.LOW
 }
 
 export class ImageGenerationItem {

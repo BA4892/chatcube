@@ -1,11 +1,13 @@
 import {
   ImageAspectRatio,
-  ImageGenerationModeration,
   ImageGenerationOutputFormat,
   ImageGenerationQuality
 } from '../../models/ImageGenerationModels'
 import { getAppUiState } from '../../state/AppUiState'
-import { ImageGenerationRouteCapabilities } from '../../services/ImageGenerationCapabilityResolver'
+import {
+  ImageGenerationCapabilityResolver,
+  ImageGenerationRouteCapabilities
+} from '../../services/ImageGenerationCapabilityResolver'
 
 @ComponentV2
 export struct ImageGenerationSettingsSheet {
@@ -14,14 +16,12 @@ export struct ImageGenerationSettingsSheet {
   @Param quality: ImageGenerationQuality = ImageGenerationQuality.AUTO
   @Param outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG
   @Param outputCompression: number = -1
-  @Param moderation: ImageGenerationModeration = ImageGenerationModeration.AUTO
   @Param capabilities: ImageGenerationRouteCapabilities = new ImageGenerationRouteCapabilities()
   @Event onNumberChange: (value: number) => void = (_value: number): void => {}
   @Event onAspectRatioChange: (value: ImageAspectRatio) => void = (_value: ImageAspectRatio): void => {}
   @Event onQualityChange: (value: ImageGenerationQuality) => void = (_value: ImageGenerationQuality): void => {}
   @Event onOutputFormatChange: (value: ImageGenerationOutputFormat) => void = (_value: ImageGenerationOutputFormat): void => {}
   @Event onOutputCompressionChange: (value: number) => void = (_value: number): void => {}
-  @Event onModerationChange: (value: ImageGenerationModeration) => void = (_value: ImageGenerationModeration): void => {}
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -38,14 +38,8 @@ export struct ImageGenerationSettingsSheet {
       if (this.capabilities.supportsQuality) {
         this.QualitySetting()
       }
-      if (this.capabilities.supportsOutputFormat) {
-        this.OutputFormatSetting()
-      }
-      if (this.shouldShowCompressionSetting()) {
-        this.OutputCompressionSetting()
-      }
-      if (this.capabilities.supportsModeration) {
-        this.ModerationSetting()
+      if (this.shouldShowAdvancedSettings()) {
+        this.AdvancedSettings()
       }
       Column().height(16)
     }
@@ -112,6 +106,10 @@ export struct ImageGenerationSettingsSheet {
     return this.capabilities.supportsOutputCompression && this.outputFormat !== ImageGenerationOutputFormat.PNG
   }
 
+  private shouldShowAdvancedSettings(): boolean {
+    return this.capabilities.supportsOutputFormat || this.shouldShowCompressionSetting()
+  }
+
   private getAspectRatioIcon(value: ImageAspectRatio): Resource {
     if (value === ImageAspectRatio.LANDSCAPE) {
       return $r('sys.symbol.rectangle_ratio_16_to_9')
@@ -120,6 +118,29 @@ export struct ImageGenerationSettingsSheet {
       return $r('sys.symbol.rectangle_ratio_9_to_16')
     }
     return $r('sys.symbol.rectangle_ratio_1_to_1')
+  }
+
+  private getAspectRatioTitle(value: ImageAspectRatio): Resource {
+    if (value === ImageAspectRatio.LANDSCAPE) {
+      return $r('app.string.image_generation_aspect_landscape_short')
+    }
+    if (value === ImageAspectRatio.PORTRAIT) {
+      return $r('app.string.image_generation_aspect_portrait_short')
+    }
+    return $r('app.string.image_generation_aspect_square_short')
+  }
+
+  private getAspectRatioDetail(value: ImageAspectRatio): string {
+    if (this.capabilities.supportsCustomSize) {
+      return ImageGenerationCapabilityResolver.getOpenAIImageSize(value)
+    }
+    if (value === ImageAspectRatio.LANDSCAPE) {
+      return '16:9'
+    }
+    if (value === ImageAspectRatio.PORTRAIT) {
+      return '9:16'
+    }
+    return '1:1'
   }
 
   @Builder
@@ -132,31 +153,62 @@ export struct ImageGenerationSettingsSheet {
         .width('100%')
         .margin({ bottom: 8 })
 
-      Row({ space: 8 }) {
-        this.AspectChip(ImageAspectRatio.SQUARE, $r('app.string.image_generation_aspect_square'))
-        this.AspectChip(ImageAspectRatio.LANDSCAPE, $r('app.string.image_generation_aspect_landscape'))
-        this.AspectChip(ImageAspectRatio.PORTRAIT, $r('app.string.image_generation_aspect_portrait'))
+      Column() {
+        this.AspectOption(ImageAspectRatio.SQUARE, $r('app.string.image_generation_aspect_square'))
+        this.AspectOption(ImageAspectRatio.LANDSCAPE, $r('app.string.image_generation_aspect_landscape'))
+        this.AspectOption(ImageAspectRatio.PORTRAIT, $r('app.string.image_generation_aspect_portrait'))
       }
       .width('100%')
+      .padding({ left: 4, right: 4, top: 4, bottom: 4 })
+      .backgroundColor(this.themeSurface)
+      .borderRadius(12)
     }
     .width('100%')
   }
 
   @Builder
-  private AspectChip(value: ImageAspectRatio, label: Resource) {
-    Button({ type: ButtonType.Capsule, stateEffect: false }) {
-      SymbolGlyph(this.getAspectRatioIcon(value))
-        .fontSize(22)
-        .fontColor([this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary')])
+  private AspectOption(value: ImageAspectRatio, label: Resource) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
+      Row() {
+        SymbolGlyph(this.getAspectRatioIcon(value))
+          .fontSize(30)
+          .fontColor([this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary')])
+          .width(38)
+
+        Column() {
+          Text(this.getAspectRatioTitle(value))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+          Text(this.getAspectRatioDetail(value))
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .margin({ left: 10 })
+        .alignItems(HorizontalAlign.Start)
+
+        if (this.selectedAspectRatio === value) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(20)
+            .fontColor([this.themePrimary])
+            .width(24)
+        } else {
+          Blank()
+            .width(24)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 10, right: 10 })
     }
-    .height(40)
-    .layoutWeight(1)
+    .height(50)
+    .width('100%')
     .accessibilityText(label)
-    .backgroundColor(this.selectedAspectRatio === value ? getAppUiState().themePrimaryLight : this.themeSurface)
-    .border({
-      width: this.selectedAspectRatio === value ? 1 : 0.5,
-      color: this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.divider')
-    })
+    .backgroundColor(this.selectedAspectRatio === value ? getAppUiState().themePrimaryLight : Color.Transparent)
+    .borderRadius(10)
     .onClick(() => {
       this.onAspectRatioChange(value)
     })
@@ -246,6 +298,28 @@ export struct ImageGenerationSettingsSheet {
   }
 
   @Builder
+  private AdvancedSettings() {
+    Column({ space: 14 }) {
+      Text($r('app.string.image_generation_advanced_settings'))
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      if (this.capabilities.supportsOutputFormat) {
+        this.OutputFormatSetting()
+      }
+      if (this.shouldShowCompressionSetting()) {
+        this.OutputCompressionSetting()
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .backgroundColor(this.themeSurface)
+    .borderRadius(12)
+  }
+
+  @Builder
   private OutputCompressionSetting() {
     Column() {
       Row() {
@@ -310,46 +384,6 @@ export struct ImageGenerationSettingsSheet {
       return $r('app.string.image_generation_output_compression_auto')
     }
     return `${this.outputCompression}`
-  }
-
-  @Builder
-  private ModerationSetting() {
-    Column() {
-      Text($r('app.string.image_generation_moderation'))
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-        .margin({ bottom: 8 })
-
-      Row({ space: 8 }) {
-        this.ModerationChip(ImageGenerationModeration.AUTO, $r('app.string.image_generation_moderation_auto'))
-        this.ModerationChip(ImageGenerationModeration.LOW, $r('app.string.image_generation_moderation_low'))
-      }
-      .width('100%')
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private ModerationChip(value: ImageGenerationModeration, label: Resource) {
-    Button({ type: ButtonType.Capsule, stateEffect: false }) {
-      Text(label)
-        .fontSize(13)
-        .fontColor(this.moderation === value ? this.themePrimary : $r('app.color.text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .height(40)
-    .layoutWeight(1)
-    .backgroundColor(this.moderation === value ? getAppUiState().themePrimaryLight : this.themeSurface)
-    .border({
-      width: this.moderation === value ? 1 : 0.5,
-      color: this.moderation === value ? this.themePrimary : $r('app.color.divider')
-    })
-    .onClick(() => {
-      this.onModerationChange(value)
-    })
   }
 
   @Builder

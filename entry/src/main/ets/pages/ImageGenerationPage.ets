@@ -11,7 +11,6 @@ import { ModelProvider } from '../models/ChatModels'
 import {
   GeneratedMedia,
   ImageAspectRatio,
-  ImageGenerationModeration,
   ImageGenerationOutputFormat,
   ImageGenerationQuality
 } from '../models/ImageGenerationModels'
@@ -935,7 +934,6 @@ struct ImageGenerationPage {
       quality: this.viewModel.quality,
       outputFormat: this.viewModel.outputFormat,
       outputCompression: this.viewModel.outputCompression,
-      moderation: this.viewModel.moderation,
       capabilities: this.viewModel.getCurrentRouteCapabilities(),
       onNumberChange: (value: number): void => {
         this.viewModel.updateNumberOfImages(value)
@@ -951,9 +949,6 @@ struct ImageGenerationPage {
       },
       onOutputCompressionChange: (value: number): void => {
         this.viewModel.updateOutputCompression(value)
-      },
-      onModerationChange: (value: ImageGenerationModeration): void => {
-        this.viewModel.updateModeration(value)
       }
     })
   }

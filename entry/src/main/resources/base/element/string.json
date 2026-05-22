@@ -2801,16 +2801,28 @@
       "value": "1:1 正方形"
     },
     {
+      "name": "image_generation_aspect_square_short",
+      "value": "方图"
+    },
+    {
       "name": "image_generation_aspect_landscape",
       "value": "16:9 横图"
+    },
+    {
+      "name": "image_generation_aspect_landscape_short",
+      "value": "横图"
     },
     {
       "name": "image_generation_aspect_portrait",
       "value": "9:16 竖图"
     },
     {
+      "name": "image_generation_aspect_portrait_short",
+      "value": "竖图"
+    },
+    {
       "name": "image_generation_quality",
-      "value": "图像质量"
+      "value": "渲染质量"
     },
     {
       "name": "image_generation_quality_auto",
@@ -2833,24 +2845,16 @@
       "value": "输出格式"
     },
     {
+      "name": "image_generation_advanced_settings",
+      "value": "高级设置"
+    },
+    {
       "name": "image_generation_output_compression",
       "value": "输出压缩"
     },
     {
       "name": "image_generation_output_compression_auto",
       "value": "自动"
-    },
-    {
-      "name": "image_generation_moderation",
-      "value": "内容审核"
-    },
-    {
-      "name": "image_generation_moderation_auto",
-      "value": "自动"
-    },
-    {
-      "name": "image_generation_moderation_low",
-      "value": "低"
     },
     {
       "name": "image_generation_add_reference",

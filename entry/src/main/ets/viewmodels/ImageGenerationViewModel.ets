@@ -66,7 +66,7 @@ export class ImageGenerationViewModel {
   @Trace quality: ImageGenerationQuality = ImageGenerationQuality.AUTO
   @Trace outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG
   @Trace outputCompression: number = -1
-  @Trace moderation: ImageGenerationModeration = ImageGenerationModeration.AUTO
+  @Trace moderation: ImageGenerationModeration = ImageGenerationModeration.LOW
   @Trace isGenerating: boolean = false
   @Trace errorMessage: string = ''
   @Trace currentImages: GeneratedMedia[] = []
