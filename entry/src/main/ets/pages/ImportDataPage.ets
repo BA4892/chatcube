@@ -208,7 +208,8 @@ struct ImportDataPage {
 
       console.info(
         'ImportDataPage',
-        `Import summary: imported=${result.imported}, overwritten=${result.overwritten}, skipped=${result.skipped}, preferences=${result.preferencesRestored}`
+        `Import summary: imported=${result.imported}, overwritten=${result.overwritten}, skipped=${result.skipped}, ` +
+          `preferences=${result.preferencesRestored}, generatedImages=${result.generatedImagesImported}`
       )
 
       // 构建详细的导入结果摘要
@@ -224,6 +225,9 @@ struct ImportDataPage {
       }
       if (result.preferencesRestored > 0) {
         summaryParts.push(`恢复 ${result.preferencesRestored} 项偏好设置`)
+      }
+      if (result.generatedImagesImported > 0) {
+        summaryParts.push(`恢复 ${result.generatedImagesImported} 张生成图片`)
       }
       const summaryMessage = summaryParts.length > 0 ? summaryParts.join('，') : '导入完成'
       this.showImportToast(summaryMessage, 3000, SnackBarTone.SUCCESS)
@@ -325,6 +329,8 @@ struct ImportDataPage {
                 this.InfoRow('消息', `${this.preview?.messagesCount || 0} 条`)
                 Divider().color($r('app.color.divider'))
                 this.InfoRow('附件', `${this.preview?.attachmentsCount || 0} 个`)
+                Divider().color($r('app.color.divider'))
+                this.InfoRow('生成图片', `${this.preview?.generatedImagesCount || 0} 张`)
                 Divider().color($r('app.color.divider'))
                 this.InfoRow('供应商', `${this.preview?.providersCount || 0} 个`)
 

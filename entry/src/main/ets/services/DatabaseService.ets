@@ -2193,7 +2193,16 @@ export class DatabaseService {
       created_at: media.createdAt
     }
     try {
-      await this.rdbStore.insert(TableNames.GENERATED_MEDIA, valueBucket)
+      const predicates = new relationalStore.RdbPredicates(TableNames.GENERATED_MEDIA)
+      predicates.equalTo('id', media.id)
+      const resultSet = await this.rdbStore.query(predicates)
+      const exists = resultSet.goToNextRow()
+      resultSet.close()
+      if (exists) {
+        await this.rdbStore.update(valueBucket, predicates)
+      } else {
+        await this.rdbStore.insert(TableNames.GENERATED_MEDIA, valueBucket)
+      }
     } catch (error) {
       console.error('DatabaseService', `Failed to insert generated media: ${JSON.stringify(error)}`)
     }

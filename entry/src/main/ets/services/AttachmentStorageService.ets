@@ -110,6 +110,13 @@ export class AttachmentStorageService {
 
     try {
       const filePath = this.buildAttachmentFilePath(attachment)
+      try {
+        if (fileIo.accessSync(filePath)) {
+          fileIo.unlinkSync(filePath)
+        }
+      } catch (error) {
+        console.warn('AttachmentStorageService', `Existing attachment cleanup skipped: ${JSON.stringify(error)}`)
+      }
       await fileIo.copyFile(sourcePath, filePath)
       return filePath
     } catch (error) {

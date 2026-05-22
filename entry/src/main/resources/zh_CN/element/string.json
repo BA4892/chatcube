@@ -465,6 +465,10 @@
       "value": "包含附件"
     },
     {
+      "name": "export_include_generated_images",
+      "value": "包含图像生成图片"
+    },
+    {
       "name": "export_include_providers",
       "value": "包含服务商配置"
     },

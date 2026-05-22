@@ -41,8 +41,11 @@ import { buildProviderImportOrder } from '../config/ProviderOrderUtils'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { setAppUiStateValue } from '../state/AppUiState'
 import { getSearchEngineRegistry, registerAllSearchEngines } from './search/Index'
+import { GeneratedMedia } from '../models/ImageGenerationModels'
 
 const ASSISTANT_AVATAR_EXPORT_DIR: string = 'assistant_avatars'
+const GENERATED_MEDIA_EXPORT_DIR: string = 'generated_media'
+const GENERATED_MEDIA_IMAGES_EXPORT_DIR: string = 'images'
 
 // 导出选项
 export interface ExportOptions {
@@ -51,6 +54,7 @@ export interface ExportOptions {
   includeProviders: boolean
   includeApiKeys?: boolean
   includePreferences: boolean
+  includeGeneratedImages?: boolean
 }
 
 // 导入选项
@@ -67,6 +71,7 @@ export interface StatisticsData {
   attachmentsCount: number
   totalSize: number
   preferencesCount?: number
+  generatedImagesCount?: number
 }
 
 // 同步元数据
@@ -89,6 +94,7 @@ export interface ManifestData {
   providersCount?: number
   assistantsCount?: number
   preferencesCount?: number
+  generatedImagesCount?: number
 }
 
 // 供应商导出数据
@@ -140,6 +146,24 @@ export interface AssistantExportData {
   sortOrder: number
 }
 
+export interface GeneratedMediaExportData {
+  id: string
+  type: string
+  prompt: string
+  providerId: string
+  providerName: string
+  modelId: string
+  modelName: string
+  fileName: string
+  mimeType: string
+  aspectRatio: string
+  sourcePathsJson: string
+  requestOptionsJson: string
+  actualOptionsJson: string
+  revisedPrompt: string
+  createdAt: number
+}
+
 // 会话摘要
 export interface SessionSummary {
   id: string
@@ -166,6 +190,7 @@ export interface ImportPreview {
   attachmentsCount: number
   providersCount: number
   preferencesCount: number
+  generatedImagesCount: number
   conflicts: ConflictInfo[]
   manifest: ManifestData
 }
@@ -176,6 +201,7 @@ export interface ImportResult {
   skipped: number
   overwritten: number
   preferencesRestored: number
+  generatedImagesImported: number
 }
 
 // 偏好设置条目
@@ -286,6 +312,7 @@ interface ImportFileData {
   providers: ProviderExportData[]
   assistants: AssistantExportData[]
   preferences: PreferenceEntry[]
+  generatedMedia: GeneratedMediaExportData[]
   tempDir: string
 }
 
@@ -336,16 +363,29 @@ export class ImportExportService {
       const providers = options.includeProviders ? await this.collectProviders(options) : []
       const assistants = await this.collectAssistants()
       const preferences = options.includePreferences ? await this.collectPreferences(options) : []
+      const generatedMedia = await this.collectGeneratedMedia(options)
 
       emitProgress(30)
 
-      const manifest = this.generateManifest(sessions, messages, attachments, providers, assistants, preferences, options)
+      const manifest =
+        this.generateManifest(sessions, messages, attachments, providers, assistants, preferences, generatedMedia, options)
 
       const timestamp = Date.now()
       const tempDir = `${this.context.cacheDir}/export_temp_${timestamp}`
       fileIo.mkdirSync(tempDir)
 
-      await this.writeExportFiles(tempDir, manifest, sessions, messages, attachments, providers, assistants, preferences, options)
+      await this.writeExportFiles(
+        tempDir,
+        manifest,
+        sessions,
+        messages,
+        attachments,
+        providers,
+        assistants,
+        preferences,
+        generatedMedia,
+        options
+      )
 
       emitProgress(60)
 
@@ -494,6 +534,20 @@ export class ImportExportService {
     return assistants
   }
 
+  private async collectGeneratedMedia(options: ExportOptions): Promise<GeneratedMedia[]> {
+    const result: GeneratedMedia[] = []
+    if (options.includeGeneratedImages !== true) {
+      return result
+    }
+    const allMedia = await this.dbService.getGeneratedMediaList(0)
+    for (const media of allMedia) {
+      if (media.filePath !== '' && this.attachmentService.fileExists(media.filePath)) {
+        result.push(media)
+      }
+    }
+    return result
+  }
+
   private async collectPreferences(options: ExportOptions): Promise<PreferenceEntry[]> {
     const entries: PreferenceEntry[] = []
     try {
@@ -539,6 +593,7 @@ export class ImportExportService {
     providers: ProviderExportData[],
     assistants: AssistantExportData[],
     preferences: PreferenceEntry[],
+    generatedMedia: GeneratedMedia[],
     options: ExportOptions
   ): ManifestData {
     let totalMessages = 0
@@ -579,7 +634,8 @@ export class ImportExportService {
       messagesCount: totalMessages,
       attachmentsCount: totalAttachments,
       totalSize: 0,
-      preferencesCount: preferences.length
+      preferencesCount: preferences.length,
+      generatedImagesCount: generatedMedia.length
     }
 
     const syncMetadata: SyncMetadata = {
@@ -599,7 +655,8 @@ export class ImportExportService {
       syncMetadata: syncMetadata,
       providersCount: providers.length,
       assistantsCount: assistants.length,
-      preferencesCount: preferences.length
+      preferencesCount: preferences.length,
+      generatedImagesCount: generatedMedia.length
     }
 
     return manifest
@@ -614,6 +671,7 @@ export class ImportExportService {
     providers: ProviderExportData[],
     assistants: AssistantExportData[],
     preferences: PreferenceEntry[],
+    generatedMedia: GeneratedMedia[],
     options: ExportOptions
   ): Promise<void> {
     this.writeTextFile(`${tempDir}/manifest.json`, JSON.stringify(manifest, null, 2))
@@ -781,6 +839,10 @@ export class ImportExportService {
       this.writeTextFile(`${tempDir}/assistants.json`, JSON.stringify(assistants, null, 2))
     }
 
+    if (options.includeGeneratedImages === true && generatedMedia.length > 0) {
+      await this.writeGeneratedMediaFiles(tempDir, generatedMedia)
+    }
+
     // 写入偏好设置数据
     if (options.includePreferences && preferences.length > 0) {
       this.writeTextFile(`${tempDir}/preferences.json`, JSON.stringify(preferences, null, 2))
@@ -835,6 +897,7 @@ export class ImportExportService {
         attachmentsCount: manifest.statistics.attachmentsCount,
         providersCount: manifest.providersCount || 0,
         preferencesCount: manifest.preferencesCount || 0,
+        generatedImagesCount: manifest.generatedImagesCount || manifest.statistics.generatedImagesCount || 0,
         conflicts: conflicts,
         manifest: manifest
       }
@@ -953,6 +1016,14 @@ export class ImportExportService {
       console.info('ImportExportService', 'No preferences data found')
     }
 
+    let generatedMedia: GeneratedMediaExportData[] = []
+    try {
+      const generatedMediaText = this.readTextFile(`${tempDir}/${GENERATED_MEDIA_EXPORT_DIR}/metadata.json`)
+      generatedMedia = JSON.parse(generatedMediaText) as GeneratedMediaExportData[]
+    } catch (e) {
+      console.info('ImportExportService', 'No generated media data found')
+    }
+
     const importData: ImportFileData = {
       manifest: manifest,
       sessions: sessions,
@@ -961,6 +1032,7 @@ export class ImportExportService {
       providers: providers,
       assistants: assistants,
       preferences: preferences,
+      generatedMedia: generatedMedia,
       tempDir: tempDir
     }
 
@@ -974,6 +1046,7 @@ export class ImportExportService {
     let imported = 0
     let skipped = 0
     let overwritten = 0
+    let generatedImagesImported = 0
 
     const sessions = importData.sessions
     const messages = importData.messages
@@ -1145,10 +1218,18 @@ export class ImportExportService {
       await this.restoreProviderOrder(sortedProviders)
     }
 
+    if (importData.generatedMedia.length > 0) {
+      generatedImagesImported = await this.importGeneratedMedia(importData.generatedMedia, tempDir)
+    }
+
     // 导入偏好设置
     let preferencesRestored = 0
+    let shouldRefreshAfterImport = generatedImagesImported > 0
     if (options.importPreferences && importData.preferences.length > 0) {
       preferencesRestored = await this.importPreferences(importData.preferences)
+      shouldRefreshAfterImport = true
+    }
+    if (shouldRefreshAfterImport) {
       await this.refreshAfterImport()
     }
 
@@ -1158,7 +1239,8 @@ export class ImportExportService {
       imported: imported,
       skipped: skipped,
       overwritten: overwritten,
-      preferencesRestored: preferencesRestored
+      preferencesRestored: preferencesRestored,
+      generatedImagesImported: generatedImagesImported
     }
 
     return result
@@ -1453,6 +1535,134 @@ export class ImportExportService {
       console.warn('ImportExportService', `Failed to import assistant avatar: ${JSON.stringify(error)}`)
       return fallbackAvatar
     }
+  }
+
+  private async writeGeneratedMediaFiles(tempDir: string, generatedMedia: GeneratedMedia[]): Promise<void> {
+    const mediaDir = `${tempDir}/${GENERATED_MEDIA_EXPORT_DIR}`
+    const imagesDir = `${mediaDir}/${GENERATED_MEDIA_IMAGES_EXPORT_DIR}`
+    this.ensureDirectory(mediaDir)
+    this.ensureDirectory(imagesDir)
+
+    const metadata: GeneratedMediaExportData[] = []
+    for (const media of generatedMedia) {
+      if (media.filePath === '' || !this.attachmentService.fileExists(media.filePath)) {
+        continue
+      }
+      const fileName = this.buildExportedGeneratedMediaFileName(media)
+      try {
+        await fileIo.copyFile(media.filePath, `${imagesDir}/${fileName}`)
+        metadata.push({
+          id: media.id,
+          type: media.type,
+          prompt: media.prompt,
+          providerId: media.providerId,
+          providerName: media.providerName,
+          modelId: media.modelId,
+          modelName: media.modelName,
+          fileName: fileName,
+          mimeType: media.mimeType,
+          aspectRatio: media.aspectRatio,
+          sourcePathsJson: media.sourcePathsJson,
+          requestOptionsJson: media.requestOptionsJson,
+          actualOptionsJson: media.actualOptionsJson,
+          revisedPrompt: media.revisedPrompt,
+          createdAt: media.createdAt
+        })
+      } catch (error) {
+        console.warn('ImportExportService', `Failed to export generated media: ${JSON.stringify(error)}`)
+      }
+    }
+
+    if (metadata.length > 0) {
+      this.writeTextFile(`${mediaDir}/metadata.json`, JSON.stringify(metadata, null, 2))
+    }
+  }
+
+  private async importGeneratedMedia(generatedMedia: GeneratedMediaExportData[], tempDir: string): Promise<number> {
+    let imported = 0
+    for (const mediaData of generatedMedia) {
+      const fileName = mediaData.fileName !== undefined ? this.sanitizeFileName(mediaData.fileName) : ''
+      if (fileName === '') {
+        continue
+      }
+      const sourcePath = `${tempDir}/${GENERATED_MEDIA_EXPORT_DIR}/${GENERATED_MEDIA_IMAGES_EXPORT_DIR}/${fileName}`
+      let sourceExists = false
+      try {
+        sourceExists = fileIo.accessSync(sourcePath)
+      } catch (error) {
+        console.warn('ImportExportService', `Generated media file access failed: ${JSON.stringify(error)}`)
+        sourceExists = false
+      }
+      if (!sourceExists) {
+        continue
+      }
+
+      const id = mediaData.id !== '' ? mediaData.id : `gen_imported_${Date.now()}_${imported}`
+      const mimeType = mediaData.mimeType !== '' ? mediaData.mimeType : this.resolveMimeTypeFromExtension(fileName)
+      const attachment = new MessageAttachment(
+        id,
+        AttachmentType.IMAGE,
+        `${id}${this.getExtensionForMimeTypeOrFileName(fileName, mimeType)}`,
+        '',
+        mimeType,
+        0
+      )
+      const savedPath = await this.attachmentService.importExistingAttachment(sourcePath, attachment)
+      if (savedPath === '') {
+        continue
+      }
+
+      const media = new GeneratedMedia()
+      media.id = id
+      media.type = mediaData.type
+      media.prompt = mediaData.prompt
+      media.providerId = mediaData.providerId
+      media.providerName = mediaData.providerName
+      media.modelId = mediaData.modelId
+      media.modelName = mediaData.modelName
+      media.filePath = savedPath
+      media.mimeType = mimeType
+      media.aspectRatio = mediaData.aspectRatio
+      media.sourcePathsJson = mediaData.sourcePathsJson
+      media.requestOptionsJson = mediaData.requestOptionsJson
+      media.actualOptionsJson = mediaData.actualOptionsJson
+      media.revisedPrompt = mediaData.revisedPrompt
+      media.createdAt = mediaData.createdAt > 0 ? mediaData.createdAt : Date.now()
+      await this.dbService.insertGeneratedMedia(media)
+      imported++
+    }
+    return imported
+  }
+
+  private buildExportedGeneratedMediaFileName(media: GeneratedMedia): string {
+    const ext = this.getExtensionForMimeTypeOrFileName(media.filePath, media.mimeType)
+    const baseName = this.sanitizeFileName(media.id !== '' ? media.id : `generated_${media.createdAt}`)
+    return `${baseName}${ext}`
+  }
+
+  private getExtensionForMimeTypeOrFileName(fileName: string, mimeType: string): string {
+    const ext = this.getExtension(fileName)
+    if (ext !== '') {
+      return ext
+    }
+    if (mimeType === 'image/jpeg') {
+      return '.jpg'
+    }
+    if (mimeType === 'image/webp') {
+      return '.webp'
+    }
+    return '.png'
+  }
+
+  private resolveMimeTypeFromExtension(fileName: string): string {
+    const lower = fileName.toLowerCase()
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg'
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp'
+    }
+    return 'image/png'
   }
 
   private async detectConflicts(manifest: ManifestData): Promise<ConflictInfo[]> {

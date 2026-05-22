@@ -1,7 +1,7 @@
 /**
  * 共享导出选项面板
  * 在 ExportDataPage / WebDAVSyncPage 之间复用,
- * 仅承载 includeAttachments / includeProviders / includePreferences 三个开关。
+ * 承载导出范围开关。
  */
 
 import { getAppUiState } from '../../state/AppUiState'
@@ -9,9 +9,11 @@ import { getAppUiState } from '../../state/AppUiState'
 @ComponentV2
 export struct ExportOptionsPanel {
   @Param includeAttachments: boolean = true
+  @Param includeGeneratedImages: boolean = false
   @Param includeProviders: boolean = true
   @Param includePreferences: boolean = true
   @Event onIncludeAttachmentsChange: (value: boolean) => void = () => {}
+  @Event onIncludeGeneratedImagesChange: (value: boolean) => void = () => {}
   @Event onIncludeProvidersChange: (value: boolean) => void = () => {}
   @Event onIncludePreferencesChange: (value: boolean) => void = () => {}
 
@@ -21,6 +23,12 @@ export struct ExportOptionsPanel {
         $r('app.string.export_include_attachments'),
         this.includeAttachments,
         (value: boolean) => { this.onIncludeAttachmentsChange(value) }
+      )
+      Divider().color($r('app.color.divider'))
+      this.OptionRow(
+        $r('app.string.export_include_generated_images'),
+        this.includeGeneratedImages,
+        (value: boolean) => { this.onIncludeGeneratedImagesChange(value) }
       )
       Divider().color($r('app.color.divider'))
       this.OptionRow(

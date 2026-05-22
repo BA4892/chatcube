@@ -465,6 +465,10 @@
       "value": "Include Attachments"
     },
     {
+      "name": "export_include_generated_images",
+      "value": "Include Generated Images"
+    },
+    {
       "name": "export_include_providers",
       "value": "Include Provider Configs"
     },

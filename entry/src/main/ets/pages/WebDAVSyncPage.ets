@@ -52,6 +52,7 @@ struct WebDAVSyncPage {
 
   // 导出选项
   @Local includeAttachments: boolean = true
+  @Local includeGeneratedImages: boolean = true
   @Local includeProviders: boolean = true
   @Local includePreferences: boolean = true
 
@@ -238,6 +239,7 @@ struct WebDAVSyncPage {
 
     const options: ExportOptions = {
       includeAttachments: this.includeAttachments,
+      includeGeneratedImages: this.includeGeneratedImages,
       includeProviders: this.includeProviders,
       includeApiKeys: true,
       includePreferences: this.includePreferences
@@ -349,6 +351,9 @@ struct WebDAVSyncPage {
         }
         if (r.preferencesRestored > 0) {
           parts.push(`恢复 ${r.preferencesRestored} 项偏好`)
+        }
+        if (r.generatedImagesImported > 0) {
+          parts.push(`恢复 ${r.generatedImagesImported} 张生成图片`)
         }
         const summary = parts.length > 0 ? parts.join('，') : '导入完成'
         this.lastSyncTime = Date.now()
@@ -544,9 +549,11 @@ struct WebDAVSyncPage {
 
     ExportOptionsPanel({
       includeAttachments: this.includeAttachments,
+      includeGeneratedImages: this.includeGeneratedImages,
       includeProviders: this.includeProviders,
       includePreferences: this.includePreferences,
       onIncludeAttachmentsChange: (value: boolean) => { this.includeAttachments = value },
+      onIncludeGeneratedImagesChange: (value: boolean) => { this.includeGeneratedImages = value },
       onIncludeProvidersChange: (value: boolean) => { this.includeProviders = value },
       onIncludePreferencesChange: (value: boolean) => { this.includePreferences = value }
     })
@@ -630,6 +637,8 @@ struct WebDAVSyncPage {
           this.PreviewInfoRow('消息', `${this.preview!.messagesCount} 条`)
           Divider().color($r('app.color.divider'))
           this.PreviewInfoRow('附件', `${this.preview!.attachmentsCount} 个`)
+          Divider().color($r('app.color.divider'))
+          this.PreviewInfoRow('生成图片', `${this.preview!.generatedImagesCount} 张`)
           Divider().color($r('app.color.divider'))
           this.PreviewInfoRow('供应商', `${this.preview!.providersCount} 个`)
           if (this.preview!.preferencesCount > 0) {

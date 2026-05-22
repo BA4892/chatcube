@@ -57,6 +57,7 @@ struct ExportDataPage {
   @Local selectedSessionIds: string[] = []
   @Local selectAll: boolean = true
   @Local includeAttachments: boolean = true
+  @Local includeGeneratedImages: boolean = false
   @Local includeProviders: boolean = true
   @Local includePreferences: boolean = true
   @Local isExporting: boolean = false
@@ -168,6 +169,7 @@ struct ExportDataPage {
       const options: ExportOptions = {
         sessionIds: this.selectAll ? undefined : this.selectedSessionIds,
         includeAttachments: this.includeAttachments,
+        includeGeneratedImages: this.includeGeneratedImages,
         includeProviders: this.includeProviders,
         includeApiKeys: true,
         includePreferences: this.includePreferences
@@ -233,9 +235,11 @@ struct ExportDataPage {
 
               ExportOptionsPanel({
                 includeAttachments: this.includeAttachments,
+                includeGeneratedImages: this.includeGeneratedImages,
                 includeProviders: this.includeProviders,
                 includePreferences: this.includePreferences,
                 onIncludeAttachmentsChange: (value: boolean) => { this.includeAttachments = value },
+                onIncludeGeneratedImagesChange: (value: boolean) => { this.includeGeneratedImages = value },
                 onIncludeProvidersChange: (value: boolean) => { this.includeProviders = value },
                 onIncludePreferencesChange: (value: boolean) => { this.includePreferences = value }
               })
