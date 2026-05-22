@@ -29,6 +29,16 @@ const MINIMAX_MODELS: ModelProfileDef[] = [
   { id: 'minimax_series', match: [{ startsWith: 'minimax' }] }
 ]
 
+// ---- DeepSeek V4 系列(V4-Pro / V4-Flash / V4-Pro-Max 等):仅 high/max 两档 ----
+// 官方 thinking mode 协议 (https://api-docs.deepseek.com/guides/thinking_mode):
+//   reasoning_effort 只接受 high/max,low/medium 会被后端兼容性映射为 high,xhigh 映射为 max。
+// 这里按模型 id 而非 provider 命中,确保 newapi/oneapi/aihubmix 等 OpenAI 兼容中转上的
+// deepseek-v4 也走 DEEPSEEK_THINKING 协议(thinking + reasoning_effort=high|max),
+// UI 同步收敛为 4 档(OFF/AUTO/HIGH/XHIGH),避免暴露无效档位误导用户。
+const DEEPSEEK_V4_MODELS: ModelProfileDef[] = [
+  { id: 'deepseek_v4', match: [{ tokens: ['deepseek', 'v', '4'] }] }
+]
+
 // ---- DashScope thinking:Qwen / QwQ / QvQ 前缀;也包括 `/qwen` `/qwq` `/qvq` 子串(中转格式) ----
 const DASHSCOPE_THINKING_MODELS: ModelProfileDef[] = [
   { id: 'qwen_prefix', match: [{ startsWith: 'qwen' }] },
@@ -96,6 +106,10 @@ export function supportsOpenAIXhighReasoningModel(modelId: string): boolean {
 
 export function isMiniMaxModelId(modelId: string): boolean {
   return lookupBestModelDef(modelId, MINIMAX_MODELS) !== null
+}
+
+export function isDeepSeekV4Model(modelId: string): boolean {
+  return lookupBestModelDef(modelId, DEEPSEEK_V4_MODELS) !== null
 }
 
 export function isDashScopeThinkingModelId(modelId: string): boolean {

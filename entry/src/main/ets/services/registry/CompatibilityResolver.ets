@@ -10,6 +10,7 @@ import {
   isOpenAIReasoningEffortModel,
   supportsOpenAIXhighReasoningModel,
   isMiniMaxModelId,
+  isDeepSeekV4Model,
   isDashScopeThinkingModelId,
   isKimiThinkingModelId,
   supportsZhipuThinkingModel,
@@ -51,6 +52,11 @@ export function resolveReasoningRequestStrategy(
     case ReasoningRequestStrategy.OPENAI_COMPAT_REASONING_EFFORT:
       if (isMiniMaxModelId(modelId)) {
         return ReasoningRequestStrategy.OPENAI_REASONING_SPLIT
+      }
+      if (isDeepSeekV4Model(modelId)) {
+        // DeepSeek V4 官方协议(thinking + reasoning_effort=high|max)只暴露 2 档,
+        // 中转聚合服务(newapi/oneapi/aihubmix)透传 thinking 字段后由 DeepSeek 后端按官方协议处理。
+        return ReasoningRequestStrategy.DEEPSEEK_THINKING
       }
       if (isDashScopeThinkingModelId(modelId)) {
         return ReasoningRequestStrategy.DASHSCOPE_THINKING
