@@ -3023,10 +3023,8 @@ struct Index {
           .swipeAction({
             end: this.AssistantEndSwipePanel(assistant)
           })
-          // 不能加 .clip(true): dragPreview 浮层在长按拖动时会被 ListItem 边界裁切, 同时系统默认放大动画会让卡片溢出 ListItem 范围被切掉
-          // 卡片自身 (AssistantJumpCard) 已有 borderRadius + 内部 clip 处理圆角, swipeAction 面板自己也带 borderRadius
-          // 不能用 .dragPreviewOptions DISABLE_SCALE: 它对 List + onMove 的自动拖拽排序不生效, 只对 onDragStart 显式拖拽生效;
-          // 反向缩小在 AssistantDragPreview Builder 内做
+          .borderRadius(16)
+          .clip(true)
           .dragPreview(this.AssistantDragPreview(assistant))
         }, (assistant: Assistant) => this.getAssistantRenderKey(assistant))
           .onMove((from: number, to: number) => {
@@ -3168,14 +3166,10 @@ struct Index {
 
   @Builder
   private AssistantDragPreview(assistant: Assistant) {
-    // 反向缩小浮层抵消系统默认放大: ArkUI ListItem 配合 onMove 自动拖拽排序时,
-    // dragPreviewOptions.DISABLE_SCALE 不生效(官方确认仅对 onDragStart 显式拖拽生效),
-    // 唯一稳妥的做法是浮层自身预先缩小, 系统放大后视觉接近原尺寸
     Column() {
       this.AssistantJumpCard(assistant, assistant.id === this.currentAssistantId)
     }
     .width(this.getAssistantsDragPreviewWidth())
-    .scale({ x: 0.92, y: 0.92 })
     .shadow({
       radius: 24,
       color: 'rgba(0,0,0,0.18)',
