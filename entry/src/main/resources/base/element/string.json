@@ -2865,6 +2865,42 @@
       "value": "图片正在后台编辑,可稍后回来查看"
     },
     {
+      "name": "image_generation_prompt_reused",
+      "value": "已填入提示词"
+    },
+    {
+      "name": "image_generation_generating_count",
+      "value": "正在生成 %d 张图片"
+    },
+    {
+      "name": "image_generation_editing_count",
+      "value": "正在编辑 %d 张图片"
+    },
+    {
+      "name": "image_generation_empty_try_prompt",
+      "value": "试试这些提示词"
+    },
+    {
+      "name": "image_generation_template_1",
+      "value": "夜晚霓虹下的赛博朋克城市街道,湿漉漉地面反射光斑,电影感构图"
+    },
+    {
+      "name": "image_generation_template_2",
+      "value": "水彩风格的山间小屋,清晨薄雾,柔和光线"
+    },
+    {
+      "name": "image_generation_template_3",
+      "value": "可爱柴犬戴着宇航员头盔,3D 立体卡通风格,星空背景"
+    },
+    {
+      "name": "image_generation_template_4",
+      "value": "极简线稿风格的咖啡杯特写,纯白背景,工业设计感"
+    },
+    {
+      "name": "image_generation_template_5",
+      "value": "蒸汽朋克机械蝴蝶,精细金属齿轮,微距镜头"
+    },
+    {
       "name": "default_model_role_image_generation",
       "value": "图像生成"
     },

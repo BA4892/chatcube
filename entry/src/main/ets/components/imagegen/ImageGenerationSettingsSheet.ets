@@ -36,17 +36,33 @@ export struct ImageGenerationSettingsSheet {
         .width('100%')
         .margin({ bottom: 8 })
 
+      // 步进按钮 + 可键入输入框组合: 用户既能 ± 一张, 也能直接输入 1-4
+      // TextInput onChange 中做范围 clamp, 避免脏值进入 ViewModel
       Row() {
-        this.StepButton($r('sys.symbol.minus_circle'), (): void => {
+        this.StepButton($r('sys.symbol.minus_circle'), this.canDecrement(), (): void => {
           this.onNumberChange(this.numberOfImages - 1)
         })
-        Text(`${this.numberOfImages}`)
+        TextInput({ text: `${this.numberOfImages}` })
+          .type(InputType.Number)
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .textAlign(TextAlign.Center)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(0)
+          .maxLength(1)
           .layoutWeight(1)
-        this.StepButton($r('sys.symbol.plus'), (): void => {
+          .onChange((value: string): void => {
+            if (value === '') {
+              this.onNumberChange(1)
+              return
+            }
+            const parsed: number = Number.parseInt(value)
+            if (!isNaN(parsed)) {
+              this.onNumberChange(parsed)
+            }
+          })
+        this.StepButton($r('sys.symbol.plus'), this.canIncrement(), (): void => {
           this.onNumberChange(this.numberOfImages + 1)
         })
       }
@@ -57,6 +73,16 @@ export struct ImageGenerationSettingsSheet {
       .borderRadius(12)
     }
     .width('100%')
+  }
+
+  // 抽成辅助方法避免在 @Builder 调用中直接出现 < / > 操作符
+  // (实测 es2abc 解析 builder 调用第三参为箭头函数时会把 `numberOfImages < 4` 中的 < 误识为泛型)
+  private canDecrement(): boolean {
+    return this.numberOfImages > 1
+  }
+
+  private canIncrement(): boolean {
+    return this.numberOfImages < 4
   }
 
   @Builder
@@ -101,16 +127,17 @@ export struct ImageGenerationSettingsSheet {
   }
 
   @Builder
-  private StepButton(icon: Resource, action: () => void) {
+  private StepButton(icon: Resource, enabled: boolean, action: () => void) {
     Button() {
       SymbolGlyph(icon)
         .fontSize(20)
-        .fontColor([this.themePrimary])
+        .fontColor([enabled ? this.themePrimary : $r('app.color.text_tertiary')])
     }
     .type(ButtonType.Circle)
     .width(36)
     .height(36)
     .backgroundColor(Color.Transparent)
+    .enabled(enabled)
     .onClick(() => {
       action()
     })

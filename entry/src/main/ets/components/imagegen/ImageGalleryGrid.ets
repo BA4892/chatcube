@@ -11,6 +11,7 @@ export struct ImageGalleryGrid {
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
+  @Event onReusePrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
 
   build() {
     if (this.items.length === 0) {
@@ -77,6 +78,8 @@ export struct ImageGalleryGrid {
         .width('100%')
         .margin({ top: 8 })
 
+      // prompt 区域点击 = 一键复用到输入框 + 切回生成 Tab
+      // 视觉上不加按钮, 让整段文本可点击, 避免增加视觉噪声
       Text(item.prompt)
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
@@ -84,6 +87,9 @@ export struct ImageGalleryGrid {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .margin({ top: 4 })
+        .onClick(() => {
+          this.onReusePrompt(item)
+        })
 
       Row({ space: 4 }) {
         this.IconAction($r('sys.symbol.square_and_arrow_down'), (): void => {

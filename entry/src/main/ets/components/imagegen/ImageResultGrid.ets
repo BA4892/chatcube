@@ -9,10 +9,21 @@ export struct ImageResultGrid {
   @Param isGenerating: boolean = false
   @Param isEditing: boolean = false
   @Param items: GeneratedMedia[] = []
+  @Param requestedCount: number = 1
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
+  @Event onUseTemplate: (prompt: string) => void = (_prompt: string): void => {}
+
+  // 5 个示例 prompt: 覆盖摄影/插画/3D/极简/微距, 让首次进入的用户即时上手
+  private static readonly PROMPT_TEMPLATE_KEYS: string[] = [
+    'image_generation_template_1',
+    'image_generation_template_2',
+    'image_generation_template_3',
+    'image_generation_template_4',
+    'image_generation_template_5'
+  ]
 
   build() {
     Column() {
@@ -34,7 +45,7 @@ export struct ImageResultGrid {
   private LoadingState() {
     Column() {
       CubeSpinnerAssemble({ sizeVp: 64, color: getAppUiState().themePrimary })
-      Text(this.isEditing ? $r('app.string.image_generation_editing') : $r('app.string.image_generation_generating'))
+      Text(this.getLoadingText())
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
         .margin({ top: 16 })
@@ -44,20 +55,92 @@ export struct ImageResultGrid {
     .justifyContent(FlexAlign.Center)
   }
 
+  // 显示数量提示, 例如 "正在生成 3 张图片"; 多张时数字感更强, 缓解等待焦虑
+  private getLoadingText(): ResourceStr {
+    if (this.requestedCount > 1) {
+      const key = this.isEditing ? 'image_generation_editing_count' : 'image_generation_generating_count'
+      return $r(`app.string.${key}`, this.requestedCount)
+    }
+    return this.isEditing ?
+      $r('app.string.image_generation_editing') :
+      $r('app.string.image_generation_generating')
+  }
+
   @Builder
   private EmptyState() {
-    Column() {
-      SymbolGlyph($r('sys.symbol.picture'))
-        .fontSize(48)
-        .fontColor([$r('app.color.text_tertiary')])
-      Text($r('app.string.image_generation_empty_prompt'))
-        .fontSize(16)
-        .fontColor($r('app.color.text_secondary'))
-        .margin({ top: 14 })
+    Column({ space: 16 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.picture'))
+          .fontSize(48)
+          .fontColor([$r('app.color.text_tertiary')])
+        Text($r('app.string.image_generation_empty_prompt'))
+          .fontSize(16)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ top: 14 })
+      }
+
+      // 示例 prompt 区: 标题 + 自动换行的 chip 流, 点击直接填入输入框
+      Column() {
+        Text($r('app.string.image_generation_empty_try_prompt'))
+          .fontSize(13)
+          .fontColor($r('app.color.text_tertiary'))
+          .width('100%')
+          .padding({ left: 16, right: 16 })
+          .margin({ bottom: 8 })
+
+        Flex({
+          direction: FlexDirection.Row,
+          wrap: FlexWrap.Wrap,
+          justifyContent: FlexAlign.Center
+        }) {
+          ForEach(ImageResultGrid.PROMPT_TEMPLATE_KEYS, (key: string): void => {
+            this.TemplateChip(key)
+          }, (key: string): string => key)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16 })
+      }
+      .width('100%')
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+  }
+
+  // chip 直接 $r(key) 读字符串; onClick 时通过 getStringSync 取真实文本传给回调
+  // 换行布局下放开宽度限制, 但 2 行 Ellipsis 避免单 chip 撑满整行
+  @Builder
+  private TemplateChip(stringKey: string) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
+      Text($r(`app.string.${stringKey}`))
+        .fontSize(12)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Start)
+    }
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .margin({ right: 8, bottom: 8 })
+    .borderRadius(16)
+    .backgroundColor(getAppUiState().themeSurface)
+    .onClick(() => {
+      this.applyTemplate(stringKey)
+    })
+  }
+
+  private applyTemplate(stringKey: string): void {
+    try {
+      const ctx = this.getUIContext().getHostContext()
+      if (ctx === undefined) {
+        return
+      }
+      const promptText = ctx.resourceManager.getStringByNameSync(stringKey)
+      if (promptText !== '') {
+        this.onUseTemplate(promptText)
+      }
+    } catch (error) {
+      console.error('ImageResultGrid', `Failed to load template prompt: ${JSON.stringify(error)}`)
+    }
   }
 
   @Builder

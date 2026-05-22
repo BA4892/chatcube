@@ -44,6 +44,7 @@ struct ImageGenerationPage {
   @Local isPreviewSaving: boolean = false
   private previewDialogId: string = ''
   private previewSourceItems: GeneratedMedia[] = []
+  private swiperController: SwiperController = new SwiperController()
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -440,41 +441,51 @@ struct ImageGenerationPage {
     }
   }
 
+  // 一键复用图库 prompt: 填入输入框 + 切回生成 Tab + toast 反馈
+  // 不清空 referenceImages, 用户可能在已有参考图基础上想换 prompt 重生成
+  private reuseGalleryPrompt(item: GeneratedMedia): void {
+    if (item.prompt === '') {
+      return
+    }
+    this.viewModel.updatePrompt(item.prompt)
+    this.switchTab(0)
+    showToast(this.getUIContext(), $r('app.string.image_generation_prompt_reused'))
+  }
+
   build() {
     Stack() {
       Column() {
         this.Header()
         this.TabBar()
 
-        // Tab 内容: if/else 单挂载 + TransitionEffect 处理进出场动画
-        // (之前用双挂载 + hitTestBehavior.None, 但 None 在 Stack 同层兄弟间不能可靠穿透点击, 会拦截底部按钮)
-        Stack() {
-          if (this.currentTabIndex === 0) {
-            Column() {
-              this.GenerateTab()
-            }
-            .width('100%')
-            .height('100%')
-            .transition(
-              TransitionEffect.OPACITY
-                .combine(TransitionEffect.translate({ x: -16 }))
-                .animation({ duration: 280, curve: Curve.Friction })
-            )
-          } else {
-            Column() {
-              this.GalleryTab()
-            }
-            .width('100%')
-            .height('100%')
-            .transition(
-              TransitionEffect.OPACITY
-                .combine(TransitionEffect.translate({ x: 16 }))
-                .animation({ duration: 280, curve: Curve.Friction })
-            )
+        // Swiper 提供横向滑动切换 + 原生动画;index 与 currentTabIndex 双向同步
+        // (点击 Segment / 滑动手势 / startNewSession 都能正确触发对方)
+        Swiper(this.swiperController) {
+          Column() {
+            this.GenerateTab()
           }
+          .width('100%')
+          .height('100%')
+
+          Column() {
+            this.GalleryTab()
+          }
+          .width('100%')
+          .height('100%')
         }
+        .index(this.currentTabIndex)
+        .loop(false)
+        .indicator(false)
+        .duration(280)
+        .curve(Curve.Friction)
+        .cachedCount(1)
         .width('100%')
         .layoutWeight(1)
+        .onChange((index: number): void => {
+          if (index !== this.currentTabIndex) {
+            this.currentTabIndex = index
+          }
+        })
       }
       .width('100%')
       .height('100%')
@@ -664,6 +675,7 @@ struct ImageGenerationPage {
         isGenerating: this.viewModel.isGenerating,
         isEditing: this.isEditingMode(),
         items: this.viewModel.currentImages,
+        requestedCount: this.viewModel.numberOfImages,
         onPreview: (index: number): void => {
           this.openPreview(this.viewModel.currentImages, index)
         },
@@ -675,6 +687,9 @@ struct ImageGenerationPage {
         },
         onDelete: (item: GeneratedMedia): void => {
           this.confirmDelete(item)
+        },
+        onUseTemplate: (prompt: string): void => {
+          this.viewModel.updatePrompt(prompt)
         }
       })
 
@@ -693,6 +708,7 @@ struct ImageGenerationPage {
         selectedProviderCustomImagePath: this.getSelectedProviderCustomImagePath(),
         selectedProviderBrandColor: this.getSelectedProviderBrandColor(),
         referenceImages: this.viewModel.referenceImages,
+        selectedAspectRatio: this.viewModel.aspectRatio,
         onPromptChange: (value: string): void => {
           this.viewModel.updatePrompt(value)
         },
@@ -716,6 +732,9 @@ struct ImageGenerationPage {
         },
         onPreviewReferenceImage: (index: number): void => {
           this.openReferenceImagePreview(index)
+        },
+        onAspectRatioChange: (value: ImageAspectRatio): void => {
+          this.viewModel.updateAspectRatio(value)
         }
       })
     }
@@ -740,6 +759,9 @@ struct ImageGenerationPage {
         },
         onDelete: (item: GeneratedMedia): void => {
           this.confirmDelete(item)
+        },
+        onReusePrompt: (item: GeneratedMedia): void => {
+          this.reuseGalleryPrompt(item)
         }
       })
     }
