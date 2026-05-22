@@ -217,19 +217,19 @@ export struct ImagePromptBar {
 
   @Builder
   private AspectChip(value: ImageAspectRatio, label: Resource) {
-    Button({ type: ButtonType.Normal, stateEffect: false }) {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
       SymbolGlyph(this.getAspectRatioIcon(value))
-        .fontSize(18)
+        .fontSize(22)
         .fontColor([this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary')])
     }
-    .height(34)
-    .width(34)
-    .borderRadius(17)
+    .height(38)
+    .width(38)
+    .borderRadius(19)
     .accessibilityText(label)
     .backgroundColor(this.selectedAspectRatio === value ? getAppUiState().themePrimaryLight : this.themeSurface)
     .border({
-      width: this.selectedAspectRatio === value ? 1 : 0,
-      color: this.themePrimary
+      width: this.selectedAspectRatio === value ? 1 : 0.5,
+      color: this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.divider')
     })
     .enabled(!this.isGenerating)
     .onClick(() => {

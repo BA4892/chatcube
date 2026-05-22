@@ -4169,7 +4169,7 @@ struct Index {
 
         if (this.isSearchExpanded) {
           Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.international_insurance'))
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
               .fontSize(18)
               .fontColor([$r('app.color.text_tertiary')])
 
