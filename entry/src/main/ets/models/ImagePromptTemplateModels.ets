@@ -3,7 +3,6 @@ export class ImagePromptTemplate {
   @Trace id: string = ''
   @Trace title: string = ''
   @Trace prompt: string = ''
-  @Trace enabled: boolean = true
   @Trace builtin: boolean = false
   @Trace order: number = 0
   @Trace createdAt: number = 0

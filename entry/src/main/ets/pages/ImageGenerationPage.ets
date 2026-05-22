@@ -450,6 +450,12 @@ struct ImageGenerationPage {
     }
   }
 
+  private openPromptTemplateManager(): void {
+    if (imageGenerationPagePathStack !== null) {
+      imageGenerationPagePathStack.pushPath({ name: IMAGE_PROMPT_TEMPLATE_MANAGER_ROUTE })
+    }
+  }
+
   private switchTab(index: number): void {
     if (this.currentTabIndex === index) {
       return
@@ -558,18 +564,26 @@ struct ImageGenerationPage {
   @Builder
   private Header() {
     Row() {
-      Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_primary')])
+      Row() {
+        Button() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(22)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.handleBack()
+        })
+
+        Blank()
+          .width(40)
+          .height(40)
       }
-      .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.handleBack()
-      })
+      .width(88)
+      .alignItems(VerticalAlign.Center)
 
       Text($r('app.string.image_generation_title'))
         .fontSize(20)
@@ -578,19 +592,37 @@ struct ImageGenerationPage {
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.plus'))
-          .fontSize(20)
-          .fontColor([this.canStartNewSession() ? this.themePrimary : $r('app.color.text_tertiary')])
+      Row({ space: 8 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.AI_word_suggest'))
+            .fontSize(19)
+            .fontColor([this.themePrimary])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .accessibilityText($r('app.string.image_prompt_template_manage'))
+        .onClick(() => {
+          this.openPromptTemplateManager()
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(20)
+            .fontColor([this.canStartNewSession() ? this.themePrimary : $r('app.color.text_tertiary')])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .enabled(this.canStartNewSession())
+        .onClick(() => {
+          this.startNewSession()
+        })
       }
-      .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .enabled(this.canStartNewSession())
-      .onClick(() => {
-        this.startNewSession()
-      })
+      .width(88)
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .height(56 + this.getTopPadding())
@@ -699,7 +731,9 @@ struct ImageGenerationPage {
         items: this.viewModel.currentImages,
         requestedCount: this.viewModel.numberOfImages,
         promptTemplates: this.viewModel.visiblePromptTemplates,
+        hasPromptTemplates: this.viewModel.promptTemplates.length > 0,
         canRotatePromptTemplates: this.viewModel.promptTemplates.length > this.viewModel.visiblePromptTemplates.length,
+        promptTemplatesVisible: this.viewModel.promptTemplateRecommendationsVisible,
         onPreview: (index: number): void => {
           this.openPreview(this.viewModel.currentImages, index)
         },
@@ -718,10 +752,13 @@ struct ImageGenerationPage {
         onRotateTemplates: (): void => {
           this.viewModel.showNextPromptTemplateBatch()
         },
+        onToggleTemplateVisibility: (): void => {
+          this.viewModel.setPromptTemplateRecommendationsVisible(!this.viewModel.promptTemplateRecommendationsVisible).catch((error: Object): void => {
+            console.error('ImageGenerationPage', `Toggle prompt template recommendation visibility failed: ${JSON.stringify(error)}`)
+          })
+        },
         onManageTemplates: (): void => {
-          if (imageGenerationPagePathStack !== null) {
-            imageGenerationPagePathStack.pushPath({ name: IMAGE_PROMPT_TEMPLATE_MANAGER_ROUTE })
-          }
+          this.openPromptTemplateManager()
         }
       })
 

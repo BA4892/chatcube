@@ -12,13 +12,16 @@ export struct ImageResultGrid {
   @Param items: GeneratedMedia[] = []
   @Param requestedCount: number = 1
   @Param promptTemplates: ImagePromptTemplate[] = []
+  @Param hasPromptTemplates: boolean = false
   @Param canRotatePromptTemplates: boolean = false
+  @Param promptTemplatesVisible: boolean = true
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onUseTemplate: (prompt: string) => void = (_prompt: string): void => {}
   @Event onRotateTemplates: () => void = (): void => {}
+  @Event onToggleTemplateVisibility: () => void = (): void => {}
   @Event onManageTemplates: () => void = (): void => {}
 
   build() {
@@ -75,7 +78,7 @@ export struct ImageResultGrid {
           .margin({ top: 14 })
       }
 
-      if (this.promptTemplates.length > 0) {
+      if (this.hasPromptTemplates || this.promptTemplates.length > 0) {
         // 示例 prompt 区: 标题 + 操作按钮 + 自动换行的 chip 流, 点击直接填入输入框
         Column() {
           Row() {
@@ -83,9 +86,14 @@ export struct ImageResultGrid {
               .fontSize(13)
               .fontColor($r('app.color.text_tertiary'))
               .layoutWeight(1)
-            this.TemplateActionButton($r('sys.symbol.arrow_clockwise'), $r('app.string.image_prompt_template_refresh'), (): void => {
-              this.onRotateTemplates()
-            }, this.canRotatePromptTemplates)
+            if (this.promptTemplatesVisible) {
+              this.TemplateActionButton($r('sys.symbol.arrow_clockwise'), $r('app.string.image_prompt_template_refresh'), (): void => {
+                this.onRotateTemplates()
+              }, this.canRotatePromptTemplates)
+            }
+            this.TemplateActionButton(this.promptTemplatesVisible ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'), this.promptTemplatesVisible ? $r('app.string.image_prompt_template_hide_recommendations') : $r('app.string.image_prompt_template_show_recommendations'), (): void => {
+              this.onToggleTemplateVisibility()
+            }, true)
             this.TemplateActionButton($r('sys.symbol.gearshape'), $r('app.string.image_prompt_template_manage'), (): void => {
               this.onManageTemplates()
             }, true)
@@ -94,17 +102,19 @@ export struct ImageResultGrid {
           .padding({ left: 16, right: 16 })
           .margin({ bottom: 8 })
 
-          Flex({
-            direction: FlexDirection.Row,
-            wrap: FlexWrap.Wrap,
-            justifyContent: FlexAlign.Center
-          }) {
-            ForEach(this.promptTemplates, (template: ImagePromptTemplate): void => {
-              this.TemplateChip(template)
-            }, (template: ImagePromptTemplate): string => template.id)
+          if (this.promptTemplatesVisible && this.promptTemplates.length > 0) {
+            Flex({
+              direction: FlexDirection.Row,
+              wrap: FlexWrap.Wrap,
+              justifyContent: FlexAlign.Center
+            }) {
+              ForEach(this.promptTemplates, (template: ImagePromptTemplate): void => {
+                this.TemplateChip(template)
+              }, (template: ImagePromptTemplate): string => template.id)
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16 })
           }
-          .width('100%')
-          .padding({ left: 16, right: 16 })
         }
         .width('100%')
       }

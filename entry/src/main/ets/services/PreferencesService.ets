@@ -32,6 +32,11 @@ export class PreferenceKeys {
   static readonly DEFAULT_IMAGE_MODEL_NAME: string = 'default_image_model_name'
   static readonly DEFAULT_IMAGE_PROVIDER_NAME: string = 'default_image_provider_name'
 
+  // 图像生成提示词库
+  static readonly IMAGE_PROMPT_TEMPLATES_JSON: string = 'image_prompt_templates_json'
+  static readonly IMAGE_PROMPT_TEMPLATES_VERSION: string = 'image_prompt_templates_version'
+  static readonly IMAGE_PROMPT_TEMPLATE_RECOMMENDATIONS_VISIBLE: string = 'image_prompt_template_recommendations_visible'
+
   // Prompt 配置
   static readonly TITLE_PROMPT_TEMPLATE: string = 'title_prompt_template'
   static readonly TRANSLATE_PROMPT_TEMPLATE: string = 'translate_prompt_template'

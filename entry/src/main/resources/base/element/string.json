@@ -470,7 +470,7 @@
     },
     {
       "name": "export_include_preferences",
-      "value": "Include User Preferences"
+      "value": "Include Preferences and Prompt Library"
     },
     {
       "name": "export_start",
@@ -550,7 +550,7 @@
     },
     {
       "name": "import_preferences",
-      "value": "Import User Preferences"
+      "value": "Import Preferences and Prompt Library"
     },
     {
       "name": "import_start",
@@ -2961,6 +2961,18 @@
       "value": "预置"
     },
     {
+      "name": "image_prompt_template_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "image_prompt_template_filter_mine",
+      "value": "我的"
+    },
+    {
+      "name": "image_prompt_template_filter_builtin",
+      "value": "预置"
+    },
+    {
       "name": "image_prompt_template_title_placeholder",
       "value": "标题"
     },
@@ -2971,6 +2983,22 @@
     {
       "name": "image_prompt_template_edit",
       "value": "编辑"
+    },
+    {
+      "name": "image_prompt_template_use_for_image",
+      "value": "用于生图"
+    },
+    {
+      "name": "image_prompt_template_applied",
+      "value": "已填入提示词"
+    },
+    {
+      "name": "image_prompt_template_show_recommendations",
+      "value": "显示生图推荐"
+    },
+    {
+      "name": "image_prompt_template_hide_recommendations",
+      "value": "隐藏生图推荐"
     },
     {
       "name": "image_prompt_template_search_placeholder",

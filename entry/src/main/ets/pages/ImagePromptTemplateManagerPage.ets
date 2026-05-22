@@ -5,11 +5,18 @@ import { showToast } from '../utils/ToastUtil'
 
 let imagePromptTemplateManagerPathStack: NavPathStack | null = null
 
+enum ImagePromptTemplateFilterMode {
+  ALL = 'all',
+  MINE = 'mine',
+  BUILTIN = 'builtin'
+}
+
 @Entry
 @ComponentV2
 struct ImagePromptTemplateManagerPage {
   @Local viewModel: ImageGenerationViewModel = ImageGenerationViewModel.getInstance()
   @Local searchText: string = ''
+  @Local filterMode: ImagePromptTemplateFilterMode = ImagePromptTemplateFilterMode.ALL
   @Local editingId: string = ''
   @Local editingTitle: string = ''
   @Local editingPrompt: string = ''
@@ -90,7 +97,6 @@ struct ImagePromptTemplateManagerPage {
     template.id = this.editingId
     template.title = this.editingTitle.trim()
     template.prompt = this.editingPrompt.trim()
-    template.enabled = previous !== null ? previous.enabled : true
     template.builtin = previous !== null ? previous.builtin : false
     template.order = previous !== null ? previous.order : 0
     template.createdAt = previous !== null ? previous.createdAt : 0
@@ -124,10 +130,20 @@ struct ImagePromptTemplateManagerPage {
     return template.title.toLowerCase().includes(keyword) || template.prompt.toLowerCase().includes(keyword)
   }
 
+  private matchesFilter(template: ImagePromptTemplate): boolean {
+    if (this.filterMode === ImagePromptTemplateFilterMode.MINE) {
+      return !template.builtin
+    }
+    if (this.filterMode === ImagePromptTemplateFilterMode.BUILTIN) {
+      return template.builtin
+    }
+    return true
+  }
+
   private getFilteredTemplates(): ImagePromptTemplate[] {
     const result: ImagePromptTemplate[] = []
     for (let i = 0; i < this.viewModel.promptTemplates.length; i++) {
-      if (this.matchesSearch(this.viewModel.promptTemplates[i])) {
+      if (this.matchesFilter(this.viewModel.promptTemplates[i]) && this.matchesSearch(this.viewModel.promptTemplates[i])) {
         result.push(this.viewModel.promptTemplates[i])
       }
     }
@@ -158,6 +174,15 @@ struct ImagePromptTemplateManagerPage {
       console.error('ImagePromptTemplateManagerPage', `Reset prompt templates failed: ${JSON.stringify(error)}`)
       showToast(this.getUIContext(), $r('app.string.image_prompt_template_reset_failed'))
     })
+  }
+
+  private useTemplate(template: ImagePromptTemplate): void {
+    if (template.prompt.trim() === '') {
+      return
+    }
+    this.viewModel.updatePrompt(template.prompt)
+    showToast(this.getUIContext(), $r('app.string.image_prompt_template_applied'))
+    this.handleBack()
   }
 
   build() {
@@ -213,6 +238,8 @@ struct ImagePromptTemplateManagerPage {
           this.searchText = value
         })
 
+      this.FilterTabs()
+
       Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
         this.ActionButton($r('sys.symbol.arrow_clockwise'), $r('app.string.image_prompt_template_sync_remote'), true, (): void => {
           this.syncRemoteBuiltins()
@@ -263,6 +290,39 @@ struct ImagePromptTemplateManagerPage {
     .enabled(enabled)
     .onClick(() => {
       action()
+    })
+  }
+
+  @Builder
+  private FilterTabs() {
+    Row({ space: 4 }) {
+      this.FilterTab(ImagePromptTemplateFilterMode.ALL, $r('app.string.image_prompt_template_filter_all'))
+      this.FilterTab(ImagePromptTemplateFilterMode.MINE, $r('app.string.image_prompt_template_filter_mine'))
+      this.FilterTab(ImagePromptTemplateFilterMode.BUILTIN, $r('app.string.image_prompt_template_filter_builtin'))
+    }
+    .width('100%')
+    .height(34)
+    .padding(3)
+    .backgroundColor(this.themeSurface)
+    .borderRadius(11)
+  }
+
+  @Builder
+  private FilterTab(mode: ImagePromptTemplateFilterMode, label: Resource) {
+    Stack() {
+      Text(label)
+        .fontSize(13)
+        .fontWeight(this.filterMode === mode ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.filterMode === mode ? Color.White : $r('app.color.text_secondary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .height('100%')
+    .borderRadius(8)
+    .backgroundColor(this.filterMode === mode ? this.themePrimary : Color.Transparent)
+    .onClick(() => {
+      this.filterMode = mode
     })
   }
 
@@ -369,13 +429,7 @@ struct ImagePromptTemplateManagerPage {
         }
         .layoutWeight(1)
 
-        Toggle({ type: ToggleType.Switch, isOn: template.enabled })
-          .selectedColor(this.themePrimary)
-          .onChange((isOn: boolean): void => {
-            this.viewModel.setPromptTemplateEnabled(template.id, isOn).catch((error: Object): void => {
-              console.error('ImagePromptTemplateManagerPage', `Toggle prompt template failed: ${JSON.stringify(error)}`)
-            })
-          })
+        this.UseForImageActionButton(template)
       }
       .width('100%')
 
@@ -420,6 +474,22 @@ struct ImagePromptTemplateManagerPage {
     .padding(12)
     .backgroundColor(this.themeSurface)
     .borderRadius(12)
+  }
+
+  @Builder
+  private UseForImageActionButton(template: ImagePromptTemplate) {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph($r('sys.symbol.picture_star_fill'))
+        .fontSize(18)
+        .fontColor([this.themePrimary])
+    }
+    .width(34)
+    .height(34)
+    .backgroundColor(getAppUiState().themePrimaryLight)
+    .accessibilityText($r('app.string.image_prompt_template_use_for_image'))
+    .onClick(() => {
+      this.useTemplate(template)
+    })
   }
 }
 

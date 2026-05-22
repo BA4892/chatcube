@@ -36,6 +36,7 @@ import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { applyDerivedModelDefaults } from '../utils/ModelCapabilityDeriver'
 import { getAppStateManager } from '../viewmodels/AppStateManager'
 import { getProviderViewModel } from '../viewmodels/ProviderViewModel'
+import { ImageGenerationViewModel } from '../viewmodels/ImageGenerationViewModel'
 import { buildProviderImportOrder } from '../config/ProviderOrderUtils'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { setAppUiStateValue } from '../state/AppUiState'
@@ -1325,6 +1326,17 @@ export class ImportExportService {
       await getAppStateManager().loadState()
     } catch (error) {
       console.warn('ImportExportService', `Failed to reload app state: ${JSON.stringify(error)}`)
+    }
+    try {
+      // 刷新图像生成提示词库缓存, 覆盖普通导入与 WebDAV 恢复后的内存状态
+      const imageGenerationViewModel = ImageGenerationViewModel.getInstance()
+      imageGenerationViewModel.promptTemplateRecommendationsVisible = await getPreferencesService().getBoolean(
+        PreferenceKeys.IMAGE_PROMPT_TEMPLATE_RECOMMENDATIONS_VISIBLE,
+        true
+      )
+      await imageGenerationViewModel.refreshPromptTemplates()
+    } catch (error) {
+      console.warn('ImportExportService', `Failed to reload image prompt templates: ${JSON.stringify(error)}`)
     }
   }
 

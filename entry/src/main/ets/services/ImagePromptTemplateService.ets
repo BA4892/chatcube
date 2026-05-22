@@ -1,11 +1,9 @@
 import { ImagePromptTemplate } from '../models/ImagePromptTemplateModels'
 import { getHttpService, HttpService } from './HttpService'
-import { getPreferencesService, PreferencesService } from './PreferencesService'
+import { getPreferencesService, PreferencesService, PreferenceKeys } from './PreferencesService'
 
 const BUILTIN_TEMPLATE_VERSION = 1
 const REMOTE_TEMPLATE_VERSION_OFFSET = 1000
-const IMAGE_PROMPT_TEMPLATES_JSON_KEY = 'image_prompt_templates_json'
-const IMAGE_PROMPT_TEMPLATES_VERSION_KEY = 'image_prompt_templates_version'
 export const IMAGE_PROMPT_TEMPLATES_REMOTE_URL =
   'https://beta.04160518.xyz/chatbox/image-prompt-templates.json'
 
@@ -13,7 +11,6 @@ interface ImagePromptTemplateJsonData {
   id?: string
   title?: string
   prompt?: string
-  enabled?: boolean
   builtin?: boolean
   order?: number
   createdAt?: number
@@ -52,17 +49,6 @@ export class ImagePromptTemplateService {
     return this.sortTemplates(templates)
   }
 
-  async listEnabledTemplates(): Promise<ImagePromptTemplate[]> {
-    const templates = await this.loadTemplates()
-    const enabled: ImagePromptTemplate[] = []
-    for (let i = 0; i < templates.length; i++) {
-      if (templates[i].enabled && templates[i].prompt.trim() !== '') {
-        enabled.push(templates[i])
-      }
-    }
-    return this.sortTemplates(enabled)
-  }
-
   async saveTemplate(template: ImagePromptTemplate): Promise<ImagePromptTemplate[]> {
     const templates = await this.loadTemplates()
     const now = Date.now()
@@ -85,16 +71,6 @@ export class ImagePromptTemplateService {
       templates[index] = normalized
     } else {
       templates.push(normalized)
-    }
-    return await this.persistTemplates(templates)
-  }
-
-  async setTemplateEnabled(id: string, enabled: boolean): Promise<ImagePromptTemplate[]> {
-    const templates = await this.loadTemplates()
-    const index = this.indexOfTemplate(templates, id)
-    if (index >= 0) {
-      templates[index].enabled = enabled
-      templates[index].updatedAt = Date.now()
     }
     return await this.persistTemplates(templates)
   }
@@ -144,27 +120,50 @@ export class ImagePromptTemplateService {
       }
     }
     for (let i = 0; i < remoteBuiltins.length; i++) {
-      const previous = this.findTemplate(templates, remoteBuiltins[i].id)
-      if (previous !== null) {
-        remoteBuiltins[i].enabled = previous.enabled
-      }
       next.push(remoteBuiltins[i])
     }
     return await this.persistTemplates(next, REMOTE_TEMPLATE_VERSION_OFFSET + payload.version)
   }
 
   private async loadTemplates(): Promise<ImagePromptTemplate[]> {
-    const raw = await this.preferencesService.getString(IMAGE_PROMPT_TEMPLATES_JSON_KEY, '')
-    const savedVersion = await this.preferencesService.getNumber(IMAGE_PROMPT_TEMPLATES_VERSION_KEY, 0)
+    const raw = await this.preferencesService.getString(PreferenceKeys.IMAGE_PROMPT_TEMPLATES_JSON, '')
+    const savedVersion = await this.preferencesService.getNumber(PreferenceKeys.IMAGE_PROMPT_TEMPLATES_VERSION, 0)
     const parsed = this.parseTemplates(raw)
     if (savedVersion >= REMOTE_TEMPLATE_VERSION_OFFSET) {
-      return this.sortTemplates(parsed)
+      if (this.hasBuiltinTemplate(parsed)) {
+        return this.sortTemplates(parsed)
+      }
+      const fallback = this.mergeBuiltins(this.getCustomTemplates(parsed), 0)
+      return await this.persistTemplates(fallback.templates, BUILTIN_TEMPLATE_VERSION)
+    }
+    if (raw !== '' && parsed.length === 0) {
+      const fallback = this.mergeBuiltins([], 0)
+      return await this.persistTemplates(fallback.templates, BUILTIN_TEMPLATE_VERSION)
     }
     const merged = this.mergeBuiltins(parsed, savedVersion)
     if (raw === '' || savedVersion < BUILTIN_TEMPLATE_VERSION || merged.changed) {
       return await this.persistTemplates(merged.templates, BUILTIN_TEMPLATE_VERSION)
     }
     return merged.templates
+  }
+
+  private hasBuiltinTemplate(templates: ImagePromptTemplate[]): boolean {
+    for (let i = 0; i < templates.length; i++) {
+      if (templates[i].builtin) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private getCustomTemplates(templates: ImagePromptTemplate[]): ImagePromptTemplate[] {
+    const customTemplates: ImagePromptTemplate[] = []
+    for (let i = 0; i < templates.length; i++) {
+      if (!templates[i].builtin) {
+        customTemplates.push(templates[i])
+      }
+    }
+    return customTemplates
   }
 
   private parseTemplates(raw: string): ImagePromptTemplate[] {
@@ -248,8 +247,6 @@ export class ImagePromptTemplateService {
         continue
       }
       if (savedVersion < BUILTIN_TEMPLATE_VERSION) {
-        const existing = next[index]
-        builtin.enabled = existing.enabled
         next[index] = builtin
         changed = true
       }
@@ -265,8 +262,8 @@ export class ImagePromptTemplateService {
     version: number = BUILTIN_TEMPLATE_VERSION
   ): Promise<ImagePromptTemplate[]> {
     const sorted = this.sortTemplates(templates)
-    await this.preferencesService.setString(IMAGE_PROMPT_TEMPLATES_JSON_KEY, JSON.stringify(sorted))
-    await this.preferencesService.setNumber(IMAGE_PROMPT_TEMPLATES_VERSION_KEY, version)
+    await this.preferencesService.setString(PreferenceKeys.IMAGE_PROMPT_TEMPLATES_JSON, JSON.stringify(sorted))
+    await this.preferencesService.setNumber(PreferenceKeys.IMAGE_PROMPT_TEMPLATES_VERSION, version)
     return sorted
   }
 
@@ -275,7 +272,6 @@ export class ImagePromptTemplateService {
     template.id = typeof data.id === 'string' ? data.id : ''
     template.title = typeof data.title === 'string' ? data.title : ''
     template.prompt = typeof data.prompt === 'string' ? data.prompt : ''
-    template.enabled = typeof data.enabled === 'boolean' ? data.enabled : true
     template.builtin = forceBuiltin ? true : (typeof data.builtin === 'boolean' ? data.builtin : false)
     template.order = typeof data.order === 'number' ? data.order : 0
     template.createdAt = typeof data.createdAt === 'number' ? data.createdAt : Date.now()
@@ -288,7 +284,6 @@ export class ImagePromptTemplateService {
     template.id = source.id
     template.title = source.title
     template.prompt = source.prompt
-    template.enabled = source.enabled
     template.builtin = source.builtin
     template.order = source.order
     template.createdAt = source.createdAt
@@ -312,11 +307,6 @@ export class ImagePromptTemplateService {
       }
     }
     return -1
-  }
-
-  private findTemplate(templates: ImagePromptTemplate[], id: string): ImagePromptTemplate | null {
-    const index = this.indexOfTemplate(templates, id)
-    return index >= 0 ? templates[index] : null
   }
 
   private getNextOrder(templates: ImagePromptTemplate[]): number {
@@ -402,7 +392,6 @@ export class ImagePromptTemplateService {
     template.id = id
     template.title = title
     template.prompt = prompt
-    template.enabled = true
     template.builtin = true
     template.order = order
     template.createdAt = timestamp + order

@@ -28,6 +28,7 @@ import { getAttachmentStorageService, AttachmentStorageService } from '../servic
 import { getBackgroundRunGuardService, BackgroundRunGuardService } from '../services/BackgroundRunGuardService'
 import { getChatNotificationService, ChatNotificationService } from '../services/ChatNotificationService'
 import { HttpRequestController } from '../services/HttpService'
+import { getPreferencesService, PreferencesService, PreferenceKeys } from '../services/PreferencesService'
 import { validateProviderConfig } from '../utils/ProviderValidationUtils'
 import { ProviderViewModel } from './ProviderViewModel'
 import { getEffectiveOutputMode } from '../utils/ModelCapabilityDeriver'
@@ -79,7 +80,7 @@ export class ImageGenerationViewModel {
   @Trace isProvidersLoaded: boolean = false
   @Trace promptTemplates: ImagePromptTemplate[] = []
   @Trace visiblePromptTemplates: ImagePromptTemplate[] = []
-  @Trace promptTemplateBatchIndex: number = 0
+  @Trace promptTemplateRecommendationsVisible: boolean = true
 
   private defaultModelService: DefaultModelService = getDefaultModelService()
   private providerViewModel: ProviderViewModel = ProviderViewModel.getInstance()
@@ -90,6 +91,7 @@ export class ImageGenerationViewModel {
   private backgroundGuard: BackgroundRunGuardService = getBackgroundRunGuardService()
   private notificationService: ChatNotificationService = getChatNotificationService()
   private promptTemplateService: ImagePromptTemplateService = getImagePromptTemplateService()
+  private preferencesService: PreferencesService = getPreferencesService()
   private activeController: HttpRequestController | null = null
   private generationToken: number = 0
   private readonly promptTemplateBatchSize: number = 5
@@ -109,6 +111,10 @@ export class ImageGenerationViewModel {
     }
     this.normalizeOptionsForCurrentRoute()
     await this.trimReferenceImagesForCurrentRoute()
+    this.promptTemplateRecommendationsVisible = await this.preferencesService.getBoolean(
+      PreferenceKeys.IMAGE_PROMPT_TEMPLATE_RECOMMENDATIONS_VISIBLE,
+      true
+    )
     await this.refreshPromptTemplates()
     await this.refreshGallery()
   }
@@ -337,11 +343,6 @@ export class ImageGenerationViewModel {
     this.updateVisiblePromptTemplates()
   }
 
-  async setPromptTemplateEnabled(id: string, enabled: boolean): Promise<void> {
-    this.promptTemplates = await this.promptTemplateService.setTemplateEnabled(id, enabled)
-    this.updateVisiblePromptTemplates()
-  }
-
   async deletePromptTemplate(id: string): Promise<void> {
     this.promptTemplates = await this.promptTemplateService.deleteTemplate(id)
     this.updateVisiblePromptTemplates()
@@ -349,54 +350,61 @@ export class ImageGenerationViewModel {
 
   async resetBuiltinPromptTemplates(): Promise<void> {
     this.promptTemplates = await this.promptTemplateService.resetBuiltins()
-    this.promptTemplateBatchIndex = 0
     this.updateVisiblePromptTemplates()
   }
 
   async syncRemotePromptTemplates(): Promise<void> {
     this.promptTemplates = await this.promptTemplateService.syncRemoteBuiltins()
-    this.promptTemplateBatchIndex = 0
+    this.updateVisiblePromptTemplates()
+  }
+
+  async setPromptTemplateRecommendationsVisible(visible: boolean): Promise<void> {
+    this.promptTemplateRecommendationsVisible = visible
+    await this.preferencesService.setBoolean(PreferenceKeys.IMAGE_PROMPT_TEMPLATE_RECOMMENDATIONS_VISIBLE, visible)
     this.updateVisiblePromptTemplates()
   }
 
   showNextPromptTemplateBatch(): void {
-    const enabledTemplates = this.getEnabledPromptTemplates()
-    if (enabledTemplates.length <= this.promptTemplateBatchSize) {
-      this.visiblePromptTemplates = enabledTemplates
+    const availableTemplates = this.getAvailablePromptTemplates()
+    if (availableTemplates.length <= this.promptTemplateBatchSize) {
+      this.visiblePromptTemplates = this.promptTemplateRecommendationsVisible ? availableTemplates : []
       return
     }
-    const batchCount = Math.ceil(enabledTemplates.length / this.promptTemplateBatchSize)
-    this.promptTemplateBatchIndex = (this.promptTemplateBatchIndex + 1) % batchCount
-    this.updateVisiblePromptTemplates()
+    this.visiblePromptTemplates = this.pickPromptTemplateBatch(availableTemplates)
   }
 
   private updateVisiblePromptTemplates(): void {
-    const enabledTemplates = this.getEnabledPromptTemplates()
-    if (enabledTemplates.length <= this.promptTemplateBatchSize) {
-      this.visiblePromptTemplates = enabledTemplates
-      this.promptTemplateBatchIndex = 0
+    if (!this.promptTemplateRecommendationsVisible) {
+      this.visiblePromptTemplates = []
       return
     }
-    const batchCount = Math.ceil(enabledTemplates.length / this.promptTemplateBatchSize)
-    if (this.promptTemplateBatchIndex >= batchCount) {
-      this.promptTemplateBatchIndex = 0
+    const availableTemplates = this.getAvailablePromptTemplates()
+    if (availableTemplates.length <= this.promptTemplateBatchSize) {
+      this.visiblePromptTemplates = availableTemplates
+      return
     }
-    const start = this.promptTemplateBatchIndex * this.promptTemplateBatchSize
-    let next = enabledTemplates.slice(start, start + this.promptTemplateBatchSize)
-    if (next.length < this.promptTemplateBatchSize) {
-      next = next.concat(enabledTemplates.slice(0, this.promptTemplateBatchSize - next.length))
-    }
-    this.visiblePromptTemplates = next
+    this.visiblePromptTemplates = this.pickPromptTemplateBatch(availableTemplates)
   }
 
-  private getEnabledPromptTemplates(): ImagePromptTemplate[] {
-    const enabled: ImagePromptTemplate[] = []
+  private getAvailablePromptTemplates(): ImagePromptTemplate[] {
+    const available: ImagePromptTemplate[] = []
     for (let i = 0; i < this.promptTemplates.length; i++) {
-      if (this.promptTemplates[i].enabled && this.promptTemplates[i].prompt.trim() !== '') {
-        enabled.push(this.promptTemplates[i])
+      if (this.promptTemplates[i].prompt.trim() !== '') {
+        available.push(this.promptTemplates[i])
       }
     }
-    return enabled
+    return available
+  }
+
+  private pickPromptTemplateBatch(templates: ImagePromptTemplate[]): ImagePromptTemplate[] {
+    const pool = templates.slice()
+    const selected: ImagePromptTemplate[] = []
+    while (pool.length > 0 && selected.length < this.promptTemplateBatchSize) {
+      const index = Math.floor(Math.random() * pool.length)
+      selected.push(pool[index])
+      pool.splice(index, 1)
+    }
+    return selected
   }
 
   getSelectedModelLabel(): string {
