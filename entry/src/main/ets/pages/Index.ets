@@ -3180,48 +3180,45 @@ struct Index {
 
   @Builder
   private AssistantJumpCard(assistant: Assistant, featured: boolean = false) {
-    // Stack 浮层放左侧 4dp 助手色带, 主层走原 Column 内容
-    // active 状态用色带饱和 + 阴影增强表达, 取代原 1.5px accent border 叠加
-    Stack({ alignContent: Alignment.Start }) {
-      Column() {
-        this.AssistantJumpCardContent(assistant, featured)
-      }
-      .width('100%')
-      .backgroundColor(this.themeSurface)
-      .borderRadius(20)
-      .border({
-        width: 1,
-        color: $r('app.color.divider')
-      })
-      .shadow({
-        radius: assistant.id === this.currentAssistantId ? 12 : 4,
-        color: assistant.id === this.currentAssistantId ?
-          withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '30' : '18') : 'rgba(0,0,0,0.04)',
-        offsetX: 0,
-        offsetY: 2
-      })
-      .scale({
-        x: this.openingAssistantId === assistant.id ? 0.985 : 1,
-        y: this.openingAssistantId === assistant.id ? 0.985 : 1
-      })
-      .opacity(this.openingAssistantId === assistant.id ? 0.92 : 1)
-      .animation({ duration: 220, curve: Curve.EaseOut })
-      .clip(true)
-      .onClick(() => {
-        this.openAssistantNewChat(assistant)
-      })
-
-      // 4dp 色带: active 用饱和助手色, 否则 35% 透明度
-      Column()
-        .width(4)
-        .height('100%')
-        .backgroundColor(assistant.id === this.currentAssistantId ?
-          this.getAssistantAccentColor(assistant) :
-          withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '55' : '40'))
-        .borderRadius({ topLeft: 20, bottomLeft: 20 })
-        .hitTestBehavior(HitTestMode.Transparent)
+    // 4dp 左侧色带通过 borderWidth.left 实现, 自动贴合卡片高度
+    // 不再用 Stack + 兄弟 Column 方案: Stack 内 height('100%') 在 List 单项时会撑到 List 父容器, 不是兄弟卡高度
+    Column() {
+      this.AssistantJumpCardContent(assistant, featured)
     }
     .width('100%')
+    .backgroundColor(this.themeSurface)
+    .borderRadius(20)
+    .borderWidth({
+      left: 4,
+      top: 1,
+      right: 1,
+      bottom: 1
+    })
+    .borderColor({
+      left: assistant.id === this.currentAssistantId ?
+        this.getAssistantAccentColor(assistant) :
+        withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '55' : '40'),
+      top: $r('app.color.divider'),
+      right: $r('app.color.divider'),
+      bottom: $r('app.color.divider')
+    })
+    .shadow({
+      radius: assistant.id === this.currentAssistantId ? 12 : 4,
+      color: assistant.id === this.currentAssistantId ?
+        withColorAlpha(this.getAssistantAccentColor(assistant), this.isDarkMode ? '30' : '18') : 'rgba(0,0,0,0.04)',
+      offsetX: 0,
+      offsetY: 2
+    })
+    .scale({
+      x: this.openingAssistantId === assistant.id ? 0.985 : 1,
+      y: this.openingAssistantId === assistant.id ? 0.985 : 1
+    })
+    .opacity(this.openingAssistantId === assistant.id ? 0.92 : 1)
+    .animation({ duration: 220, curve: Curve.EaseOut })
+    .clip(true)
+    .onClick(() => {
+      this.openAssistantNewChat(assistant)
+    })
   }
 
   /**
