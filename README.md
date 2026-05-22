@@ -2,7 +2,7 @@
   <img src="AppScope/resources/base/media/foreground.png" width="120" />
 </p>
 
-<h1 align="center">ChatCube</h1>
+<h1 align="center">Cube Chat</h1>
 
 <p align="center">
   一个面向鸿蒙 6（API 23）的原生 AI 聊天客户端。<br/>
@@ -15,7 +15,7 @@
 
 ---
 
-## 为什么选 ChatCube？
+## 为什么选 Cube Chat？
 
 - 完全使用 ArkTS 原生开发，不是 WebView 套壳
 - 围绕鸿蒙 6（API 23）持续打磨，交互和系统行为适配更完整
@@ -48,7 +48,7 @@
 
 ## 1.3.0 版本亮点
 
-本次版本为后续应用市场上架做准备，已完成应用名称调整和图标资源更新；同时补齐图像生成、文档附件解析、图片预览等能力，并继续打磨聊天页、智感握姿和平板端体验。
+本次版本为后续应用市场上架做准备，应用名称以 Cube Chat 为准，并更新图标资源；同时补齐图像生成、文档附件解析、图片预览等能力，并继续打磨聊天页、智感握姿和平板端体验。
 
 ### 新增
 - 新增图像生成入口、生成页、结果网格、历史图库和模型能力识别
@@ -107,7 +107,7 @@
 
 ### 后台也不掉线
 
-切到其他应用等待长回复？ChatCube 在后台继续工作，回复完成后通知你。
+切到其他应用等待长回复？Cube Chat 在后台继续工作，回复完成后通知你。
 
 ## 支持的服务商
 
@@ -177,12 +177,12 @@ entry/src/main/ets/
 
 ## 交流反馈
 
-欢迎加入 ChatCube 交流反馈群，一起提建议、聊体验、报问题。
+欢迎加入 Cube Chat 交流反馈群，一起提建议、聊体验、报问题。
 
 - QQ 群号：`752237762`
 
 <p align="center">
-  <img src="assets/qrcode_1772160303793.jpg" width="280" alt="ChatCube QQ 群二维码" />
+  <img src="assets/qrcode_1772160303793.jpg" width="280" alt="Cube Chat QQ 群二维码" />
 </p>
 
 ## English README
@@ -195,14 +195,14 @@ entry/src/main/ets/
 
 ## 赞助支持
 
-如果 ChatCube 对你有帮助,欢迎自愿赞助开发。**赞助完全自愿,不影响应用任何功能的使用,也不会解锁任何隐藏内容。**
+如果 Cube Chat 对你有帮助,欢迎自愿赞助开发。**赞助完全自愿,不影响应用任何功能的使用,也不会解锁任何隐藏内容。**
 
 ### 赞助方式
 
 扫码微信打赏:
 
 <p align="center">
-  <img src="assets/wechat-pay.png" width="240" alt="ChatCube 微信打赏码" />
+  <img src="assets/wechat-pay.png" width="240" alt="Cube Chat 微信打赏码" />
 </p>
 
 > 💡 微信打赏时请在备注里写下 **QQ 号或其他联系方式**,作者会通过 QQ 群联系你并兑现下面的福利。
@@ -211,7 +211,7 @@ entry/src/main/ets/
 
 - 购买各模型的 API token,联调和测试不同服务商
 - 服务器、域名、邀测发布等基础开支
-- 持续迭代和打磨 ChatCube
+- 持续迭代和打磨 Cube Chat
 
 ### 赞助者福利
 

@@ -1,4 +1,4 @@
-# ChatCube 中文文档
+# Cube Chat 中文文档
 
 中文主文档已切换到根目录 README。
 

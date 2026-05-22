@@ -13,7 +13,7 @@ const LOG_TAG = 'LoginPage'
 
 // Cube Chat 隐私政策（复用 PrivacyPolicyPage 的 AppGallery 托管地址）
 const PRIVACY_POLICY_URL: string =
-  'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1906111586003597632'
+  'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1955969859250584064'
 // 华为账号用户认证协议（官方）
 const HUAWEI_AUTH_AGREEMENT_URL: string =
   'https://privacy.consumer.huawei.com/legal/id/authentication-terms.htm?code=CN&language=zh-CN'

@@ -2,7 +2,7 @@
   <img src="AppScope/resources/base/media/foreground.png" width="120" />
 </p>
 
-<h1 align="center">ChatCube</h1>
+<h1 align="center">Cube Chat</h1>
 
 <p align="center">
   A native AI chat client for HarmonyOS 6 (API 23).<br/>
@@ -15,7 +15,7 @@
 
 ---
 
-## Why ChatCube?
+## Why Cube Chat?
 
 - Built entirely with ArkTS — a true HarmonyOS native app, not a web wrapper
 - Continuously refined around HarmonyOS 6 (API 23), with better alignment to current system behavior
@@ -48,7 +48,7 @@ These screenshots reflect the current HarmonyOS 6 (API 23) build:
 
 ## Highlights in 1.3.0
 
-This release prepares the app for future marketplace submission, including the app rename and refreshed icon assets. It also adds image generation, document attachment parsing, and unified image preview capabilities, while refining chat streaming, Smart Grip, and tablet details.
+This release prepares the app for future marketplace submission, with the app name standardized as Cube Chat and refreshed icon assets. It also adds image generation, document attachment parsing, and unified image preview capabilities, while refining chat streaming, Smart Grip, and tablet details.
 
 ### Added
 - Added an image generation entry, generation page, result grid, gallery history, and model capability detection
@@ -107,7 +107,7 @@ Export and import everything — conversations, provider configs, preferences. J
 
 ### Stays alive in the background
 
-Switch to another app while waiting for a long response. ChatCube keeps working and notifies you when the reply is ready.
+Switch to another app while waiting for a long response. Cube Chat keeps working and notifies you when the reply is ready.
 
 ## Supported Providers
 

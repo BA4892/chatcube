@@ -10,7 +10,7 @@ import {
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
 
-const PRIVACY_POLICY_URL = 'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1906111586003597632'
+const PRIVACY_POLICY_URL = 'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1955969859250584064'
 
 let privacyPolicyPagePathStack: NavPathStack | null = null
 
