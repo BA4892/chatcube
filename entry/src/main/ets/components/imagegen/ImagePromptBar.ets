@@ -22,11 +22,14 @@ export struct ImagePromptBar {
   @Param referenceImages: string[] = []
   @Param selectedAspectRatio: ImageAspectRatio = ImageAspectRatio.SQUARE
   @Param canAddReferenceImages: boolean = true
+  @Param canOptimizePrompt: boolean = false
+  @Param isOptimizingPrompt: boolean = false
   @Param bottomAvoidHeight: number = 0
   @Event onPromptChange: (value: string) => void = (_value: string): void => {}
   @Event onOpenModelSheet: () => void = (): void => {}
   @Event onOpenSettings: () => void = (): void => {}
   @Event onPickReferenceImages: () => void = (): void => {}
+  @Event onOptimizePrompt: () => void = (): void => {}
   @Event onGenerate: () => void = (): void => {}
   @Event onCancel: () => void = (): void => {}
   @Event onRemoveReferenceImage: (path: string) => void = (_path: string): void => {}
@@ -80,17 +83,28 @@ export struct ImagePromptBar {
           .margin({ bottom: 8 })
       }
 
-      TextArea({ text: this.prompt, placeholder: $r('app.string.image_generation_prompt_placeholder') })
-        .fontSize(15)
-        .fontColor($r('app.color.text_primary'))
-        .placeholderColor($r('app.color.text_tertiary'))
-        .backgroundColor(this.themeSurface)
-        .borderRadius(12)
-        .constraintSize({ minHeight: 48, maxHeight: 140 })
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .onChange((value: string): void => {
-          this.onPromptChange(value)
-        })
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        TextArea({ text: this.prompt, placeholder: $r('app.string.image_generation_prompt_placeholder') })
+          .width('100%')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .placeholderColor($r('app.color.text_tertiary'))
+          .backgroundColor(this.themeSurface)
+          .borderRadius(12)
+          .constraintSize({ minHeight: 76, maxHeight: 190 })
+          .padding({ left: 12, right: this.prompt.trim() !== '' ? 52 : 12, top: 10, bottom: this.prompt.trim() !== '' ? 42 : 10 })
+          .onChange((value: string): void => {
+            this.onPromptChange(value)
+          })
+
+        if (this.prompt.trim() !== '') {
+          Row() {
+            this.OptimizePromptButton()
+          }
+            .margin({ right: 8, bottom: 8 })
+        }
+      }
+      .width('100%')
 
       // 工具行: 左侧可横滑 (model + 📷 + 3 比例 chip + 设置),右侧固定 send 圆按钮
       // 横滑容器避免窄屏溢出, send 按钮始终在最右触手可及
@@ -229,6 +243,31 @@ export struct ImagePromptBar {
     .enabled(enabled)
     .onClick(() => {
       action()
+    })
+  }
+
+  @Builder
+  private OptimizePromptButton() {
+    Button() {
+      if (this.isOptimizingPrompt) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(this.themePrimary)
+      } else {
+        SymbolGlyph($r('sys.symbol.AI_pencil'))
+          .fontSize(17)
+          .fontColor([this.canOptimizePrompt ? this.themePrimary : $r('app.color.text_tertiary')])
+      }
+    }
+    .type(ButtonType.Circle)
+    .width(34)
+    .height(34)
+    .backgroundColor(this.canOptimizePrompt || this.isOptimizingPrompt ? getAppUiState().themePrimaryLight : this.themeSurface)
+    .accessibilityText($r('app.string.image_generation_optimize_prompt'))
+    .enabled(this.canOptimizePrompt)
+    .onClick(() => {
+      this.onOptimizePrompt()
     })
   }
 

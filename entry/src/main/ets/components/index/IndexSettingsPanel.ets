@@ -76,6 +76,19 @@ export struct IndexSettingsPanel {
   private buildGroups(): SettingsGroupModel[] {
     return [
       {
+        key: 'creation',
+        title: $r('app.string.settings_ai_creation'),
+        items: [
+          {
+            key: SettingsRouteName.IMAGE_GENERATION,
+            icon: $r('sys.symbol.picture_star_fill'),
+            title: $r('app.string.image_generation_title'),
+            subtitle: $r('app.string.image_generation_settings_entry_desc'),
+            action: (): void => { this.onOpenImageGeneration() }
+          } as SettingsListItemModel
+        ]
+      } as SettingsGroupModel,
+      {
         key: 'model',
         title: $r('app.string.settings_model_config'),
         items: [
@@ -92,13 +105,6 @@ export struct IndexSettingsPanel {
             title: $r('app.string.settings_default_model'),
             subtitle: $r('app.string.settings_default_model_desc'),
             action: (): void => { this.onOpenDefaultModel() }
-          } as SettingsListItemModel,
-          {
-            key: SettingsRouteName.IMAGE_GENERATION,
-            icon: $r('sys.symbol.picture'),
-            title: $r('app.string.image_generation_title'),
-            subtitle: $r('app.string.image_generation_settings_entry_desc'),
-            action: (): void => { this.onOpenImageGeneration() }
           } as SettingsListItemModel
         ]
       } as SettingsGroupModel,

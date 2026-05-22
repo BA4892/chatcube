@@ -10,6 +10,7 @@ export struct ImageGalleryGrid {
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
+  @Event onContinueEdit: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onReusePrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
 
@@ -17,20 +18,13 @@ export struct ImageGalleryGrid {
     if (this.items.length === 0) {
       this.EmptyState()
     } else {
-      // 用 Grid (而非 WaterFlow): WaterFlow + Repeat + virtualScroll 实测会出现 FlowItem
-      // 元数据 / 工具栏被裁切丢失的渲染异常。Grid 行齐导致的右侧留白通过
-      // AdaptiveImageThumbnail 的 minAspectRatio 限制极端比例图来缓解 (而不是结构上消除)
+      // 用 Grid + ForEach 保持生成完成后的数组刷新可见;极端比例图通过缩略图比例限制控制行高。
       Grid() {
-        Repeat<GeneratedMedia>(this.items)
-          .each((obj: RepeatItem<GeneratedMedia>) => {
-            GridItem() {
-              this.MediaCard(obj.item)
-            }
-          })
-          .key((item: GeneratedMedia) => {
-            return item.id
-          })
-          .virtualScroll({ totalCount: this.items.length })
+        ForEach(this.items, (item: GeneratedMedia): void => {
+          GridItem() {
+            this.MediaCard(item)
+          }
+        }, (item: GeneratedMedia): string => item.id)
       }
       .columnsTemplate(this.getColumnsTemplate())
       .columnsGap(12)
@@ -97,6 +91,9 @@ export struct ImageGalleryGrid {
         })
         this.IconAction($r('sys.symbol.checkmark_square_on_square'), (): void => {
           this.onCopyPrompt(item)
+        })
+        this.IconAction($r('sys.symbol.ai_edit'), (): void => {
+          this.onContinueEdit(item)
         })
         this.IconAction($r('sys.symbol.trash'), (): void => {
           this.onDelete(item)

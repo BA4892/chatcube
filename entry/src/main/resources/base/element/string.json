@@ -217,6 +217,10 @@
       "value": "Model Configuration"
     },
     {
+      "name": "settings_ai_creation",
+      "value": "AI Creation"
+    },
+    {
       "name": "settings_model_manage",
       "value": "Provider Management"
     },
@@ -2737,6 +2741,18 @@
       "value": "生成图片"
     },
     {
+      "name": "image_generation_optimize_prompt",
+      "value": "优化提示词"
+    },
+    {
+      "name": "image_generation_optimize_prompt_success",
+      "value": "提示词已优化"
+    },
+    {
+      "name": "image_generation_optimize_prompt_failed",
+      "value": "提示词优化失败"
+    },
+    {
       "name": "image_generation_edit",
       "value": "编辑图片"
     },
@@ -2885,12 +2901,24 @@
       "value": "图片已保存"
     },
     {
+      "name": "image_generation_save_image",
+      "value": "保存图片"
+    },
+    {
       "name": "image_generation_save_failed",
       "value": "图片保存失败"
     },
     {
       "name": "image_generation_copy_prompt_success",
       "value": "Prompt 已复制"
+    },
+    {
+      "name": "image_generation_continue_edit",
+      "value": "继续调整"
+    },
+    {
+      "name": "image_generation_continue_edit_ready",
+      "value": "已作为参考图,可继续描述调整要求"
     },
     {
       "name": "image_generation_delete_title",

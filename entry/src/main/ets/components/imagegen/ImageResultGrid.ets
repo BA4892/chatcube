@@ -18,6 +18,7 @@ export struct ImageResultGrid {
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
+  @Event onContinueEdit: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onUseTemplate: (prompt: string) => void = (_prompt: string): void => {}
   @Event onRotateTemplates: () => void = (): void => {}
@@ -79,44 +80,52 @@ export struct ImageResultGrid {
       }
 
       if (this.hasPromptTemplates || this.promptTemplates.length > 0) {
-        // 示例 prompt 区: 标题 + 操作按钮 + 自动换行的 chip 流, 点击直接填入输入框
-        Column() {
-          Row() {
-            Text($r('app.string.image_generation_empty_try_prompt'))
-              .fontSize(13)
-              .fontColor($r('app.color.text_tertiary'))
-              .layoutWeight(1)
-            if (this.promptTemplatesVisible) {
+        if (this.promptTemplatesVisible) {
+          // 示例 prompt 区: 标题 + 操作按钮 + 自动换行的 chip 流, 点击直接填入输入框
+          Column() {
+            Row() {
+              Text($r('app.string.image_generation_empty_try_prompt'))
+                .fontSize(13)
+                .fontColor($r('app.color.text_tertiary'))
+                .layoutWeight(1)
               this.TemplateActionButton($r('sys.symbol.arrow_clockwise'), $r('app.string.image_prompt_template_refresh'), (): void => {
                 this.onRotateTemplates()
               }, this.canRotatePromptTemplates)
-            }
-            this.TemplateActionButton(this.promptTemplatesVisible ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'), this.promptTemplatesVisible ? $r('app.string.image_prompt_template_hide_recommendations') : $r('app.string.image_prompt_template_show_recommendations'), (): void => {
-              this.onToggleTemplateVisibility()
-            }, true)
-            this.TemplateActionButton($r('sys.symbol.gearshape'), $r('app.string.image_prompt_template_manage'), (): void => {
-              this.onManageTemplates()
-            }, true)
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16 })
-          .margin({ bottom: 8 })
-
-          if (this.promptTemplatesVisible && this.promptTemplates.length > 0) {
-            Flex({
-              direction: FlexDirection.Row,
-              wrap: FlexWrap.Wrap,
-              justifyContent: FlexAlign.Center
-            }) {
-              ForEach(this.promptTemplates, (template: ImagePromptTemplate): void => {
-                this.TemplateChip(template)
-              }, (template: ImagePromptTemplate): string => template.id)
+              this.TemplateActionButton($r('sys.symbol.eye_slash'), $r('app.string.image_prompt_template_hide_recommendations'), (): void => {
+                this.onToggleTemplateVisibility()
+              }, true)
+              this.TemplateActionButton($r('sys.symbol.AI_word_suggest'), $r('app.string.image_prompt_template_manage'), (): void => {
+                this.onManageTemplates()
+              }, true)
             }
             .width('100%')
             .padding({ left: 16, right: 16 })
+            .margin({ bottom: 8 })
+
+            if (this.promptTemplates.length > 0) {
+              Flex({
+                direction: FlexDirection.Row,
+                wrap: FlexWrap.Wrap,
+                justifyContent: FlexAlign.Center
+              }) {
+                ForEach(this.promptTemplates, (template: ImagePromptTemplate): void => {
+                  this.TemplateChip(template)
+                }, (template: ImagePromptTemplate): string => template.id)
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16 })
+            }
           }
+          .width('100%')
+        } else {
+          Row() {
+            this.TemplateActionButton($r('sys.symbol.eye'), $r('app.string.image_prompt_template_show_recommendations'), (): void => {
+              this.onToggleTemplateVisibility()
+            }, true)
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
-        .width('100%')
       }
     }
     .width('100%')
@@ -219,6 +228,9 @@ export struct ImageResultGrid {
       })
       this.IconAction($r('sys.symbol.checkmark_square_on_square'), (): void => {
         this.onCopyPrompt(item)
+      })
+      this.IconAction($r('sys.symbol.ai_edit'), (): void => {
+        this.onContinueEdit(item)
       })
       this.IconAction($r('sys.symbol.trash'), (): void => {
         this.onDelete(item)

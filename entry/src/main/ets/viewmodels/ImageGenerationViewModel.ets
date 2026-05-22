@@ -29,6 +29,7 @@ import { getBackgroundRunGuardService, BackgroundRunGuardService } from '../serv
 import { getChatNotificationService, ChatNotificationService } from '../services/ChatNotificationService'
 import { HttpRequestController } from '../services/HttpService'
 import { getPreferencesService, PreferencesService, PreferenceKeys } from '../services/PreferencesService'
+import { getAITaskService, AITaskService } from '../services/AITaskService'
 import { validateProviderConfig } from '../utils/ProviderValidationUtils'
 import { ProviderViewModel } from './ProviderViewModel'
 import { getEffectiveOutputMode } from '../utils/ModelCapabilityDeriver'
@@ -78,6 +79,7 @@ export class ImageGenerationViewModel {
   @Trace selectedProviderName: string = ''
   @Trace providers: ModelProvider[] = []
   @Trace isProvidersLoaded: boolean = false
+  @Trace isOptimizingPrompt: boolean = false
   @Trace promptTemplates: ImagePromptTemplate[] = []
   @Trace visiblePromptTemplates: ImagePromptTemplate[] = []
   @Trace promptTemplateRecommendationsVisible: boolean = true
@@ -92,6 +94,7 @@ export class ImageGenerationViewModel {
   private notificationService: ChatNotificationService = getChatNotificationService()
   private promptTemplateService: ImagePromptTemplateService = getImagePromptTemplateService()
   private preferencesService: PreferencesService = getPreferencesService()
+  private aiTaskService: AITaskService = getAITaskService()
   private activeController: HttpRequestController | null = null
   private generationToken: number = 0
   private readonly promptTemplateBatchSize: number = 5
@@ -206,6 +209,21 @@ export class ImageGenerationViewModel {
     this.referenceImages = next
   }
 
+  async addGeneratedMediaAsReference(media: GeneratedMedia): Promise<boolean> {
+    if (!this.canAddReferenceImages() || media.filePath === '' || !this.attachmentStorageService.fileExists(media.filePath)) {
+      return false
+    }
+    const savedPath = await this.copyGeneratedMediaToReference(media)
+    if (savedPath === '') {
+      this.errorMessage = '参考图添加失败'
+      return false
+    }
+    const next: string[] = this.referenceImages.slice(0, this.getMaxReferenceImages())
+    next.push(savedPath)
+    this.referenceImages = next
+    return true
+  }
+
   async removeReferenceImage(path: string): Promise<void> {
     const next = this.referenceImages.filter((item: string): boolean => item !== path)
     this.referenceImages = next
@@ -224,7 +242,11 @@ export class ImageGenerationViewModel {
   }
 
   canGenerate(): boolean {
-    return !this.isGenerating && this.prompt.trim() !== '' && this.selectedProviderId !== '' && this.selectedModelId !== ''
+    return !this.isGenerating && !this.isOptimizingPrompt && this.prompt.trim() !== '' && this.selectedProviderId !== '' && this.selectedModelId !== ''
+  }
+
+  canOptimizePrompt(): boolean {
+    return !this.isGenerating && !this.isOptimizingPrompt && this.prompt.trim() !== ''
   }
 
   isCurrentRequestEditing(): boolean {
@@ -305,6 +327,33 @@ export class ImageGenerationViewModel {
         this.activeController = null
         this.backgroundGuard.updateImageGenerationRunningTaskCount(0)
       }
+    }
+  }
+
+  async optimizePrompt(): Promise<boolean> {
+    if (!this.canOptimizePrompt()) {
+      return false
+    }
+    this.isOptimizingPrompt = true
+    this.errorMessage = ''
+    try {
+      const result = await this.aiTaskService.optimizeImagePrompt(
+        this.prompt,
+        this.isCurrentRequestEditing(),
+        this.referenceImages.length
+      )
+      if (!result.success) {
+        this.errorMessage = result.errorMessage
+        return false
+      }
+      this.prompt = result.content
+      return true
+    } catch (error) {
+      console.error('ImageGenerationViewModel', `Optimize prompt failed: ${JSON.stringify(error)}`)
+      this.errorMessage = '提示词优化失败'
+      return false
+    } finally {
+      this.isOptimizingPrompt = false
     }
   }
 
@@ -565,6 +614,25 @@ export class ImageGenerationViewModel {
       return filePath
     } catch (error) {
       console.error('ImageGenerationViewModel', `Failed to import reference image: ${JSON.stringify(error)}`)
+      this.errorMessage = '参考图添加失败'
+      return ''
+    }
+  }
+
+  private async copyGeneratedMediaToReference(media: GeneratedMedia): Promise<string> {
+    try {
+      const id = `ref_${Date.now()}_${Math.floor(Math.random() * 100000)}`
+      const attachment = new MessageAttachment(
+        id,
+        AttachmentType.IMAGE,
+        `${id}${this.resolveExtension(media.mimeType)}`,
+        '',
+        media.mimeType,
+        0
+      )
+      return await this.attachmentStorageService.importExistingAttachment(media.filePath, attachment)
+    } catch (error) {
+      console.error('ImageGenerationViewModel', `Failed to copy generated media as reference: ${JSON.stringify(error)}`)
       this.errorMessage = '参考图添加失败'
       return ''
     }

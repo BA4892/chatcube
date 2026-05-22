@@ -3,7 +3,7 @@ import { getAIApiService, AIApiService, AIApiConfig, RequestMessage } from './AI
 import { getDefaultModelService, DefaultModelService } from './DefaultModelService'
 import { getProviderViewModel, ProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { ReasoningRequestStrategy } from './registry/CompatibilityResolver'
-import { ModelRole } from '../models/ChatModels'
+import { ModelRole, ReasoningLevel } from '../models/ChatModels'
 import { getEffectiveApiKey } from '../config/PresetProviders'
 import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 
@@ -366,6 +366,105 @@ export class AITaskService {
       console.error('AITaskService', 'Error translating: ' + JSON.stringify(error))
       return { success: false, content: '', errorMessage: '翻译失败：' + JSON.stringify(error) }
     }
+  }
+
+  async optimizeImagePrompt(sourcePrompt: string, isEditing: boolean, referenceImageCount: number): Promise<AITaskResult> {
+    const normalizedPrompt = sourcePrompt.trim()
+    if (normalizedPrompt === '') {
+      return { success: false, content: '', errorMessage: '请输入需要优化的提示词' }
+    }
+
+    const chatModel = this.defaultModelService.getModel(ModelRole.CHAT)
+    if (!chatModel.isConfigured()) {
+      return { success: false, content: '', errorMessage: '请先配置默认聊天模型' }
+    }
+
+    const provider = await this.providerViewModel.getProviderByIdAsync(chatModel.providerId)
+    if (provider === null) {
+      return { success: false, content: '', errorMessage: '未找到默认聊天模型对应的服务商' }
+    }
+
+    const effectiveApiKey = getEffectiveApiKey(provider.id, provider.apiKey)
+    if (effectiveApiKey === '') {
+      return { success: false, content: '', errorMessage: `请为 ${provider.name} 配置 API Key` }
+    }
+
+    const apiConfig: AIApiConfig = {
+      providerId: provider.id,
+      providerType: provider.type,
+      apiStyle: provider.apiStyle,
+      apiKey: effectiveApiKey,
+      baseUrl: provider.baseUrl,
+      apiPath: provider.apiPath !== '' ? provider.apiPath : undefined,
+      openaiTransport: provider.openaiTransport,
+      customHeadersJson: provider.customHeadersJson || undefined
+    }
+
+    for (let i = 0; i < provider.models.length; i++) {
+      if (provider.models[i].id === chatModel.modelId) {
+        apiConfig.modelReasoningStrategyOverride = ReasoningRequestStrategy.NONE
+        break
+      }
+    }
+
+    const taskDesc = isEditing ?
+      `图像编辑。当前已有 ${referenceImageCount} 张参考图,提示词应聚焦需要保留和需要调整的内容。` :
+      '文生图。提示词应完整描述主体、场景、构图、光线、风格和关键细节。'
+    const messages: RequestMessage[] = [
+      new RequestMessage('system',
+        '你是图像生成提示词优化器。请将用户输入改写成可直接用于图像生成或图像编辑模型的高质量提示词。' +
+          '必须保留用户原始意图,可以补充清晰的视觉细节、构图、镜头、光线、材质、氛围和质量要求。' +
+          '不要添加解释、标题、编号、Markdown、代码块或引号。只输出优化后的提示词正文。'),
+      new RequestMessage('user', `任务类型: ${taskDesc}\n原始提示词:\n${normalizedPrompt}`)
+    ]
+
+    try {
+      const result = await this.aiApiService.sendChatRequest(
+        apiConfig,
+        messages,
+        chatModel.modelId,
+        0.4,
+        900,
+        ReasoningLevel.OFF
+      )
+      if (!result.success) {
+        return { success: false, content: '', errorMessage: result.errorMessage }
+      }
+      const optimizedPrompt = this.cleanOptimizedImagePrompt(result.content)
+      if (optimizedPrompt === '') {
+        return { success: false, content: '', errorMessage: '提示词优化失败' }
+      }
+      return { success: true, content: optimizedPrompt, errorMessage: '' }
+    } catch (error) {
+      console.error('AITaskService', 'Error optimizing image prompt: ' + JSON.stringify(error))
+      return { success: false, content: '', errorMessage: '提示词优化失败：' + JSON.stringify(error) }
+    }
+  }
+
+  private cleanOptimizedImagePrompt(rawPrompt: string): string {
+    let prompt = rawPrompt.trim()
+    prompt = prompt.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+    prompt = prompt.replace(/^```[a-zA-Z]*\s*/g, '').replace(/```$/g, '').trim()
+
+    const lines = prompt.split(/[\r\n]+/)
+    const cleanedLines: string[] = []
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (line !== '') {
+        cleanedLines.push(line.replace(/^[-*•\d.、\s]+/, '').trim())
+      }
+    }
+    prompt = cleanedLines.join(' ')
+
+    const prefixes = ['优化后的提示词：', '优化后的提示词:', '优化提示词：', '优化提示词:', 'Prompt:', 'Prompt：']
+    for (let i = 0; i < prefixes.length; i++) {
+      if (prompt.startsWith(prefixes[i])) {
+        prompt = prompt.substring(prefixes[i].length).trim()
+        break
+      }
+    }
+    prompt = prompt.replace(/^["'""'']+|["'""'']+$/g, '').trim()
+    return prompt
   }
 }
 

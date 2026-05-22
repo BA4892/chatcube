@@ -49,6 +49,7 @@ struct ImageGenerationPage {
   @Local isPreviewOpen: boolean = false
   @Local previewCurrentIndex: number = 0
   @Local isPreviewSaving: boolean = false
+  @Local isPreviewPreparingEdit: boolean = false
   private previewDialogId: string = ''
   private previewSourceItems: GeneratedMedia[] = []
   private swiperController: SwiperController = new SwiperController()
@@ -72,8 +73,7 @@ struct ImageGenerationPage {
   aboutToAppear(): void {
     AppStorage.setOrCreate(AppStorageKeys.ACTIVE_IMAGE_GENERATION_PAGE, true)
     imageGenerationBackHandler = (): boolean => {
-      this.handleBack()
-      return true
+      return this.handleBack()
     }
     this.viewModel.loadInitialState().catch((error: Object): void => {
       console.error('ImageGenerationPage', `Load initial state failed: ${JSON.stringify(error)}`)
@@ -150,10 +150,18 @@ struct ImageGenerationPage {
     return this.viewModel.isCurrentRequestEditing()
   }
 
-  private handleBack(): void {
+  private handleBackNavigation(): boolean {
+    if (imageGenerationPagePathStack !== null && imageGenerationPagePathStack.size() > 0) {
+      imageGenerationPagePathStack.pop()
+      return true
+    }
+    return false
+  }
+
+  private handleBack(): boolean {
     if (this.isPreviewOpen && this.previewDialogId !== '') {
       MediaPreview.close({ dialogId: this.previewDialogId, animated: true })
-      return
+      return true
     }
     // 允许用户离开页面，任务在后台继续运行（ViewModel 是单例）
     // 想真正取消任务，请使用 prompt bar 上的取消按钮
@@ -162,9 +170,7 @@ struct ImageGenerationPage {
         $r('app.string.image_generation_editing_in_background') :
         $r('app.string.image_generation_running_in_background'))
     }
-    if (imageGenerationPagePathStack !== null && imageGenerationPagePathStack.size() > 0) {
-      imageGenerationPagePathStack.pop()
-    }
+    return this.handleBackNavigation()
   }
 
   private async pickReferenceImages(): Promise<void> {
@@ -301,6 +307,7 @@ struct ImageGenerationPage {
     this.isPreviewOpen = false
     this.previewDialogId = ''
     this.isPreviewSaving = false
+    this.isPreviewPreparingEdit = false
     this.previewCurrentIndex = 0
     this.previewSourceItems = []
   }
@@ -314,6 +321,7 @@ struct ImageGenerationPage {
     this.previewCurrentIndex = 0
     this.previewSourceItems = []
     this.isPreviewSaving = false
+    this.isPreviewPreparingEdit = false
   }
 
   private hasCurrentPreviewMedia(): boolean {
@@ -329,6 +337,18 @@ struct ImageGenerationPage {
       await this.saveMedia(this.previewSourceItems[this.previewCurrentIndex])
     } finally {
       this.isPreviewSaving = false
+    }
+  }
+
+  private async continueEditCurrentPreviewMedia(): Promise<void> {
+    if (this.isPreviewPreparingEdit || !this.hasCurrentPreviewMedia()) {
+      return
+    }
+    this.isPreviewPreparingEdit = true
+    try {
+      await this.continueEditMedia(this.previewSourceItems[this.previewCurrentIndex])
+    } finally {
+      this.isPreviewPreparingEdit = false
     }
   }
 
@@ -392,6 +412,29 @@ struct ImageGenerationPage {
     } catch (error) {
       console.error('ImageGenerationPage', `Copy prompt failed: ${JSON.stringify(error)}`)
     }
+  }
+
+  private async continueEditMedia(media: GeneratedMedia): Promise<void> {
+    if (this.viewModel.isGenerating) {
+      return
+    }
+    if (!this.viewModel.canAddReferenceImages()) {
+      showToast(this.getUIContext(), this.getReferenceLimitMessage())
+      return
+    }
+    const added = await this.viewModel.addGeneratedMediaAsReference(media)
+    if (!added) {
+      showToast(this.getUIContext(), $r('app.string.image_generation_reference_failed'))
+      return
+    }
+    if (media.prompt !== '') {
+      this.viewModel.updatePrompt(media.prompt)
+    }
+    this.switchTab(0)
+    if (this.isPreviewOpen && this.previewDialogId !== '') {
+      MediaPreview.close({ dialogId: this.previewDialogId, animated: true })
+    }
+    showToast(this.getUIContext(), $r('app.string.image_generation_continue_edit_ready'))
   }
 
   private confirmDelete(media: GeneratedMedia): void {
@@ -644,26 +687,50 @@ struct ImageGenerationPage {
   @Builder
   private PreviewToolBuilder() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
-        if (this.isPreviewSaving) {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-            .color('rgba(255, 255, 255, 0.86)')
-        } else {
-          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
-            .fontSize(20)
-            .fontColor(['rgba(255, 255, 255, 0.9)'])
+      Row({ space: 12 }) {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          if (this.isPreviewPreparingEdit) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color('rgba(255, 255, 255, 0.86)')
+          } else {
+            SymbolGlyph($r('sys.symbol.ai_edit'))
+              .fontSize(20)
+              .fontColor(['rgba(255, 255, 255, 0.9)'])
+          }
         }
+        .width(48)
+        .height(48)
+        .backgroundColor('rgba(8, 12, 18, 0.62)')
+        .accessibilityText($r('app.string.image_generation_continue_edit'))
+        .enabled(!this.isPreviewPreparingEdit && !this.viewModel.isGenerating && this.hasCurrentPreviewMedia())
+        .onClick(() => {
+          this.continueEditCurrentPreviewMedia()
+        })
+
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          if (this.isPreviewSaving) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color('rgba(255, 255, 255, 0.86)')
+          } else {
+            SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+              .fontSize(20)
+              .fontColor(['rgba(255, 255, 255, 0.9)'])
+          }
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor('rgba(8, 12, 18, 0.62)')
+        .accessibilityText($r('app.string.image_generation_save_image'))
+        .enabled(!this.isPreviewSaving && this.hasCurrentPreviewMedia())
+        .onClick(() => {
+          this.saveCurrentPreviewMedia()
+        })
       }
-      .width(48)
-      .height(48)
       .margin({ bottom: 24 + this.px2vp(getAppUiState().bottomAvoidHeight) })
-      .backgroundColor('rgba(8, 12, 18, 0.62)')
-      .enabled(!this.isPreviewSaving && this.hasCurrentPreviewMedia())
-      .onClick(() => {
-        this.saveCurrentPreviewMedia()
-      })
     }
     .width('100%')
     .height('100%')
@@ -743,6 +810,9 @@ struct ImageGenerationPage {
         onCopyPrompt: (item: GeneratedMedia): void => {
           this.copyPrompt(item)
         },
+        onContinueEdit: (item: GeneratedMedia): void => {
+          this.continueEditMedia(item)
+        },
         onDelete: (item: GeneratedMedia): void => {
           this.confirmDelete(item)
         },
@@ -779,6 +849,8 @@ struct ImageGenerationPage {
         referenceImages: this.viewModel.referenceImages,
         selectedAspectRatio: this.viewModel.aspectRatio,
         canAddReferenceImages: this.viewModel.canAddReferenceImages(),
+        canOptimizePrompt: this.viewModel.canOptimizePrompt(),
+        isOptimizingPrompt: this.viewModel.isOptimizingPrompt,
         bottomAvoidHeight: this.getBottomPadding(),
         onPromptChange: (value: string): void => {
           this.viewModel.updatePrompt(value)
@@ -791,6 +863,18 @@ struct ImageGenerationPage {
         },
         onPickReferenceImages: (): void => {
           this.pickReferenceImages()
+        },
+        onOptimizePrompt: (): void => {
+          this.viewModel.optimizePrompt().then((success: boolean): void => {
+            if (success) {
+              showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_success'))
+            } else if (this.viewModel.errorMessage !== '') {
+              showToast(this.getUIContext(), this.viewModel.errorMessage)
+            }
+          }).catch((error: Error): void => {
+            console.error('ImageGenerationPage', `Optimize prompt failed: ${JSON.stringify(error)}`)
+            showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_failed'))
+          })
         },
         onGenerate: (): void => {
           this.viewModel.generate()
@@ -827,6 +911,9 @@ struct ImageGenerationPage {
         },
         onCopyPrompt: (item: GeneratedMedia): void => {
           this.copyPrompt(item)
+        },
+        onContinueEdit: (item: GeneratedMedia): void => {
+          this.continueEditMedia(item)
         },
         onDelete: (item: GeneratedMedia): void => {
           this.confirmDelete(item)
@@ -982,6 +1069,6 @@ export function ImageGenerationPageBuilder(_name: string, _param: Object) {
     if (imageGenerationBackHandler !== null) {
       return imageGenerationBackHandler()
     }
-    return true
+    return false
   })
 }
