@@ -112,6 +112,16 @@ export struct ImageGenerationSettingsSheet {
     return this.capabilities.supportsOutputCompression && this.outputFormat !== ImageGenerationOutputFormat.PNG
   }
 
+  private getAspectRatioIcon(value: ImageAspectRatio): Resource {
+    if (value === ImageAspectRatio.LANDSCAPE) {
+      return $r('sys.symbol.rectangle_ratio_16_to_9')
+    }
+    if (value === ImageAspectRatio.PORTRAIT) {
+      return $r('sys.symbol.rectangle_ratio_9_to_16')
+    }
+    return $r('sys.symbol.rectangle_ratio_1_to_1')
+  }
+
   @Builder
   private AspectRatioSetting() {
     Column() {
@@ -135,14 +145,13 @@ export struct ImageGenerationSettingsSheet {
   @Builder
   private AspectChip(value: ImageAspectRatio, label: Resource) {
     Button({ type: ButtonType.Capsule, stateEffect: false }) {
-      Text(label)
-        .fontSize(13)
-        .fontColor(this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      SymbolGlyph(this.getAspectRatioIcon(value))
+        .fontSize(22)
+        .fontColor([this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary')])
     }
     .height(40)
     .layoutWeight(1)
+    .accessibilityText(label)
     .backgroundColor(this.selectedAspectRatio === value ? getAppUiState().themePrimaryLight : this.themeSurface)
     .border({
       width: this.selectedAspectRatio === value ? 1 : 0.5,

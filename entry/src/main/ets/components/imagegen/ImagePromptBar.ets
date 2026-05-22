@@ -67,6 +67,16 @@ export struct ImagePromptBar {
     return 12 + Math.max(this.bottomAvoidHeight, 0)
   }
 
+  private getAspectRatioIcon(value: ImageAspectRatio): Resource {
+    if (value === ImageAspectRatio.LANDSCAPE) {
+      return $r('sys.symbol.rectangle_ratio_16_to_9')
+    }
+    if (value === ImageAspectRatio.PORTRAIT) {
+      return $r('sys.symbol.rectangle_ratio_9_to_16')
+    }
+    return $r('sys.symbol.rectangle_ratio_1_to_1')
+  }
+
   build() {
     Column() {
       if (this.referenceImages.length > 0) {
@@ -92,32 +102,30 @@ export struct ImagePromptBar {
           .backgroundColor(this.themeSurface)
           .borderRadius(12)
           .constraintSize({ minHeight: 76, maxHeight: 190 })
-          .padding({ left: 12, right: this.prompt.trim() !== '' ? 52 : 12, top: 10, bottom: this.prompt.trim() !== '' ? 42 : 10 })
+          .padding({ left: 12, right: 12, top: 10, bottom: 52 })
           .onChange((value: string): void => {
             this.onPromptChange(value)
           })
 
-        if (this.prompt.trim() !== '') {
-          Row() {
+        Row({ space: 8 }) {
+          if (this.prompt.trim() !== '') {
             this.OptimizePromptButton()
           }
-            .margin({ right: 8, bottom: 8 })
+          this.AddReferenceButton()
         }
+        .margin({ right: 8, bottom: 8 })
       }
       .width('100%')
 
-      // 工具行: 左侧可横滑 (model + 📷 + 3 比例 chip + 设置),右侧固定 send 圆按钮
+      // 工具行: 左侧可横滑 (model + 3 比例 chip + 设置),右侧固定 send 圆按钮
       // 横滑容器避免窄屏溢出, send 按钮始终在最右触手可及
       Row({ space: 8 }) {
         Scroll() {
           Row({ space: 8 }) {
             this.ModelCapsule()
-            this.IconCircleButton($r('sys.symbol.shutter_photo'), this.canAddReferenceImages, (): void => {
-              this.onPickReferenceImages()
-            })
-            this.AspectChip(ImageAspectRatio.SQUARE, '1:1')
-            this.AspectChip(ImageAspectRatio.LANDSCAPE, '16:9')
-            this.AspectChip(ImageAspectRatio.PORTRAIT, '9:16')
+            this.AspectChip(ImageAspectRatio.SQUARE, $r('app.string.image_generation_aspect_square'))
+            this.AspectChip(ImageAspectRatio.LANDSCAPE, $r('app.string.image_generation_aspect_landscape'))
+            this.AspectChip(ImageAspectRatio.PORTRAIT, $r('app.string.image_generation_aspect_portrait'))
             this.IconCircleButton($r('sys.symbol.gearshape'), true, (): void => {
               this.onOpenSettings()
             })
@@ -208,16 +216,16 @@ export struct ImagePromptBar {
   }
 
   @Builder
-  private AspectChip(value: ImageAspectRatio, label: string) {
+  private AspectChip(value: ImageAspectRatio, label: Resource) {
     Button({ type: ButtonType.Normal, stateEffect: false }) {
-      Text(label)
-        .fontSize(12)
-        .fontWeight(this.selectedAspectRatio === value ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary'))
+      SymbolGlyph(this.getAspectRatioIcon(value))
+        .fontSize(18)
+        .fontColor([this.selectedAspectRatio === value ? this.themePrimary : $r('app.color.text_secondary')])
     }
     .height(34)
-    .padding({ left: 10, right: 10 })
+    .width(34)
     .borderRadius(17)
+    .accessibilityText(label)
     .backgroundColor(this.selectedAspectRatio === value ? getAppUiState().themePrimaryLight : this.themeSurface)
     .border({
       width: this.selectedAspectRatio === value ? 1 : 0,
@@ -226,6 +234,30 @@ export struct ImagePromptBar {
     .enabled(!this.isGenerating)
     .onClick(() => {
       this.onAspectRatioChange(value)
+    })
+  }
+
+  @Builder
+  private AddReferenceButton() {
+    Button({ type: ButtonType.Capsule, stateEffect: false }) {
+      Row({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(15)
+          .fontColor([this.canAddReferenceImages ? this.themePrimary : $r('app.color.text_tertiary')])
+        Text($r('app.string.image_generation_add_reference'))
+          .fontSize(13)
+          .fontColor(this.canAddReferenceImages ? this.themePrimary : $r('app.color.text_tertiary'))
+          .maxLines(1)
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .height(34)
+    .padding({ left: 10, right: 12 })
+    .backgroundColor(this.canAddReferenceImages ? getAppUiState().themePrimaryLight : this.themeSurface)
+    .accessibilityText($r('app.string.image_generation_add_reference'))
+    .enabled(this.canAddReferenceImages)
+    .onClick(() => {
+      this.onPickReferenceImages()
     })
   }
 
