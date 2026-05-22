@@ -46,43 +46,34 @@ These screenshots reflect the current HarmonyOS 6 (API 23) build:
   </tr>
 </table>
 
-## Highlights in 1.2.0
+## Highlights in 1.3.0
 
-### General
-- Added a first-launch Onboarding flow, with a "Replay onboarding" entry in Settings for revisiting it anytime
-- Empty state in tablet split view now shows curated prompt cards for one-tap conversation start
-- SnackBar immersive material now follows the user's material setting for visual consistency
-- Removed the Aifadian (爱发电) sponsorship entry
+This release prepares the app for future marketplace submission, including the app rename and refreshed icon assets. It also adds image generation, document attachment parsing, and unified image preview capabilities, while refining chat streaming, Smart Grip, and tablet details.
 
-### Chat
-- Reworked chat bubble rendering and message storage to natively support mixed flows of multi-round tool calls, deep reasoning, and web search
-- New "Message Map" entry in the chat top bar — browse the full conversation outline and jump with a flash highlight on the matched message
-- LaTeX formula fullscreen preview: tap a long formula to open the preview, with pinch-to-zoom and one-tap save to album
-- Web search upgrade: two new search services, web page crawling adapter, and a lightweight chip menu in chat showing the active search engine for quick switching
+### Added
+- Added an image generation entry, generation page, result grid, gallery history, and model capability detection
+- Image generation now supports reference images, aspect ratio selection, generation settings, result preview, and saving
+- Added an image prompt template library with template management and one-tap application
+- Added document attachment parsing for Word, PDF, Excel, and more
 
-### Assistants
-- Slimmer assistant cards, model chip moved up; the "New" button is now an Extended FAB for easier reach
-- Switched to a sectioned editor for a cleaner structure
-- Parameter panel completed: Temperature / TopP / Presence Penalty / Frequency Penalty / Context Message Count / Max Output Tokens
+### Improved
+- Unified image preview across chat images, draft images, edited-message images, and image generation results
+- Thumbnails now adapt to the actual image aspect ratio, reducing fixed-ratio cropping
+- Improved image saving, original-image preview, and gallery grid display
+- Improved chat streaming rendering and waiting states while keeping the 3D loading indicator
+- Improved streaming preview behavior for code blocks, HTML, and Mermaid
+- Added auto show / hide behavior for the chat page quick-jump button
+- Improved table color contrast and readability
+- Improved tool-calling capability probing to reduce issues with models that do not support tool calling
+- Improved model request parameter handling for better compatibility
+- Extended Smart Grip adaptation to the chat input bar, send button, and scroll-to-bottom controls
+- Bottom HdsTabs on the home page now hide / show automatically while scrolling
+- Improved assistant card layout for better density and visual hierarchy
+- Refined the overall UI quality across layout, theme pages, home page, tabs, and settings entries
 
-### Tools Center & MCP
-- Tool whitelist is now managed per-assistant, replacing the global tool toggle
-- More granular MCP permission control: per-tool approval policies; the confirmation dialog supports collapse, remind-me-later, and double confirmation
-- Tool list is now persisted, and per-tool permissions are individually configurable
-- New AskUserCard: a dedicated interactive card for the `ask_user` tool, letting users reply directly inside the bubble
-
-### Provider Management
-- Provider QR sharing: securely encrypted end-to-end, one-tap export / import of provider configurations
-- Refined model icon and capability detection rules for more accurate matching
-
-### Tablet
-- Tablet chat split pane now supports drag-to-resize
-
-### Bug Fixes
-- Fixed max output tokens being silently capped at 4096 when not explicitly set
-- Fixed potential overlap between the loading icon and toolbar icons in the chat view
-- Fixed an unexpected top padding on the tablet chat title bar
-- Fixed interaction issues in chat edit mode
+### Fixed
+- Fixed task state not being cleared in some abnormal completion cases
+- Fixed abnormal layout in the tablet split-view empty state
 
 ## Features
 
