@@ -7,15 +7,20 @@ import {
   ModelInfo,
   ModelProvider,
   ModelRole,
-  OutputMode
+  OutputMode,
+  ApiStyle
 } from '../models/ChatModels'
 import {
   GeneratedMedia,
   GeneratedMediaType,
   ImageAspectRatio,
   ImageGenerationItem,
+  ImageGenerationModeration,
+  ImageGenerationOutputFormat,
+  ImageGenerationQuality,
   ImageGenerationRequest
 } from '../models/ImageGenerationModels'
+import { ImagePromptTemplate } from '../models/ImagePromptTemplateModels'
 import { getDefaultModelService, DefaultModelService } from '../services/DefaultModelService'
 import { getImageGenerationService, ImageGenerationService } from '../services/ImageGenerationService'
 import { getGeneratedMediaRepository, GeneratedMediaRepository } from '../services/GeneratedMediaRepository'
@@ -30,6 +35,13 @@ import { getSettingsManager, SettingsManager } from './SettingsManager'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { setAppUiStateValue } from '../state/AppUiState'
 import { ImageGenerationAlertPayloadData } from '../models/TaskAlertModels'
+import {
+  ImageGenerationActualOptionsSnapshot,
+  ImageGenerationCapabilityResolver,
+  ImageGenerationRequestOptionsSnapshot,
+  ImageGenerationRouteCapabilities
+} from '../services/ImageGenerationCapabilityResolver'
+import { getImagePromptTemplateService, ImagePromptTemplateService } from '../services/ImagePromptTemplateService'
 
 // 图片生成 ViewModel 设计为单例：
 // 1. 用户进入图片生成页 → 离开（任务可能仍在进行）→ 重新进入 → 仍能看到任务进度和结果
@@ -49,6 +61,10 @@ export class ImageGenerationViewModel {
   @Trace prompt: string = ''
   @Trace numberOfImages: number = 1
   @Trace aspectRatio: ImageAspectRatio = ImageAspectRatio.SQUARE
+  @Trace quality: ImageGenerationQuality = ImageGenerationQuality.AUTO
+  @Trace outputFormat: ImageGenerationOutputFormat = ImageGenerationOutputFormat.PNG
+  @Trace outputCompression: number = -1
+  @Trace moderation: ImageGenerationModeration = ImageGenerationModeration.AUTO
   @Trace isGenerating: boolean = false
   @Trace errorMessage: string = ''
   @Trace currentImages: GeneratedMedia[] = []
@@ -61,6 +77,9 @@ export class ImageGenerationViewModel {
   @Trace selectedProviderName: string = ''
   @Trace providers: ModelProvider[] = []
   @Trace isProvidersLoaded: boolean = false
+  @Trace promptTemplates: ImagePromptTemplate[] = []
+  @Trace visiblePromptTemplates: ImagePromptTemplate[] = []
+  @Trace promptTemplateBatchIndex: number = 0
 
   private defaultModelService: DefaultModelService = getDefaultModelService()
   private providerViewModel: ProviderViewModel = ProviderViewModel.getInstance()
@@ -70,8 +89,10 @@ export class ImageGenerationViewModel {
   private settingsManager: SettingsManager = getSettingsManager()
   private backgroundGuard: BackgroundRunGuardService = getBackgroundRunGuardService()
   private notificationService: ChatNotificationService = getChatNotificationService()
+  private promptTemplateService: ImagePromptTemplateService = getImagePromptTemplateService()
   private activeController: HttpRequestController | null = null
   private generationToken: number = 0
+  private readonly promptTemplateBatchSize: number = 5
 
   // 重入安全：第二次进入页面时只刷新外部数据（providers/gallery），保留任务相关状态
   // （prompt / referenceImages / isGenerating / currentImages 等不动）
@@ -86,6 +107,9 @@ export class ImageGenerationViewModel {
       // 之前选的模型已被禁用/删除，回退到默认
       this.applyDefaultImageModel()
     }
+    this.normalizeOptionsForCurrentRoute()
+    await this.trimReferenceImagesForCurrentRoute()
+    await this.refreshPromptTemplates()
     await this.refreshGallery()
   }
 
@@ -103,6 +127,8 @@ export class ImageGenerationViewModel {
     this.selectedProviderName = provider.name
     this.selectedModelId = modelId
     this.selectedModelName = displayName
+    this.normalizeOptionsForCurrentRoute()
+    await this.trimReferenceImagesForCurrentRoute()
     await this.defaultModelService.setModel(
       ModelRole.IMAGE,
       new DefaultModelConfig(modelId, providerId, displayName, provider.name)
@@ -123,9 +149,49 @@ export class ImageGenerationViewModel {
     this.aspectRatio = value
   }
 
+  updateQuality(value: ImageGenerationQuality): void {
+    this.quality = ImageGenerationCapabilityResolver.normalizeQuality(value, this.getCurrentRouteCapabilities())
+  }
+
+  updateOutputFormat(value: ImageGenerationOutputFormat): void {
+    const capabilities = this.getCurrentRouteCapabilities()
+    this.outputFormat = ImageGenerationCapabilityResolver.normalizeOutputFormat(value, capabilities)
+    this.outputCompression = ImageGenerationCapabilityResolver.normalizeOutputCompression(
+      this.outputCompression,
+      this.outputFormat,
+      capabilities
+    )
+  }
+
+  updateOutputCompression(value: number): void {
+    this.outputCompression = ImageGenerationCapabilityResolver.normalizeOutputCompression(
+      value,
+      this.outputFormat,
+      this.getCurrentRouteCapabilities()
+    )
+  }
+
+  updateModeration(value: ImageGenerationModeration): void {
+    this.moderation = ImageGenerationCapabilityResolver.normalizeModeration(value, this.getCurrentRouteCapabilities())
+  }
+
+  getCurrentRouteCapabilities(): ImageGenerationRouteCapabilities {
+    const provider = this.findProvider(this.selectedProviderId)
+    return ImageGenerationCapabilityResolver.resolve(provider, this.findModel(provider, this.selectedModelId))
+  }
+
+  getMaxReferenceImages(): number {
+    return this.getCurrentRouteCapabilities().maxReferenceImages
+  }
+
+  canAddReferenceImages(): boolean {
+    return !this.isGenerating && this.referenceImages.length < this.getMaxReferenceImages()
+  }
+
   async addReferenceImageUris(uris: string[]): Promise<void> {
-    const next: string[] = this.referenceImages.slice()
-    for (let i = 0; i < uris.length && next.length < 4; i++) {
+    const maxReferenceImages = this.getMaxReferenceImages()
+    const next: string[] = this.referenceImages.slice(0, maxReferenceImages)
+    for (let i = 0; i < uris.length && next.length < maxReferenceImages; i++) {
       const savedPath = await this.importReferenceImageUri(uris[i], i)
       if (savedPath !== '' && !next.includes(savedPath)) {
         next.push(savedPath)
@@ -261,6 +327,78 @@ export class ImageGenerationViewModel {
     this.galleryItems = await this.repository.listRecent(200)
   }
 
+  async refreshPromptTemplates(): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.listTemplates()
+    this.updateVisiblePromptTemplates()
+  }
+
+  async savePromptTemplate(template: ImagePromptTemplate): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.saveTemplate(template)
+    this.updateVisiblePromptTemplates()
+  }
+
+  async setPromptTemplateEnabled(id: string, enabled: boolean): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.setTemplateEnabled(id, enabled)
+    this.updateVisiblePromptTemplates()
+  }
+
+  async deletePromptTemplate(id: string): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.deleteTemplate(id)
+    this.updateVisiblePromptTemplates()
+  }
+
+  async resetBuiltinPromptTemplates(): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.resetBuiltins()
+    this.promptTemplateBatchIndex = 0
+    this.updateVisiblePromptTemplates()
+  }
+
+  async syncRemotePromptTemplates(): Promise<void> {
+    this.promptTemplates = await this.promptTemplateService.syncRemoteBuiltins()
+    this.promptTemplateBatchIndex = 0
+    this.updateVisiblePromptTemplates()
+  }
+
+  showNextPromptTemplateBatch(): void {
+    const enabledTemplates = this.getEnabledPromptTemplates()
+    if (enabledTemplates.length <= this.promptTemplateBatchSize) {
+      this.visiblePromptTemplates = enabledTemplates
+      return
+    }
+    const batchCount = Math.ceil(enabledTemplates.length / this.promptTemplateBatchSize)
+    this.promptTemplateBatchIndex = (this.promptTemplateBatchIndex + 1) % batchCount
+    this.updateVisiblePromptTemplates()
+  }
+
+  private updateVisiblePromptTemplates(): void {
+    const enabledTemplates = this.getEnabledPromptTemplates()
+    if (enabledTemplates.length <= this.promptTemplateBatchSize) {
+      this.visiblePromptTemplates = enabledTemplates
+      this.promptTemplateBatchIndex = 0
+      return
+    }
+    const batchCount = Math.ceil(enabledTemplates.length / this.promptTemplateBatchSize)
+    if (this.promptTemplateBatchIndex >= batchCount) {
+      this.promptTemplateBatchIndex = 0
+    }
+    const start = this.promptTemplateBatchIndex * this.promptTemplateBatchSize
+    let next = enabledTemplates.slice(start, start + this.promptTemplateBatchSize)
+    if (next.length < this.promptTemplateBatchSize) {
+      next = next.concat(enabledTemplates.slice(0, this.promptTemplateBatchSize - next.length))
+    }
+    this.visiblePromptTemplates = next
+  }
+
+  private getEnabledPromptTemplates(): ImagePromptTemplate[] {
+    const enabled: ImagePromptTemplate[] = []
+    for (let i = 0; i < this.promptTemplates.length; i++) {
+      if (this.promptTemplates[i].enabled && this.promptTemplates[i].prompt.trim() !== '') {
+        enabled.push(this.promptTemplates[i])
+      }
+    }
+    return enabled
+  }
+
   getSelectedModelLabel(): string {
     if (this.selectedModelName !== '') {
       return this.selectedModelName
@@ -331,6 +469,10 @@ export class ImageGenerationViewModel {
     request.numberOfImages = this.numberOfImages
     request.aspectRatio = this.aspectRatio
     request.referenceImagePaths = this.referenceImages.slice()
+    request.quality = this.quality
+    request.outputFormat = this.outputFormat
+    request.outputCompression = this.outputCompression
+    request.moderation = this.moderation
     return request
   }
 
@@ -370,6 +512,9 @@ export class ImageGenerationViewModel {
     media.mimeType = item.mimeType
     media.aspectRatio = request.aspectRatio
     media.sourcePathsJson = JSON.stringify(request.referenceImagePaths)
+    media.requestOptionsJson = JSON.stringify(this.buildRequestOptionsSnapshot(provider, model, request))
+    media.actualOptionsJson = JSON.stringify(this.buildActualOptionsSnapshot(item))
+    media.revisedPrompt = item.revisedPrompt
     media.createdAt = Date.now()
     await this.repository.insert(media)
     return media
@@ -467,6 +612,80 @@ export class ImageGenerationViewModel {
       return ''
     }
     return `服务商实际只返回 ${actualCount}/${requestedCount} 张图片`
+  }
+
+  private normalizeOptionsForCurrentRoute(): void {
+    const capabilities = this.getCurrentRouteCapabilities()
+    this.quality = ImageGenerationCapabilityResolver.normalizeQuality(this.quality, capabilities)
+    this.outputFormat = ImageGenerationCapabilityResolver.normalizeOutputFormat(this.outputFormat, capabilities)
+    this.outputCompression = ImageGenerationCapabilityResolver.normalizeOutputCompression(
+      this.outputCompression,
+      this.outputFormat,
+      capabilities
+    )
+    this.moderation = ImageGenerationCapabilityResolver.normalizeModeration(this.moderation, capabilities)
+  }
+
+  private async trimReferenceImagesForCurrentRoute(): Promise<void> {
+    const maxReferenceImages = this.getMaxReferenceImages()
+    if (this.referenceImages.length <= maxReferenceImages) {
+      return
+    }
+    const removed = this.referenceImages.slice(maxReferenceImages)
+    this.referenceImages = this.referenceImages.slice(0, maxReferenceImages)
+    for (let i = 0; i < removed.length; i++) {
+      await this.attachmentStorageService.deleteAttachment(removed[i])
+    }
+  }
+
+  private buildRequestOptionsSnapshot(
+    provider: ModelProvider,
+    model: ModelInfo,
+    request: ImageGenerationRequest
+  ): ImageGenerationRequestOptionsSnapshot {
+    const capabilities = ImageGenerationCapabilityResolver.resolve(provider, model)
+    return ImageGenerationCapabilityResolver.buildRequestOptionsSnapshot(
+      capabilities.route,
+      this.getRouteSize(provider, model, request),
+      request.quality,
+      request.outputFormat,
+      request.outputCompression,
+      request.moderation
+    )
+  }
+
+  private buildActualOptionsSnapshot(item: ImageGenerationItem): ImageGenerationActualOptionsSnapshot {
+    const snapshot = new ImageGenerationActualOptionsSnapshot()
+    snapshot.size = item.actualSize
+    snapshot.quality = item.actualQuality
+    snapshot.outputFormat = item.actualOutputFormat
+    snapshot.outputCompression = item.actualOutputCompression
+    snapshot.moderation = item.actualModeration
+    return snapshot
+  }
+
+  private getRouteSize(provider: ModelProvider, model: ModelInfo, request: ImageGenerationRequest): string {
+    const capabilities = ImageGenerationCapabilityResolver.resolve(provider, model)
+    const route = capabilities.route.toString()
+    if (route.startsWith('openai')) {
+      return ImageGenerationCapabilityResolver.getOpenAIImageSize(request.aspectRatio)
+    }
+    if (provider.apiStyle === ApiStyle.GOOGLE) {
+      if (request.aspectRatio === ImageAspectRatio.LANDSCAPE) {
+        return '16:9'
+      }
+      if (request.aspectRatio === ImageAspectRatio.PORTRAIT) {
+        return '9:16'
+      }
+      return '1:1'
+    }
+    if (request.aspectRatio === ImageAspectRatio.LANDSCAPE) {
+      return '3:2'
+    }
+    if (request.aspectRatio === ImageAspectRatio.PORTRAIT) {
+      return '2:3'
+    }
+    return '1:1'
   }
 
   private buildGenerationTaskId(): string {

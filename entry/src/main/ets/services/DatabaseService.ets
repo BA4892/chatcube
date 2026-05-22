@@ -310,6 +310,9 @@ export class DatabaseService {
         mime_type TEXT,
         aspect_ratio TEXT,
         source_paths_json TEXT,
+        request_options_json TEXT DEFAULT '',
+        actual_options_json TEXT DEFAULT '',
+        revised_prompt TEXT DEFAULT '',
         created_at INTEGER
       )
     `
@@ -339,6 +342,7 @@ export class DatabaseService {
       await this.addOpenAITransportColumnIfNeeded()
       await this.addProviderCustomHeadersColumnIfNeeded()
       await this.addProviderRequiresApiKeyColumnIfNeeded()
+      await this.addGeneratedMediaOptionColumnsIfNeeded()
       await this.addAttachmentParseColumnsIfNeeded()
       // 尝试添加同步相关字段（为 WebDAV 同步预留）
       await this.addSyncColumnsIfNeeded()
@@ -418,6 +422,27 @@ export class DatabaseService {
       await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN parts_json TEXT DEFAULT ''`)
     } catch (error) {
       console.info('DatabaseService', 'parts_json column may already exist')
+    }
+  }
+
+  private async addGeneratedMediaOptionColumnsIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.GENERATED_MEDIA} ADD COLUMN request_options_json TEXT DEFAULT ''`)
+    } catch (_error) {
+      console.info('DatabaseService', 'request_options_json column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.GENERATED_MEDIA} ADD COLUMN actual_options_json TEXT DEFAULT ''`)
+    } catch (_error) {
+      console.info('DatabaseService', 'actual_options_json column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.GENERATED_MEDIA} ADD COLUMN revised_prompt TEXT DEFAULT ''`)
+    } catch (_error) {
+      console.info('DatabaseService', 'revised_prompt column may already exist')
     }
   }
 
@@ -2162,6 +2187,9 @@ export class DatabaseService {
       mime_type: media.mimeType,
       aspect_ratio: media.aspectRatio,
       source_paths_json: media.sourcePathsJson,
+      request_options_json: media.requestOptionsJson,
+      actual_options_json: media.actualOptionsJson,
+      revised_prompt: media.revisedPrompt,
       created_at: media.createdAt
     }
     try {
@@ -2221,6 +2249,9 @@ export class DatabaseService {
     media.mimeType = this.safeGetString(resultSet, 'mime_type', 'image/png')
     media.aspectRatio = this.safeGetString(resultSet, 'aspect_ratio')
     media.sourcePathsJson = this.safeGetString(resultSet, 'source_paths_json')
+    media.requestOptionsJson = this.safeGetString(resultSet, 'request_options_json')
+    media.actualOptionsJson = this.safeGetString(resultSet, 'actual_options_json')
+    media.revisedPrompt = this.safeGetString(resultSet, 'revised_prompt')
     try {
       media.createdAt = resultSet.getLong(resultSet.getColumnIndex('created_at'))
     } catch (_error) {

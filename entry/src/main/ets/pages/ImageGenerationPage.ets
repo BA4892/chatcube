@@ -8,7 +8,13 @@ import {
   MediaPreviewOptions
 } from '@lyb/media-preview'
 import { ModelProvider } from '../models/ChatModels'
-import { GeneratedMedia, ImageAspectRatio } from '../models/ImageGenerationModels'
+import {
+  GeneratedMedia,
+  ImageAspectRatio,
+  ImageGenerationModeration,
+  ImageGenerationOutputFormat,
+  ImageGenerationQuality
+} from '../models/ImageGenerationModels'
 import { ImageGenerationViewModel } from '../viewmodels/ImageGenerationViewModel'
 import { ImagePromptBar } from '../components/imagegen/ImagePromptBar'
 import { ImageResultGrid } from '../components/imagegen/ImageResultGrid'
@@ -28,6 +34,7 @@ import { showToast } from '../utils/ToastUtil'
 
 let imageGenerationPagePathStack: NavPathStack | null = null
 let imageGenerationBackHandler: (() => boolean) | null = null
+const IMAGE_PROMPT_TEMPLATE_MANAGER_ROUTE = 'ImagePromptTemplateManagerPage'
 
 @Entry
 @ComponentV2
@@ -89,6 +96,10 @@ struct ImageGenerationPage {
 
   private getTopPadding(): number {
     return this.px2vp(getAppUiState().topAvoidHeight)
+  }
+
+  private getBottomPadding(): number {
+    return Math.max(this.px2vp(getAppUiState().bottomAvoidHeight), 8)
   }
 
   private getGalleryColumns(): number {
@@ -158,9 +169,9 @@ struct ImageGenerationPage {
 
   private async pickReferenceImages(): Promise<void> {
     try {
-      const remaining = 4 - this.viewModel.referenceImages.length
+      const remaining = this.viewModel.getMaxReferenceImages() - this.viewModel.referenceImages.length
       if (remaining <= 0) {
-        showToast(this.getUIContext(), $r('app.string.image_generation_reference_limit'))
+        showToast(this.getUIContext(), this.getReferenceLimitMessage())
         return
       }
       const photoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
@@ -333,6 +344,17 @@ struct ImageGenerationPage {
       return 'image_generation_reference_' + path
     }
     return `image_generation_reference_${index}`
+  }
+
+  private getReferenceLimitMessage(): ResourceStr {
+    const maxReferenceImages = this.viewModel.getMaxReferenceImages()
+    if (maxReferenceImages <= 0) {
+      return $r('app.string.image_generation_reference_unsupported')
+    }
+    if (maxReferenceImages === 1) {
+      return $r('app.string.image_generation_reference_limit_one')
+    }
+    return $r('app.string.image_generation_reference_limit_count', maxReferenceImages)
   }
 
   private getPreviewModelImageSrc(item: DefaultMediaModel): ResourceStr {
@@ -676,6 +698,8 @@ struct ImageGenerationPage {
         isEditing: this.isEditingMode(),
         items: this.viewModel.currentImages,
         requestedCount: this.viewModel.numberOfImages,
+        promptTemplates: this.viewModel.visiblePromptTemplates,
+        canRotatePromptTemplates: this.viewModel.promptTemplates.length > this.viewModel.visiblePromptTemplates.length,
         onPreview: (index: number): void => {
           this.openPreview(this.viewModel.currentImages, index)
         },
@@ -690,6 +714,14 @@ struct ImageGenerationPage {
         },
         onUseTemplate: (prompt: string): void => {
           this.viewModel.updatePrompt(prompt)
+        },
+        onRotateTemplates: (): void => {
+          this.viewModel.showNextPromptTemplateBatch()
+        },
+        onManageTemplates: (): void => {
+          if (imageGenerationPagePathStack !== null) {
+            imageGenerationPagePathStack.pushPath({ name: IMAGE_PROMPT_TEMPLATE_MANAGER_ROUTE })
+          }
         }
       })
 
@@ -709,6 +741,8 @@ struct ImageGenerationPage {
         selectedProviderBrandColor: this.getSelectedProviderBrandColor(),
         referenceImages: this.viewModel.referenceImages,
         selectedAspectRatio: this.viewModel.aspectRatio,
+        canAddReferenceImages: this.viewModel.canAddReferenceImages(),
+        bottomAvoidHeight: this.getBottomPadding(),
         onPromptChange: (value: string): void => {
           this.viewModel.updatePrompt(value)
         },
@@ -774,11 +808,28 @@ struct ImageGenerationPage {
     ImageGenerationSettingsSheet({
       numberOfImages: this.viewModel.numberOfImages,
       selectedAspectRatio: this.viewModel.aspectRatio,
+      quality: this.viewModel.quality,
+      outputFormat: this.viewModel.outputFormat,
+      outputCompression: this.viewModel.outputCompression,
+      moderation: this.viewModel.moderation,
+      capabilities: this.viewModel.getCurrentRouteCapabilities(),
       onNumberChange: (value: number): void => {
         this.viewModel.updateNumberOfImages(value)
       },
       onAspectRatioChange: (value: ImageAspectRatio): void => {
         this.viewModel.updateAspectRatio(value)
+      },
+      onQualityChange: (value: ImageGenerationQuality): void => {
+        this.viewModel.updateQuality(value)
+      },
+      onOutputFormatChange: (value: ImageGenerationOutputFormat): void => {
+        this.viewModel.updateOutputFormat(value)
+      },
+      onOutputCompressionChange: (value: number): void => {
+        this.viewModel.updateOutputCompression(value)
+      },
+      onModerationChange: (value: ImageGenerationModeration): void => {
+        this.viewModel.updateModeration(value)
       }
     })
   }

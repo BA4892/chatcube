@@ -21,6 +21,8 @@ export struct ImagePromptBar {
   @Param selectedProviderBrandColor: ResourceColor = ''
   @Param referenceImages: string[] = []
   @Param selectedAspectRatio: ImageAspectRatio = ImageAspectRatio.SQUARE
+  @Param canAddReferenceImages: boolean = true
+  @Param bottomAvoidHeight: number = 0
   @Event onPromptChange: (value: string) => void = (_value: string): void => {}
   @Event onOpenModelSheet: () => void = (): void => {}
   @Event onOpenSettings: () => void = (): void => {}
@@ -58,6 +60,10 @@ export struct ImagePromptBar {
     return $r('app.color.text_tertiary')
   }
 
+  private getBottomPadding(): number {
+    return 12 + Math.max(this.bottomAvoidHeight, 0)
+  }
+
   build() {
     Column() {
       if (this.referenceImages.length > 0) {
@@ -92,7 +98,7 @@ export struct ImagePromptBar {
         Scroll() {
           Row({ space: 8 }) {
             this.ModelCapsule()
-            this.IconCircleButton($r('sys.symbol.shutter_photo'), !this.isGenerating, (): void => {
+            this.IconCircleButton($r('sys.symbol.shutter_photo'), this.canAddReferenceImages, (): void => {
               this.onPickReferenceImages()
             })
             this.AspectChip(ImageAspectRatio.SQUARE, '1:1')
@@ -115,7 +121,7 @@ export struct ImagePromptBar {
       .margin({ top: 10 })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .padding({ left: 16, right: 16, top: 12, bottom: this.getBottomPadding() })
     .backgroundColor(getAppUiState().themeBackground)
   }
 

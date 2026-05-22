@@ -76,6 +76,11 @@
       "buildFunction": "ImageGenerationPageBuilder"
     },
     {
+      "name": "ImagePromptTemplateManagerPage",
+      "pageSourceFile": "src/main/ets/pages/ImagePromptTemplateManagerPage.ets",
+      "buildFunction": "ImagePromptTemplateManagerPageBuilder"
+    },
+    {
       "name": "ExportDataPage",
       "pageSourceFile": "src/main/ets/pages/ExportDataPage.ets",
       "buildFunction": "ExportDataPageBuilder"

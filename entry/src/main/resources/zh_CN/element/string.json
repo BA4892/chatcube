@@ -2793,12 +2793,68 @@
       "value": "9:16 竖图"
     },
     {
+      "name": "image_generation_quality",
+      "value": "图像质量"
+    },
+    {
+      "name": "image_generation_quality_auto",
+      "value": "自动"
+    },
+    {
+      "name": "image_generation_quality_low",
+      "value": "低"
+    },
+    {
+      "name": "image_generation_quality_medium",
+      "value": "中"
+    },
+    {
+      "name": "image_generation_quality_high",
+      "value": "高"
+    },
+    {
+      "name": "image_generation_output_format",
+      "value": "输出格式"
+    },
+    {
+      "name": "image_generation_output_compression",
+      "value": "输出压缩"
+    },
+    {
+      "name": "image_generation_output_compression_auto",
+      "value": "自动"
+    },
+    {
+      "name": "image_generation_moderation",
+      "value": "内容审核"
+    },
+    {
+      "name": "image_generation_moderation_auto",
+      "value": "自动"
+    },
+    {
+      "name": "image_generation_moderation_low",
+      "value": "低"
+    },
+    {
       "name": "image_generation_add_reference",
       "value": "添加参考图"
     },
     {
       "name": "image_generation_reference_limit",
       "value": "最多添加 4 张参考图"
+    },
+    {
+      "name": "image_generation_reference_limit_count",
+      "value": "当前模型最多添加 %d 张参考图"
+    },
+    {
+      "name": "image_generation_reference_limit_one",
+      "value": "当前模型最多添加 1 张参考图"
+    },
+    {
+      "name": "image_generation_reference_unsupported",
+      "value": "当前模型不支持参考图"
     },
     {
       "name": "image_generation_reference_failed",
@@ -2885,24 +2941,72 @@
       "value": "试试这些提示词"
     },
     {
-      "name": "image_generation_template_1",
-      "value": "夜晚霓虹下的赛博朋克城市街道,湿漉漉地面反射光斑,电影感构图"
+      "name": "image_prompt_template_refresh",
+      "value": "换一批"
     },
     {
-      "name": "image_generation_template_2",
-      "value": "水彩风格的山间小屋,清晨薄雾,柔和光线"
+      "name": "image_prompt_template_manage",
+      "value": "提示词库"
     },
     {
-      "name": "image_generation_template_3",
-      "value": "可爱柴犬戴着宇航员头盔,3D 立体卡通风格,星空背景"
+      "name": "image_prompt_template_add",
+      "value": "新增提示词"
     },
     {
-      "name": "image_generation_template_4",
-      "value": "极简线稿风格的咖啡杯特写,纯白背景,工业设计感"
+      "name": "image_prompt_template_reset_builtins",
+      "value": "重置预置"
     },
     {
-      "name": "image_generation_template_5",
-      "value": "蒸汽朋克机械蝴蝶,精细金属齿轮,微距镜头"
+      "name": "image_prompt_template_builtin",
+      "value": "预置"
+    },
+    {
+      "name": "image_prompt_template_title_placeholder",
+      "value": "标题"
+    },
+    {
+      "name": "image_prompt_template_prompt_placeholder",
+      "value": "输入生图提示词"
+    },
+    {
+      "name": "image_prompt_template_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "image_prompt_template_search_placeholder",
+      "value": "搜索提示词"
+    },
+    {
+      "name": "image_prompt_template_no_results",
+      "value": "没有找到匹配的提示词"
+    },
+    {
+      "name": "image_prompt_template_sync_remote",
+      "value": "同步预置"
+    },
+    {
+      "name": "image_prompt_template_sync_success",
+      "value": "预置提示词已同步"
+    },
+    {
+      "name": "image_prompt_template_sync_failed",
+      "value": "同步预置失败"
+    },
+    {
+      "name": "image_prompt_template_reset_success",
+      "value": "已重置预置提示词"
+    },
+    {
+      "name": "image_prompt_template_reset_failed",
+      "value": "重置预置失败"
+    },
+    {
+      "name": "image_prompt_template_saved",
+      "value": "提示词已保存"
+    },
+    {
+      "name": "image_prompt_template_save_failed",
+      "value": "提示词保存失败"
     },
     {
       "name": "default_model_role_image_generation",

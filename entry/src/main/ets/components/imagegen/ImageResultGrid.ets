@@ -1,4 +1,5 @@
 import { GeneratedMedia } from '../../models/ImageGenerationModels'
+import { ImagePromptTemplate } from '../../models/ImagePromptTemplateModels'
 import { getAppUiState } from '../../state/AppUiState'
 import { getImageGenerationPreviewId } from './ImageGenerationPreviewUtil'
 import { AdaptiveImageThumbnail } from '../AdaptiveImageThumbnail'
@@ -10,20 +11,15 @@ export struct ImageResultGrid {
   @Param isEditing: boolean = false
   @Param items: GeneratedMedia[] = []
   @Param requestedCount: number = 1
+  @Param promptTemplates: ImagePromptTemplate[] = []
+  @Param canRotatePromptTemplates: boolean = false
   @Event onPreview: (index: number) => void = (_index: number): void => {}
   @Event onSave: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onCopyPrompt: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onDelete: (item: GeneratedMedia) => void = (_item: GeneratedMedia): void => {}
   @Event onUseTemplate: (prompt: string) => void = (_prompt: string): void => {}
-
-  // 5 个示例 prompt: 覆盖摄影/插画/3D/极简/微距, 让首次进入的用户即时上手
-  private static readonly PROMPT_TEMPLATE_KEYS: string[] = [
-    'image_generation_template_1',
-    'image_generation_template_2',
-    'image_generation_template_3',
-    'image_generation_template_4',
-    'image_generation_template_5'
-  ]
+  @Event onRotateTemplates: () => void = (): void => {}
+  @Event onManageTemplates: () => void = (): void => {}
 
   build() {
     Column() {
@@ -79,40 +75,50 @@ export struct ImageResultGrid {
           .margin({ top: 14 })
       }
 
-      // 示例 prompt 区: 标题 + 自动换行的 chip 流, 点击直接填入输入框
-      Column() {
-        Text($r('app.string.image_generation_empty_try_prompt'))
-          .fontSize(13)
-          .fontColor($r('app.color.text_tertiary'))
+      if (this.promptTemplates.length > 0) {
+        // 示例 prompt 区: 标题 + 操作按钮 + 自动换行的 chip 流, 点击直接填入输入框
+        Column() {
+          Row() {
+            Text($r('app.string.image_generation_empty_try_prompt'))
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .layoutWeight(1)
+            this.TemplateActionButton($r('sys.symbol.arrow_clockwise'), $r('app.string.image_prompt_template_refresh'), (): void => {
+              this.onRotateTemplates()
+            }, this.canRotatePromptTemplates)
+            this.TemplateActionButton($r('sys.symbol.gearshape'), $r('app.string.image_prompt_template_manage'), (): void => {
+              this.onManageTemplates()
+            }, true)
+          }
           .width('100%')
           .padding({ left: 16, right: 16 })
           .margin({ bottom: 8 })
 
-        Flex({
-          direction: FlexDirection.Row,
-          wrap: FlexWrap.Wrap,
-          justifyContent: FlexAlign.Center
-        }) {
-          ForEach(ImageResultGrid.PROMPT_TEMPLATE_KEYS, (key: string): void => {
-            this.TemplateChip(key)
-          }, (key: string): string => key)
+          Flex({
+            direction: FlexDirection.Row,
+            wrap: FlexWrap.Wrap,
+            justifyContent: FlexAlign.Center
+          }) {
+            ForEach(this.promptTemplates, (template: ImagePromptTemplate): void => {
+              this.TemplateChip(template)
+            }, (template: ImagePromptTemplate): string => template.id)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16 })
         }
         .width('100%')
-        .padding({ left: 16, right: 16 })
       }
-      .width('100%')
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
   }
 
-  // chip 直接 $r(key) 读字符串; onClick 时通过 getStringSync 取真实文本传给回调
   // 换行布局下放开宽度限制, 但 2 行 Ellipsis 避免单 chip 撑满整行
   @Builder
-  private TemplateChip(stringKey: string) {
+  private TemplateChip(template: ImagePromptTemplate) {
     Button({ type: ButtonType.Normal, stateEffect: false }) {
-      Text($r(`app.string.${stringKey}`))
+      Text(template.title !== '' ? template.title : template.prompt)
         .fontSize(12)
         .fontColor($r('app.color.text_primary'))
         .maxLines(2)
@@ -124,23 +130,26 @@ export struct ImageResultGrid {
     .borderRadius(16)
     .backgroundColor(getAppUiState().themeSurface)
     .onClick(() => {
-      this.applyTemplate(stringKey)
+      this.onUseTemplate(template.prompt)
     })
   }
 
-  private applyTemplate(stringKey: string): void {
-    try {
-      const ctx = this.getUIContext().getHostContext()
-      if (ctx === undefined) {
-        return
-      }
-      const promptText = ctx.resourceManager.getStringByNameSync(stringKey)
-      if (promptText !== '') {
-        this.onUseTemplate(promptText)
-      }
-    } catch (error) {
-      console.error('ImageResultGrid', `Failed to load template prompt: ${JSON.stringify(error)}`)
+  @Builder
+  private TemplateActionButton(icon: Resource, label: Resource, action: () => void, enabled: boolean) {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph(icon)
+        .fontSize(16)
+        .fontColor([enabled ? $r('app.color.text_secondary') : $r('app.color.text_tertiary')])
     }
+    .width(30)
+    .height(30)
+    .backgroundColor(getAppUiState().themeSurface)
+    .accessibilityText(label)
+    .enabled(enabled)
+    .margin({ left: 6 })
+    .onClick(() => {
+      action()
+    })
   }
 
   @Builder

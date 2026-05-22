@@ -5,6 +5,7 @@ import { ApiStyle, ModelInfo, ModelProvider, ProviderType } from '../models/Chat
 import {
   ImageAspectRatio,
   ImageGenerationItem,
+  ImageGenerationOutputFormat,
   ImageGenerationRequest,
   ImageGenerationResult
 } from '../models/ImageGenerationModels'
@@ -12,10 +13,20 @@ import { HttpRequestController, HttpResponse } from './HttpService'
 import { getImageGenerationRcpClient, ImageGenerationRcpClient } from './ImageGenerationRcpClient'
 import { getEffectiveApiKey } from '../config/PresetProviders'
 import { normalizeCustomHeaderName, parseCustomHeadersMap } from '../utils/CustomHeaderUtils'
+import {
+  ImageGenerationCapabilityResolver,
+  ImageGenerationRouteCapabilities
+} from './ImageGenerationCapabilityResolver'
 
 interface OpenAIImageResponseItem {
   b64_json?: string
   url?: string
+  revised_prompt?: string
+  size?: string
+  quality?: string
+  output_format?: string
+  output_compression?: number
+  moderation?: string
 }
 
 interface OpenAIImageResponse {
@@ -36,6 +47,10 @@ interface OpenAIImageGenerationBody {
   n: number
   size: string
   response_format: string
+  quality?: string
+  output_format?: string
+  output_compression?: number
+  moderation?: string
 }
 
 interface GoogleImagenInstance {
@@ -294,6 +309,10 @@ export class ImageGenerationService {
     next.numberOfImages = this.normalizeCount(count)
     next.aspectRatio = request.aspectRatio
     next.referenceImagePaths = request.referenceImagePaths.slice()
+    next.quality = request.quality
+    next.outputFormat = request.outputFormat
+    next.outputCompression = request.outputCompression
+    next.moderation = request.moderation
     return next
   }
 
@@ -326,6 +345,7 @@ export class ImageGenerationService {
     request: ImageGenerationRequest,
     controller?: HttpRequestController
   ): Promise<ImageGenerationResult> {
+    const capabilities = ImageGenerationCapabilityResolver.resolve(provider, model)
     const body: OpenAIImageGenerationBody = {
       model: model.id,
       prompt: request.prompt,
@@ -333,13 +353,14 @@ export class ImageGenerationService {
       size: this.getOpenAIImageSize(request.aspectRatio),
       response_format: 'b64_json'
     }
+    this.applyOpenAIGptImageOptions(body, request, capabilities)
     const response = await this.rcpClient.postJson(
       this.buildOpenAIImageUrl(provider, '/images/generations'),
       this.buildJsonHeaders(provider),
       JSON.stringify(body),
       controller
     )
-    return await this.parseOpenAIImageResponse(response, provider, controller)
+    return await this.parseOpenAIImageResponse(response, provider, controller, this.getRequestOutputMimeType(request, capabilities))
   }
 
   private async editOpenAIImage(
@@ -349,11 +370,12 @@ export class ImageGenerationService {
     controller?: HttpRequestController
   ): Promise<ImageGenerationResult> {
     this.validateReferenceImages(request.referenceImagePaths)
+    const capabilities = ImageGenerationCapabilityResolver.resolve(provider, model)
     const url = this.buildOpenAIImageUrl(provider, '/images/edits')
     const headers = this.buildBaseHeaders(provider)
-    const multipart = this.buildOpenAIEditMultipartForm(model.id, request)
+    const multipart = this.buildOpenAIEditMultipartForm(model.id, request, capabilities)
     const response = await this.rcpClient.postMultipart(url, headers, multipart, controller)
-    return await this.parseOpenAIImageResponse(response, provider, controller)
+    return await this.parseOpenAIImageResponse(response, provider, controller, this.getRequestOutputMimeType(request, capabilities))
   }
 
   private async generateXAIImage(
@@ -596,13 +618,7 @@ export class ImageGenerationService {
   }
 
   private getOpenAIImageSize(aspectRatio: ImageAspectRatio): string {
-    if (aspectRatio === ImageAspectRatio.LANDSCAPE) {
-      return '1536x1024'
-    }
-    if (aspectRatio === ImageAspectRatio.PORTRAIT) {
-      return '1024x1536'
-    }
-    return '1024x1024'
+    return ImageGenerationCapabilityResolver.getOpenAIImageSize(aspectRatio)
   }
 
   private getGoogleAspectRatio(aspectRatio: ImageAspectRatio): string {
@@ -625,6 +641,72 @@ export class ImageGenerationService {
     return '1:1'
   }
 
+  private applyOpenAIGptImageOptions(
+    body: OpenAIImageGenerationBody,
+    request: ImageGenerationRequest,
+    capabilities: ImageGenerationRouteCapabilities
+  ): void {
+    if (!ImageGenerationCapabilityResolver.isOpenAIGptImageRoute(capabilities.route)) {
+      return
+    }
+    const quality = ImageGenerationCapabilityResolver.normalizeQuality(request.quality, capabilities)
+    const outputFormat = ImageGenerationCapabilityResolver.normalizeOutputFormat(request.outputFormat, capabilities)
+    const moderation = ImageGenerationCapabilityResolver.normalizeModeration(request.moderation, capabilities)
+    const compression = ImageGenerationCapabilityResolver.normalizeOutputCompression(
+      request.outputCompression,
+      outputFormat,
+      capabilities
+    )
+    body.quality = quality
+    body.output_format = outputFormat
+    body.moderation = moderation
+    if (compression >= 0) {
+      body.output_compression = compression
+    }
+  }
+
+  private applyOpenAIGptImageMultipartOptions(
+    fields: rcp.MultipartFormFields,
+    request: ImageGenerationRequest,
+    capabilities: ImageGenerationRouteCapabilities
+  ): void {
+    if (!ImageGenerationCapabilityResolver.isOpenAIGptImageRoute(capabilities.route)) {
+      return
+    }
+    const quality = ImageGenerationCapabilityResolver.normalizeQuality(request.quality, capabilities)
+    const outputFormat = ImageGenerationCapabilityResolver.normalizeOutputFormat(request.outputFormat, capabilities)
+    const moderation = ImageGenerationCapabilityResolver.normalizeModeration(request.moderation, capabilities)
+    const compression = ImageGenerationCapabilityResolver.normalizeOutputCompression(
+      request.outputCompression,
+      outputFormat,
+      capabilities
+    )
+    fields['quality'] = quality
+    fields['output_format'] = outputFormat
+    fields['moderation'] = moderation
+    fields['response_format'] = 'b64_json'
+    if (compression >= 0) {
+      fields['output_compression'] = compression.toString()
+    }
+  }
+
+  private getRequestOutputMimeType(
+    request: ImageGenerationRequest,
+    capabilities: ImageGenerationRouteCapabilities
+  ): string {
+    if (!ImageGenerationCapabilityResolver.isOpenAIGptImageRoute(capabilities.route)) {
+      return 'image/png'
+    }
+    const outputFormat = ImageGenerationCapabilityResolver.normalizeOutputFormat(request.outputFormat, capabilities)
+    if (outputFormat === ImageGenerationOutputFormat.JPEG) {
+      return 'image/jpeg'
+    }
+    if (outputFormat === ImageGenerationOutputFormat.WEBP) {
+      return 'image/webp'
+    }
+    return 'image/png'
+  }
+
   private normalizeCount(value: number): number {
     if (value < 1) {
       return 1
@@ -638,7 +720,8 @@ export class ImageGenerationService {
   private async parseOpenAIImageResponse(
     response: HttpResponse,
     _provider: ModelProvider,
-    controller?: HttpRequestController
+    controller?: HttpRequestController,
+    fallbackMimeType: string = 'image/png'
   ): Promise<ImageGenerationResult> {
     if (!response.success) {
       throw new Error(this.formatImageHttpError(response))
@@ -654,9 +737,11 @@ export class ImageGenerationService {
     for (let i = 0; i < parsed.data.length; i++) {
       const item = parsed.data[i]
       if (item.b64_json !== undefined && item.b64_json !== '') {
-        result.items.push(this.createImageItem(item.b64_json, 'image/png'))
+        result.items.push(this.createOpenAIImageItem(item, fallbackMimeType))
       } else if (item.url !== undefined && item.url !== '') {
-        result.items.push(await this.downloadImageAsItem(item.url, controller))
+        const imageItem = await this.downloadImageAsItem(item.url, controller)
+        this.applyOpenAIItemMetadata(imageItem, item)
+        result.items.push(imageItem)
       }
     }
     if (result.items.length === 0) {
@@ -730,6 +815,21 @@ export class ImageGenerationService {
       item.mimeType = this.detectMimeTypeFromBase64(item.base64Data, mimeType)
     }
     return item
+  }
+
+  private createOpenAIImageItem(item: OpenAIImageResponseItem, fallbackMimeType: string): ImageGenerationItem {
+    const imageItem = this.createImageItem(item.b64_json !== undefined ? item.b64_json : '', fallbackMimeType)
+    this.applyOpenAIItemMetadata(imageItem, item)
+    return imageItem
+  }
+
+  private applyOpenAIItemMetadata(imageItem: ImageGenerationItem, item: OpenAIImageResponseItem): void {
+    imageItem.revisedPrompt = item.revised_prompt !== undefined ? item.revised_prompt : ''
+    imageItem.actualSize = item.size !== undefined ? item.size : ''
+    imageItem.actualQuality = item.quality !== undefined ? item.quality : ''
+    imageItem.actualOutputFormat = item.output_format !== undefined ? item.output_format : ''
+    imageItem.actualOutputCompression = item.output_compression !== undefined ? item.output_compression : -1
+    imageItem.actualModeration = item.moderation !== undefined ? item.moderation : ''
   }
 
   private stripDataUrlPrefix(value: string): string {
@@ -823,7 +923,8 @@ export class ImageGenerationService {
 
   private buildOpenAIEditMultipartForm(
     modelId: string,
-    request: ImageGenerationRequest
+    request: ImageGenerationRequest,
+    capabilities: ImageGenerationRouteCapabilities
   ): rcp.MultipartForm {
     const fields: rcp.MultipartFormFields = {
       'model': modelId,
@@ -831,6 +932,7 @@ export class ImageGenerationService {
       'n': this.normalizeCount(request.numberOfImages).toString(),
       'size': this.getOpenAIImageSize(request.aspectRatio)
     }
+    this.applyOpenAIGptImageMultipartOptions(fields, request, capabilities)
     if (request.referenceImagePaths.length === 1) {
       fields['image'] = this.toFormFieldFile(request.referenceImagePaths[0], 0)
     } else if (request.referenceImagePaths.length > 1) {
