@@ -287,7 +287,8 @@ export struct ShareMessageCard {
               fontSize: 14,
               cacheKey: this.assistantAvatarCacheKey,
               modelId: message.modelId !== '' ? message.modelId : this.currentModelId,
-              modelName: message.modelName
+              modelName: message.modelName,
+              preferModelIconForMessage: true
             })
           }
           .width(30)

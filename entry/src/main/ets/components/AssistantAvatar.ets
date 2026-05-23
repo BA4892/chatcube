@@ -243,6 +243,8 @@ export struct AssistantAvatarView {
   @Param modelProviderId: string = ''
   @Param modelId: string = ''
   @Param modelName: string = ''
+  // 分享卡片等场景:不依赖 value 是否 `model:` 前缀,只要按 modelId 能匹配到模型 logo 就强制走 SVG 头像
+  @Param preferModelIconForMessage: boolean = false
 
   @Computed
   get renderImageSource(): string {
@@ -299,12 +301,14 @@ export struct AssistantAvatarView {
             .height(this.avatarSize * 0.72)
             .objectFit(ImageFit.Contain)
             .interpolation(ImageInterpolation.High)
+            .syncLoad(true)
         } else {
           Image(this.modelIconRenderData.resourcePath)
             .width(this.avatarSize * 0.72)
             .height(this.avatarSize * 0.72)
             .objectFit(ImageFit.Contain)
             .interpolation(ImageInterpolation.High)
+            .syncLoad(true)
         }
       } else {
         SymbolGlyph($r('sys.symbol.ai_edit'))
@@ -323,6 +327,8 @@ export struct AssistantAvatarView {
 
   build() {
     if (isModelAssistantAvatar(this.value)) {
+      this.AvatarModelIcon()
+    } else if (this.preferModelIconForMessage && this.modelIconRenderData.hasIcon()) {
       this.AvatarModelIcon()
     } else if (isImageAssistantAvatar(this.value)) {
       Stack() {

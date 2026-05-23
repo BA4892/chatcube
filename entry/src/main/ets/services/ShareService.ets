@@ -288,9 +288,12 @@ export class ShareService {
     }
 
     const totalBuffer = new ArrayBuffer(widthPx * totalHeightPx * 4)
+    // 关键:stitched 必须用 segment 自身的 pixelFormat。componentSnapshot 返回的 PixelMap
+    // 在很多机型上是 BGRA_8888,如果 stitched 硬编码 RGBA_8888,readPixelsToBuffer 出来的
+    // BGRA 字节被 writePixels 当 RGBA 写入,R/B 通道交换,纯蓝 #0000FF 会变成纯红 #FF0000。
     const initOpts: image.InitializationOptions = {
       size: { width: widthPx, height: totalHeightPx },
-      pixelFormat: image.PixelMapFormat.RGBA_8888,
+      pixelFormat: firstInfo.pixelFormat,
       alphaType: image.AlphaType.UNPREMUL,
       editable: true
     }
