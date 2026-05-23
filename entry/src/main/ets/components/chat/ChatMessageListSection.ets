@@ -3,6 +3,7 @@ import { DraftPreviewBubble } from './DraftPreviewBubble'
 import { shouldShowMessageHeader } from '../../utils/MessageListUtils'
 import { ChatMessageListItem } from './ChatMessageListItem'
 import { CubeSpinner3D } from '../loading/CubeSpinner'
+import { getAppUiState } from '../../state/AppUiState'
 import {
   buildChatMessageContentRenderSignature,
   buildChatMessageRowRenderSignature,
@@ -55,7 +56,6 @@ export struct ChatMessageListSection {
   @Event onListAppear: () => void = (): void => {}
   @Event onReachStart: () => void = (): void => {}
   @Event onReachEnd: () => void = (): void => {}
-  @Event onContentAreaChange: () => void = (): void => {}
   @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
     _scrollState: ScrollState): void => {}
   @Event onScrollIndex: (firstIndex: number, lastIndex: number) => void = (_firstIndex: number,
@@ -378,16 +378,10 @@ export struct ChatMessageListSection {
   }
 
   build() {
-    Column() {
-      if (this.isLoading) {
-        Column() {
-          CubeSpinner3D({ sizeVp: 80, color: this.loadingColor })
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List({ scroller: this.scroller }) {
+    Stack() {
+      // List 始终渲染。 isLoading=true 时上层覆盖 spinner, List 在后台完成布局和初次对齐,
+      // 用户视线被 spinner 挡住, 不会看到"从顶部滚到底部"的过渡
+      List({ scroller: this.scroller }) {
           ListItem() {
             Column() {
               Column().height(this.topInsetHeight)
@@ -481,17 +475,11 @@ export struct ChatMessageListSection {
               .justifyContent(FlexAlign.Center)
             }
             .padding({ left: 14, right: 14, top: 5, bottom: 5 })
-            .onAreaChange((_oldArea: Area, _newArea: Area) => {
-              this.onContentAreaChange()
-            })
           }
 
           ListItem({ style: ListItemStyle.NONE }) {
             Column().height(this.bottomPadding)
           }
-          .onAreaChange((_oldArea: Area, _newArea: Area) => {
-            this.onContentAreaChange()
-          })
         }
         .width('100%')
         .height('100%')
@@ -513,6 +501,15 @@ export struct ChatMessageListSection {
         .onScrollIndex((firstIndex: number, lastIndex: number) => {
           this.onScrollIndex(firstIndex, lastIndex)
         })
+
+      if (this.isLoading) {
+        Column() {
+          CubeSpinner3D({ sizeVp: 80, color: this.loadingColor })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(getAppUiState().themeBackground)
       }
     }
     .width('100%')

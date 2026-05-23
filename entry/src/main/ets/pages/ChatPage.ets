@@ -34,7 +34,6 @@ import {
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { AttachmentPicker } from '../components/AttachmentPicker'
-import { ScrollToBottomButton } from '../components/ScrollToBottomButton'
 import { ScrollToBottomLoadingButton } from '../components/ScrollToBottomLoadingButton'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
 import { MessageMapSheet } from '../components/MessageMapSheet'
@@ -83,7 +82,6 @@ import { modelSupportsImageGenerationTool } from '../services/registry/ModelAbil
 import {
   getListBottomPaddingForChat,
   getPreviewTimeTextForChat,
-  shouldShowScrollToTopButtonForChat,
   shouldShowToolSelectionChipForChat
 } from './chat/ChatPageUiHelper'
 import { parseToolIdsFromRouteRaw } from './chat/ChatToolIdHelper'
@@ -199,7 +197,6 @@ export struct ChatPage {
   private lastScrollOffset: number = 0
   private readonly inputBarShowThreshold: number = 6
   private readonly inputBarHideThreshold: number = 18
-  @Local pendingInitialBottomAlignment: boolean = false
   // 会话标题相关状态
   @Local sessionTitle: string = ''
   @Local isTitleGenerating: boolean = false
@@ -386,8 +383,9 @@ export struct ChatPage {
   private draftAutosaveTimerId: number = -1
   private readonly draftAutosaveDelayMs: number = 400
   private appUiStateDisposers: Array<() => void> = []
-  private initialBottomAlignmentRetryTimerIds: number[] = []
-  private initialBottomAlignmentCompletionTimerId: number = -1
+  // 加载会话后, 让 List 后台做 scrollEdge(Bottom) 兜底对齐, 期间 isLoading 仍为 true 用 spinner 罩住,
+  // 用户不会看到列表从顶部滚到底部的过渡
+  private initialAlignmentTimerIds: number[] = []
   private assistantAvatarReloadToken: number = 0
   private pendingToolInteractionSyncTimerId: number = -1
 
@@ -549,7 +547,7 @@ export struct ChatPage {
     this.resetDocumentParseQueue()
     // 释放TTS资源
     this.ttsService.destroy()
-    this.clearInitialBottomAlignmentRetries()
+    this.clearInitialAlignmentTimers()
     this.clearPendingToolInteractionSyncTimer()
     this.clearRuntimeStateWatchdog()
     this.flushDraftAutosave(true).catch((error: Error): void => {
@@ -599,7 +597,13 @@ export struct ChatPage {
     this.applyLoadedSessionData(loadResult)
     await this.applyLoadedProviders(loadResult.providers)
 
-    this.isLoading = false
+    // 历史会话: 让 List 在 spinner 后面静默对齐到底部, 完成后再撤 spinner;
+    // 新会话或空会话: 直接撤 spinner
+    if (!this.isNewChatTransition && this.messages.length > 0) {
+      this.performInitialBottomAlignmentBehindSpinner()
+    } else {
+      this.isLoading = false
+    }
 
     const elapsed = Date.now() - startTime
     hilog.info(DOMAIN, TAG, '✅ 聊天页面数据加载完成 (耗时: %{public}dms)', elapsed)
@@ -638,7 +642,6 @@ export struct ChatPage {
   }
 
   private applyLoadedSessionData(loadResult: ChatPageLoadResult): void {
-    this.pendingInitialBottomAlignment = false
     this.pendingInitialPrompt = loadResult.pendingInitialPrompt
     this.pendingInitialToolIds = loadResult.pendingInitialToolIds
     this.initialPromptAutoSent = loadResult.initialPromptAutoSent
@@ -666,7 +669,6 @@ export struct ChatPage {
 
     if (!this.isNewChatTransition) {
       this.replaceMessages(loadResult.messages)
-      this.pendingInitialBottomAlignment = this.messages.length > 0
       hilog.info(DOMAIN, TAG, '📨 加载会话消息: %{public}d 条', this.messages.length)
       return
     }
@@ -716,8 +718,6 @@ export struct ChatPage {
       setTimeout(() => {
         this.autoFocusInput = true
       }, 50)
-    } else if (this.messages.length > 0) {
-      this.requestInitialBottomAlignment()
     }
 
     if (this.isNewChatTransition && this.pendingInitialPrompt !== '' && !this.initialPromptAutoSent) {
@@ -846,29 +846,15 @@ export struct ChatPage {
     this.expandPendingToolApproval()
   }
 
-  private clearInitialBottomAlignmentRetries(): void {
-    for (let i = 0; i < this.initialBottomAlignmentRetryTimerIds.length; i++) {
-      clearTimeout(this.initialBottomAlignmentRetryTimerIds[i])
+  private clearInitialAlignmentTimers(): void {
+    for (let i = 0; i < this.initialAlignmentTimerIds.length; i++) {
+      clearTimeout(this.initialAlignmentTimerIds[i])
     }
-    this.initialBottomAlignmentRetryTimerIds.splice(0, this.initialBottomAlignmentRetryTimerIds.length)
-    if (this.initialBottomAlignmentCompletionTimerId >= 0) {
-      clearTimeout(this.initialBottomAlignmentCompletionTimerId)
-      this.initialBottomAlignmentCompletionTimerId = -1
-    }
-  }
-
-  private hasScheduledInitialBottomAlignment(): boolean {
-    return this.initialBottomAlignmentRetryTimerIds.length > 0 || this.initialBottomAlignmentCompletionTimerId >= 0
-  }
-
-  private cancelPendingInitialBottomAlignment(): void {
-    this.pendingInitialBottomAlignment = false
-    this.clearInitialBottomAlignmentRetries()
+    this.initialAlignmentTimerIds.splice(0, this.initialAlignmentTimerIds.length)
   }
 
   private resetScrollStateForSessionLoad(): void {
-    this.clearInitialBottomAlignmentRetries()
-    this.pendingInitialBottomAlignment = false
+    this.clearInitialAlignmentTimers()
     this.lastScrollOffset = 0
     this.currentScrollOffsetVp = 0
     this.isAtTop = false
@@ -917,34 +903,33 @@ export struct ChatPage {
     .backgroundColor(this.themeBackground)
   }
 
-  private scheduleInitialBottomAlignmentRetries(force: boolean = false): void {
-    if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
-      return
-    }
-    if (!force && this.hasScheduledInitialBottomAlignment()) {
-      return
-    }
-    this.clearInitialBottomAlignmentRetries()
-    const delays: number[] = [0, 80, 180]
-    const completionDelay = delays[delays.length - 1] + 180
-    for (let i = 0; i < delays.length; i++) {
-      const timerId = setTimeout(() => {
-        if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
-          return
-        }
-        this.getScrollUiFlow().setIsAtBottom(true)
-        this.getScrollUiFlow().setIsAtTop(false)
-        this.getScrollUiFlow().alignToBottomAfterLayout()
-      }, delays[i])
-      this.initialBottomAlignmentRetryTimerIds.push(timerId)
-    }
-    this.initialBottomAlignmentCompletionTimerId = setTimeout(() => {
-      if (!this.pendingInitialBottomAlignment) {
+  private performInitialBottomAlignmentBehindSpinner(): void {
+    // 时序: 此刻 isLoading 仍为 true, ChatMessageListSection 内 List 已经开始渲染(被 spinner 罩住)。
+    // LazyForEach 异步加载首屏 item, scroller 在加载未稳定期间不可靠 ——
+    // 必须等 lastVisibleListIndex 真到达 bottomAnchor 才撤 spinner, 否则用户看到的不是真底部,
+    // 且后续 scrollEdge(Top) 会被 LazyForEach 的"维持视觉位置"调整抵消, 跳到顶部按钮点击失效。
+    this.clearInitialAlignmentTimers()
+    const flow = this.getScrollUiFlow()
+    flow.setIsAtBottom(true)
+    flow.setIsAtTop(false)
+    const startedAt = Date.now()
+    const maxWaitMs = 1500
+    const pollIntervalMs = 60
+    const tick = (): void => {
+      const anchor = this.getBottomAnchorListIndex()
+      // scrollToIndex 让 LazyForEach 主动加载末尾 item, 比 scrollEdge(Bottom) 精确
+      this.scroller.scrollToIndex(anchor, false, ScrollAlign.END)
+      const reachedBottom = this.lastVisibleListIndex >= anchor - 1 && this.lastVisibleListIndex > 0
+      const timedOut = Date.now() - startedAt >= maxWaitMs
+      if (reachedBottom || timedOut) {
+        this.initialAlignmentTimerIds.push(setTimeout((): void => {
+          this.isLoading = false
+        }, 40))
         return
       }
-      this.pendingInitialBottomAlignment = false
-      this.clearInitialBottomAlignmentRetries()
-    }, completionDelay)
+      this.initialAlignmentTimerIds.push(setTimeout(tick, pollIntervalMs))
+    }
+    this.initialAlignmentTimerIds.push(setTimeout(tick, 0))
   }
 
   private refreshToolAvailabilityOnShown(): void {
@@ -953,29 +938,6 @@ export struct ChatPage {
     }).catch((error: Object) => {
       console.warn('ChatPage', `[refreshToolAvailabilityOnShown] Failed: ${JSON.stringify(error)}`)
     })
-  }
-
-  private requestInitialBottomAlignment(): void {
-    if (this.messages.length <= 0) {
-      this.cancelPendingInitialBottomAlignment()
-      return
-    }
-    this.pendingInitialBottomAlignment = true
-    this.scheduleInitialBottomAlignmentRetries(true)
-  }
-
-  private handleListAppear(): void {
-    if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
-      return
-    }
-    this.scheduleInitialBottomAlignmentRetries()
-  }
-
-  private handleMessageListContentAreaChange(): void {
-    if (!this.pendingInitialBottomAlignment || this.messages.length <= 0) {
-      return
-    }
-    this.scheduleInitialBottomAlignmentRetries()
   }
 
   private getBottomAnchorListIndex(): number {
@@ -2384,17 +2346,11 @@ export struct ChatPage {
           onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
             this.handleAskUserAnswer(toolCallId, answerJson)
           },
-          onListAppear: (): void => {
-            this.handleListAppear()
-          },
           onReachStart: (): void => {
             this.handleMessageListReachStart()
           },
           onReachEnd: (): void => {
             this.handleMessageListReachEnd()
-          },
-          onContentAreaChange: (): void => {
-            this.handleMessageListContentAreaChange()
           },
           onDidScroll: (scrollOffset: number, scrollState: ScrollState): void => {
             this.handleMessageListDidScroll(scrollOffset, scrollState)
@@ -2448,32 +2404,6 @@ export struct ChatPage {
               )
             )
         }
-
-        // 快速到顶部按钮
-        ScrollToBottomButton({
-          isVisible: this.shouldShowScrollToTopButton(),
-          bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
-          fixedBottomOffset: this.getScrollButtonBaselineVp(),
-          buttonDirection: 1,
-          progress: this.scrollProgress,
-          extraOffsetY: this.shouldShowStandardScrollToBottomButton() ? -48 : 0,
-          placeOnLeft: this.shouldUseLeftHandLayout(),
-          onScrollToTop: () => {
-            this.handleScrollToTopRequest()
-          }
-        })
-
-        // 回到底部按钮（非 AI 生成状态时显示）
-        ScrollToBottomButton({
-          isVisible: this.shouldShowStandardScrollToBottomButton(),
-          bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
-          fixedBottomOffset: this.getScrollButtonBaselineVp(),
-          buttonDirection: 0,
-          placeOnLeft: this.shouldUseLeftHandLayout(),
-          onScrollToBottom: () => {
-            this.scrollToBottomWithAnimation()
-          }
-        })
 
         // AI 生成中的底部中间 loading 回到底部按钮
         ScrollToBottomLoadingButton({
@@ -3652,38 +3582,16 @@ export struct ChatPage {
     }
   }
 
-  private shouldShowScrollToTopButton(): boolean {
-    if (this.isEditingMessage || this.hasDraftContent() || this.showImagePreview) {
-      return false
-    }
-    return shouldShowScrollToTopButtonForChat(
-      this.isMultiSelectMode,
-      this.messages.length,
-      this.isAtTop,
-      this.currentScrollOffsetVp,
-      this.windowHeightVp
-    )
-  }
-
   private shouldShowScrollToBottomLoadingButton(): boolean {
     return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
       !this.isAtBottom && !this.isMultiSelectMode && this.isSending
-  }
-
-  private shouldShowStandardScrollToBottomButton(): boolean {
-    return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
-      this.messages.length > 0 && !this.isAtBottom &&
-      !this.isMultiSelectMode && !this.isSending
   }
 
   private handleMessageListDidScroll(scrollOffset: number, scrollState: ScrollState): void {
     if (this.showAttachmentPicker && (scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling)) {
       this.closeAttachmentPanel()
     }
-    const userScrolledAwayFromBottom = this.getScrollUiFlow().handleMessageListDidScroll(scrollOffset, scrollState)
-    if (this.pendingInitialBottomAlignment && userScrolledAwayFromBottom) {
-      this.cancelPendingInitialBottomAlignment()
-    }
+    this.getScrollUiFlow().handleMessageListDidScroll(scrollOffset, scrollState)
   }
 
   private handleMessageListReachStart(): void {
@@ -3864,15 +3772,6 @@ export struct ChatPage {
   // 滚动到底部（带动画过渡）
   private scrollToBottomWithAnimation(): void {
     this.getScrollUiFlow().scrollToBottomWithAnimation()
-  }
-
-  // 滚动到顶部
-  private scrollToTopWithAnimation(): void {
-    this.getScrollUiFlow().scrollToTopWithAnimation()
-  }
-
-  private async handleScrollToTopRequest(): Promise<void> {
-    this.scrollToTopWithAnimation()
   }
 
   // 同步包装方法，用于 onSend 回调

@@ -1,26 +1,3 @@
-export function shouldShowScrollToTopButtonForChat(
-  isMultiSelectMode: boolean,
-  totalMessages: number,
-  isAtTop: boolean,
-  currentScrollOffsetVp: number,
-  viewportHeightVp: number
-): boolean {
-  const minimumVisibleOffsetVp = 24
-  if (isMultiSelectMode) {
-    return false
-  }
-  if (totalMessages <= 0) {
-    return false
-  }
-  if (viewportHeightVp <= 0) {
-    return false
-  }
-  if (currentScrollOffsetVp <= minimumVisibleOffsetVp) {
-    return false
-  }
-  return !isAtTop
-}
-
 export function shouldShowToolSelectionChipForChat(availableToolCount: number, selectedToolCount: number): boolean {
   return availableToolCount > 0 || selectedToolCount > 0
 }

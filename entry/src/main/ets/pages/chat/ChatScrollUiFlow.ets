@@ -178,15 +178,6 @@ export class ChatScrollUiFlow {
     this.deps.scroller.scrollEdge(Edge.Bottom)
   }
 
-  private scrollEdgeAfterLayout(edge: Edge): void {
-    setTimeout(() => {
-      this.deps.scroller.scrollEdge(edge)
-    }, 0)
-    setTimeout(() => {
-      this.deps.scroller.scrollEdge(edge)
-    }, 50)
-  }
-
   alignToBottomAfterLayout(): void {
     setTimeout(() => {
       this.scrollBottomAnchor(false)
@@ -230,8 +221,6 @@ export class ChatScrollUiFlow {
     if (this.deps.getIsAtTop() === value) {
       return
     }
-    // 直接赋值, 按钮入退场由 ScrollToBottomButton.transition(opacity+scale) 接管。
-    // fling 期间 onDidScroll 高频, 用 animateTo 会堆叠 200ms 动画造成按钮抖动。
     this.deps.onSetIsAtTopState(value)
   }
 
@@ -311,23 +300,11 @@ export class ChatScrollUiFlow {
     this.setIsAtBottom(true)
     this.setIsAtTop(false)
     this.setInputBarVisible(true)
-    this.scrollBottomAnchor(true)
+    // 用 fling 而非 scrollToIndex/scrollEdge: fling 走用户手势路径, ArkUI 在该路径上
+    // 临时禁用 LazyForEach 的"维持视觉位置"补偿 (否则用户手动滑动也会被位置补偿卡住),
+    // 因此即使在 LazyForEach 异步加载未稳定时也能可靠到底
+    this.deps.scroller.fling(15000)
     this.captureBottomScrollBaseline()
-    this.alignToBottomAfterLayout()
-  }
-
-  scrollToTopWithAnimation(): void {
-    if (this.deps.messages.length <= 0) {
-      return
-    }
-    this.clearPinnedBottomAlignmentTimers()
-    this.setIsAtTop(true)
-    this.setIsAtBottom(false)
-    this.setInputBarVisible(true)
-    this.setCurrentScrollOffset(0)
-    this.setScrollProgress(0)
-    this.deps.scroller.scrollEdge(Edge.Top)
-    this.scrollEdgeAfterLayout(Edge.Top)
   }
 
   handleReachStart(): void {
