@@ -18,6 +18,9 @@ export interface HttpRequestConfig {
   headers: Record<string, string>
   body: string | ArrayBuffer
   timeout: number
+  // 显式声明该请求幂等(搜索 / API 查询 / 文档拉取等), 允许 GET/HEAD 之外的方法在网络抖动时重试。
+  // 默认 false: WebDAV PUT/DELETE 等有副作用的方法绝不能复制此标志。
+  idempotent?: boolean
 }
 
 // 二进制传输进度回调（0-1）
@@ -41,6 +44,9 @@ export interface HttpResponse {
 export interface HttpRequestRuntimeOptions {
   timeout?: number
   controller?: HttpRequestController
+  // 调用方显式声明该请求幂等, post/postWithTimeout 等会把它透传到 HttpRequestConfig,
+  // requestWithController 据此判断是否纳入重试。WebDAV 等非幂等场景一律省略此字段。
+  idempotent?: boolean
 }
 
 // 数据接收进度信息
@@ -218,68 +224,118 @@ export class HttpService {
     return await this.requestWithController(config)
   }
 
-  // 发送 HTTP 请求（支持取消控制器）
+  // 发送 HTTP 请求（支持取消控制器 + GET/HEAD/幂等 POST 瞬时网络抖动重试）
+  //
+  // 重试策略:
+  // - GET / HEAD 自动重试 1 次; 其他方法默认不重试避免重复副作用,
+  //   调用方显式传 config.idempotent === true 时也允许重试 (搜索 / 数据查询类 POST API 通常幂等)
+  // - WebDAVService.requestWithController 走 DELETE 且未传 idempotent, canRetry === false 自动短路
+  // - 触发: 错误码 2300007 / 2300028 / 2300056 / 2300023, 或 HTTP 502 / 503 / 504
+  // - 不触发: controller.isCancelled() / 4xx / 2xx / 500 / 429
+  // - 间隔: 固定 300 ms (不指数退避, 仅兜国内瞬时 TCP RST)
+  // - 每轮新建 http.createHttp() —— HarmonyOS HttpRequest destroy 后不可复用
   async requestWithController(config: HttpRequestConfig, controller?: HttpRequestController): Promise<HttpResponse> {
-    const httpRequest = http.createHttp()
-    let requestId = ''
-
-    if (controller !== undefined) {
-      if (controller.isCancelled()) {
-        this.destroyRequestSafely(httpRequest)
-        return this.buildCancelledResponse()
-      }
-      requestId = controller.registerRequest(httpRequest)
-      if (requestId === '') {
-        this.destroyRequestSafely(httpRequest)
-        return this.buildCancelledResponse()
-      }
+    const canRetry = config.method === HttpMethod.GET
+      || config.method === HttpMethod.HEAD
+      || config.idempotent === true
+    const maxAttempts = canRetry ? 2 : 1
+    let lastResponse: HttpResponse = {
+      success: false,
+      statusCode: 0,
+      data: '',
+      errorMessage: ''
     }
 
-    try {
-      // 构建请求选项
-      const options: http.HttpRequestOptions = {
-        method: this.convertMethod(config.method),
-        header: config.headers,
-        extraData: config.body,
-        connectTimeout: Math.min(config.timeout, 15000),  // 连接超时最多 15 秒（断网场景更快响应）
-        readTimeout: config.timeout
-      }
-
-      const response = await httpRequest.request(config.url, options)
-
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (controller !== undefined && controller.isCancelled()) {
         return this.buildCancelledResponse()
       }
 
-      const result: HttpResponse = {
-        success: response.responseCode >= 200 && response.responseCode < 300,
-        statusCode: response.responseCode,
-        data: response.result as string,
-        errorMessage: ''
-      }
+      const httpRequest = http.createHttp()
+      let requestId = ''
 
-      if (!result.success) {
-        result.errorMessage = `HTTP Error: ${response.responseCode}`
-      }
-
-      return result
-    } catch (error) {
-      if (controller !== undefined && controller.isCancelled()) {
-        return this.buildCancelledResponse()
-      }
-      const errorResponse: HttpResponse = {
-        success: false,
-        statusCode: 0,
-        data: '',
-        errorMessage: HttpService.formatHttpError(error)
-      }
-      return errorResponse
-    } finally {
       if (controller !== undefined) {
-        controller.unregisterRequest(requestId)
+        requestId = controller.registerRequest(httpRequest)
+        if (requestId === '') {
+          this.destroyRequestSafely(httpRequest)
+          return this.buildCancelledResponse()
+        }
       }
-      this.destroyRequestSafely(httpRequest)
+
+      try {
+        const options: http.HttpRequestOptions = {
+          method: this.convertMethod(config.method),
+          header: config.headers,
+          extraData: config.body,
+          connectTimeout: Math.min(config.timeout, 15000),
+          readTimeout: config.timeout
+        }
+
+        const response = await httpRequest.request(config.url, options)
+
+        if (controller !== undefined && controller.isCancelled()) {
+          return this.buildCancelledResponse()
+        }
+
+        const result: HttpResponse = {
+          success: response.responseCode >= 200 && response.responseCode < 300,
+          statusCode: response.responseCode,
+          data: response.result as string,
+          errorMessage: ''
+        }
+
+        if (!result.success) {
+          result.errorMessage = `HTTP Error: ${response.responseCode}`
+        }
+        lastResponse = result
+
+        const code = response.responseCode
+        const retryableStatus = canRetry && code >= 502 && code <= 504
+        if (result.success || !retryableStatus || attempt === maxAttempts - 1) {
+          return result
+        }
+      } catch (error) {
+        if (controller !== undefined && controller.isCancelled()) {
+          return this.buildCancelledResponse()
+        }
+        lastResponse = {
+          success: false,
+          statusCode: 0,
+          data: '',
+          errorMessage: HttpService.formatHttpError(error)
+        }
+        const errCode = this.extractErrorCode(error)
+        const retryableNet = canRetry && (
+          errCode === 2300007 || errCode === 2300028 ||
+          errCode === 2300056 || errCode === 2300023
+        )
+        if (!retryableNet || attempt === maxAttempts - 1) {
+          return lastResponse
+        }
+      } finally {
+        if (controller !== undefined) {
+          controller.unregisterRequest(requestId)
+        }
+        this.destroyRequestSafely(httpRequest)
+      }
+
+      // 300 ms 等待后重试
+      await new Promise<void>((resolve: (value: void) => void) => setTimeout(resolve, 300))
     }
+
+    return lastResponse
+  }
+
+  // 从 HarmonyOS http kit 抛出的 error 对象提取 code 字段, 提取失败返回 0
+  private extractErrorCode(error: object): number {
+    try {
+      const errorStr = JSON.stringify(error)
+      const parsed = JSON.parse(errorStr) as Record<string, Object>
+      if (parsed.code !== undefined) {
+        return parsed.code as number
+      }
+    } catch (_e) {}
+    return 0
   }
 
   // GET 请求
@@ -332,7 +388,8 @@ export class HttpService {
       method: HttpMethod.POST,
       headers: headers,
       body: body,
-      timeout: options?.timeout !== undefined && options.timeout > 0 ? options.timeout : 60000
+      timeout: options?.timeout !== undefined && options.timeout > 0 ? options.timeout : 60000,
+      idempotent: options?.idempotent === true
     }
     return await this.requestWithController(config, options?.controller)
   }
@@ -350,7 +407,8 @@ export class HttpService {
       method: HttpMethod.POST,
       headers: headers,
       body: body,
-      timeout: timeout
+      timeout: timeout,
+      idempotent: options?.idempotent === true
     }
     return await this.requestWithController(config, options?.controller)
   }

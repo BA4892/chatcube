@@ -316,7 +316,9 @@ export class WebSearchService {
     snapshot.enabled = enabled
     snapshot.searchEngine = this.parseSearchEngine(engine)
     snapshot.maxResults = this.normalizeResultCount(maxResults)
-    snapshot.timeout = this.normalizeTimeout(5000)
+    // 境外搜索 API (api.tavily.com / api.exa.ai / api.firecrawl.dev 等) 在国内连通性偏差,
+    // 5s 经常握手都没完成; 上调到 20s, 配合 HttpService 的 idempotent 重试覆盖瞬时抖动。
+    snapshot.timeout = this.normalizeTimeout(20000)
     snapshot.autoTestConnection = true
 
     // 动态加载所有引擎的配置字段
@@ -439,7 +441,13 @@ export class WebSearchService {
   }
 
   private buildHttpOptions(timeout: number, controller: HttpRequestController | null): HttpRequestRuntimeOptions {
-    const options: HttpRequestRuntimeOptions = { timeout: this.normalizeTimeout(timeout) }
+    // idempotent: true —— 搜索引擎 / 网页抓取 API (Tavily/Brave/Exa/Metaso/Firecrawl 及 Bing 本地)
+    // 全部幂等, 显式声明允许 HttpService 在国内瞬时网络抖动 / 5xx 时自动重试一次。
+    // WebDAV PUT/DELETE 等有副作用的方法走自己的路径, 不复用这个 helper。
+    const options: HttpRequestRuntimeOptions = {
+      timeout: this.normalizeTimeout(timeout),
+      idempotent: true
+    }
     if (controller !== null) {
       options.controller = controller
     }
@@ -482,25 +490,16 @@ export class WebSearchService {
         console.info('WebSearchService', `Search query cleaned: "${query}" -> "${cleanedQuery}"`)
       }
 
-      // 天气类查询：强制使用更可解析/更权威站点，避免结果被“查/查重/天眼查”等噪声污染
-      let finalQuery = cleanedQuery
-      if (this.isWeatherIntent(cleanedQuery)) {
-        finalQuery = this.buildWeatherSiteQuery(cleanedQuery)
-        if (finalQuery !== cleanedQuery) {
-          console.info('WebSearchService', `Weather query rewritten: "${cleanedQuery}" -> "${finalQuery}"`)
-        }
-      }
-
       if (this.isCancelled(controller, cancelCheck)) {
-        return this.buildCancelledSearchResult(finalQuery, this.resolvePreferredEngineName(runtime))
+        return this.buildCancelledSearchResult(cleanedQuery, this.resolvePreferredEngineName(runtime))
       }
 
       // 引擎分发（Map 替代 if-else 链）
       const engineHandler = this.searchHandlers.get(runtime.searchEngine)
       if (engineHandler !== undefined) {
-        return await engineHandler(finalQuery, runtime, controller, cancelCheck)
+        return await engineHandler(cleanedQuery, runtime, controller, cancelCheck)
       }
-      return await this.bingSearchEnhanced(finalQuery, runtime, controller, cancelCheck)
+      return await this.bingSearchEnhanced(cleanedQuery, runtime, controller, cancelCheck)
     } finally {
       this.releaseRequestController(requestId)
     }
@@ -529,47 +528,9 @@ export class WebSearchService {
       return this.buildCancelledSearchResult(query, 'Bing(local)')
     }
 
-    const weatherIntent = this.isWeatherIntent(query)
-
-    // 天气类查询：如果强制站点仍然无结果，回退到备用站点再搜一次
-    let effectiveResponse = response
-    if (effectiveResponse.results.length === 0 && weatherIntent) {
-      const fallbackQuery = this.buildWeatherFallbackQuery(query)
-      if (fallbackQuery !== '' && fallbackQuery !== query) {
-        const fallbackResp = await this.bingSearchInternal(fallbackQuery, runtime.maxResults, runtime, controller, cancelCheck)
-        if (fallbackResp.success && fallbackResp.results.length > 0) {
-          effectiveResponse = fallbackResp
-        }
-      }
-    }
-
-    if (this.isCancelled(controller, cancelCheck)) {
-      return this.buildCancelledSearchResult(query, 'Bing(local)')
-    }
-
-    // 天气/实时数据类问题：抓取网页正文摘要供模型提取数值
-    let enriched = ''
-    if (weatherIntent && effectiveResponse.results.length > 0) {
-      enriched = await this.enrichTopPagesForAI(effectiveResponse.results, 2, runtime, controller, cancelCheck)
-      if (enriched === '') {
-        const fallbackQuery = this.buildWeatherFallbackQuery(effectiveResponse.query)
-        if (fallbackQuery !== '' && fallbackQuery !== effectiveResponse.query) {
-          const fallbackResp = await this.bingSearchInternal(fallbackQuery, runtime.maxResults, runtime, controller, cancelCheck)
-          if (fallbackResp.success && fallbackResp.results.length > 0) {
-            effectiveResponse = fallbackResp
-            enriched = await this.enrichTopPagesForAI(effectiveResponse.results, 2, runtime, controller, cancelCheck)
-          }
-        }
-      }
-    }
-
-    if (this.isCancelled(controller, cancelCheck)) {
-      return this.buildCancelledSearchResult(query, 'Bing(local)')
-    }
-
     const references: SearchReference[] = []
-    for (let i = 0; i < effectiveResponse.results.length; i++) {
-      const item = effectiveResponse.results[i]
+    for (let i = 0; i < response.results.length; i++) {
+      const item = response.results[i]
       references.push(new SearchReference(
         `ref_${Date.now()}_${i}`,
         item.title,
@@ -578,17 +539,11 @@ export class WebSearchService {
       ))
     }
 
-    let contentForAI = this.buildContentForAI(effectiveResponse.results)
-
-    if (weatherIntent && enriched !== '') {
-      contentForAI += '\n' + enriched
-    }
-
-    contentForAI = this.limitPromptContent(contentForAI, 6000)
+    const contentForAI = this.limitPromptContent(this.buildContentForAI(response.results), 6000)
 
     return new SearchResult(
       true,
-      effectiveResponse.query,
+      response.query,
       'Bing(local)',
       references,
       contentForAI,
@@ -1895,130 +1850,6 @@ export class WebSearchService {
     return ''
   }
 
-  private buildWeatherSiteQuery(query: string): string {
-    if (query.includes('site:')) {
-      return query
-    }
-    const city = this.extractCityFromWeatherQuery(query)
-    const base = city !== '' ? `${city} 天气预报` : '天气预报'
-    return `${base} site:weather.com.cn`
-  }
-
-  private buildWeatherFallbackQuery(query: string): string {
-    if (query.includes('site:')) {
-      const withoutSite = query.replace(/site:[^\s]+/g, '').trim()
-      const city = this.extractCityFromWeatherQuery(withoutSite)
-      const base = city !== '' ? `${city} 天气预报` : '天气预报'
-      return `${base} site:nmc.cn`
-    }
-    const city = this.extractCityFromWeatherQuery(query)
-    const base = city !== '' ? `${city} 天气预报` : '天气预报'
-    return `${base} site:nmc.cn`
-  }
-
-  private extractCityFromWeatherQuery(query: string): string {
-    let q = query.trim().replace(/\s+/g, ' ')
-    q = q.replace(/site:[^\s]+/g, '').trim()
-    q = q.replace(/(今天|今日|现在|当前|明天|后天)/g, '').trim()
-
-    const match = /^(.*?)(?:的)?(?:天气预报|天气|气温|温度)/.exec(q)
-    if (match && match[1] !== undefined) {
-      const city = match[1].trim()
-      if (city !== '') {
-        return city
-      }
-    }
-
-    const parts = q.split(' ')
-    return parts.length > 0 ? parts[0].trim() : ''
-  }
-
-  private isWeatherIntent(text: string): boolean {
-    const t = text.replace(/\s+/g, '')
-    if (t.includes('weather.com.cn') || t.includes('nmc.cn')) {
-      return true
-    }
-    const keywords: string[] = [
-      '天气', '天气预报', '气温', '温度', '降雨', '降水', '湿度', '风速', '风力', '空气质量', 'AQI', 'PM2.5'
-    ]
-    for (let i = 0; i < keywords.length; i++) {
-      if (t.includes(keywords[i])) {
-        return true
-      }
-    }
-    return false
-  }
-
-  private async enrichTopPagesForAI(
-    results: SearchResultItem[],
-    maxFetch: number,
-    runtime: SearchRuntimeConfigSnapshot,
-    controller: HttpRequestController | null,
-    cancelCheck?: () => boolean
-  ): Promise<string> {
-    const candidates: SearchResultItem[] = []
-    for (let i = 0; i < results.length; i++) {
-      if (candidates.length >= maxFetch) {
-        break
-      }
-      const item = results[i]
-      if (item.url === '' || this.isBingInternalUrl(item.url)) {
-        continue
-      }
-      candidates.push(item)
-    }
-
-    if (candidates.length === 0) {
-      return ''
-    }
-
-    const tasks: Promise<string>[] = []
-    for (let i = 0; i < candidates.length; i++) {
-      tasks.push(this.fetchSinglePageSummary(candidates[i].url, runtime, controller, cancelCheck))
-    }
-
-    const summaries = await Promise.all(tasks)
-    const validSummaries: string[] = []
-    for (let i = 0; i < summaries.length; i++) {
-      if (summaries[i] !== '') {
-        validSummaries.push(summaries[i])
-      }
-    }
-
-    return validSummaries.join('\n').trim()
-  }
-
-  private async fetchSinglePageSummary(
-    url: string,
-    runtime: SearchRuntimeConfigSnapshot,
-    controller: HttpRequestController | null,
-    cancelCheck?: () => boolean
-  ): Promise<string> {
-    if (this.isCancelled(controller, cancelCheck)) {
-      return ''
-    }
-
-    try {
-      const webResult = await this.fetchUrlContentInternal(url, runtime.timeout, controller, cancelCheck)
-      if (!webResult.success) {
-        return ''
-      }
-      if (webResult.content.trim() === '' || webResult.content.includes('无法提取正文内容')) {
-        return ''
-      }
-
-      let text = webResult.content
-      const maxLen = 1200
-      if (text.length > maxLen) {
-        text = text.substring(0, maxLen) + '...'
-      }
-
-      return `抓取到的网页正文摘要（用于提取具体数据）:\n标题: ${webResult.title}\n来源: ${webResult.url}\n${text}`
-    } catch (_error) {
-      return ''
-    }
-  }
-
   private limitPromptContent(content: string, maxChars: number): string {
     if (content.length <= maxChars) {
       return content
@@ -2118,9 +1949,16 @@ export class WebSearchService {
       return new BingSearchResponse(false, query, [], '请求已取消')
     }
 
+    // 反指纹: 带上 Referer + 搜索 cookie, 覆盖默认的 brotli 编码 (HarmonyOS http kit 对 br 解码不稳)
+    const bingHeaders: Record<string, string> = {
+      'Referer': 'https://www.bing.com/',
+      'Cookie': 'SRCHHPGUSR=ULSR=1',
+      'Accept-Encoding': 'gzip, deflate',
+      'Accept-Charset': 'utf-8'
+    }
     const response = await this.httpService.get(
       searchUrl,
-      {},
+      bingHeaders,
       this.buildHttpOptions(runtime.timeout, controller)
     )
 
