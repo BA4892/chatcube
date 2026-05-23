@@ -7,7 +7,10 @@ import {
   AIApiService,
   AIApiConfig,
   RequestMessage,
-  ToolCallDelta
+  ToolCallDelta,
+  BuiltInResponsesToolSpec,
+  HostedResponsesToolEvent,
+  HostedResponsesToolEventKind
 } from '../services/AIApiService'
 import { getAppStateManager, AppStateManager } from './AppStateManager'
 import { getAITaskService, AITaskService } from '../services/AITaskService'
@@ -15,7 +18,7 @@ import { getAttachmentStorageService, AttachmentStorageService } from '../servic
 import { getToolExecutionService, ToolExecutionService, ToolExecutionContext, isCancelledToolResult, CancelledToolResultInfo } from '../services/ToolExecutionService'
 import { getProviderViewModel, ProviderViewModel } from './ProviderViewModel'
 import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '../services/AssistantService'
-import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport } from '../models/ChatModels'
+import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
 import { WebSearchResult, SearchResult } from '../services/WebSearchService'
 import { http } from '@kit.NetworkKit'
 import { getEffectiveApiKey } from '../config/PresetProviders'
@@ -120,6 +123,17 @@ export class ChatViewModel {
   private activeRequests: Map<string, ActiveRequestInfo> = new Map()
   // 待持久化 AI 消息 Map（key = messageId，支持多个并发请求）
   private pendingAIMessages: Map<string, PendingAIMessageInfo> = new Map()
+  // OpenAI Responses 内置搜索 in-flight 调用集合 (key = aiMessage.id, value = 当前未结束的 item.id 集合)。
+  // OpenAI 在一次会话里会自主触发多轮 web_search, 用计数器去抖避免 isSearching 在卡片上反复 true/false 闪烁。
+  private inflightHostedSearchCalls: Map<string, Set<string>> = new Map()
+  // hosted web_search open_page action (模型读取具体 URL, 区别于 search query) 的 itemId 记忆集合。
+  // open_page 在用户感知里更像 reasoning 段内部的"参考 URL", 而非独立"搜索步骤";
+  // 命中即 (a) 不创建独立 hws_ part (b) 不入 inflight (c) 不封口当前 reasoning,
+  // 让 reasoning 不被 open_page 切断。STARTED 阶段拿到 url 入集合, SEARCHING/COMPLETED 阶段查集合走快速 return。
+  private openPageHostedItemIds: Map<string, Set<string>> = new Map()
+  // hosted image_generation_call 同样按 aiMessage.id -> Set<itemKey> 去抖,
+  // 让多张图生成时 parts 上每张图各占一条 timeline 记录, 也避免重复 emit started 时 part 反复重建。
+  private inflightHostedImageGenCalls: Map<string, Set<string>> = new Map()
   // 标题生成回调
   private titleCallbacks: TitleGenerationCallbacks | null = null
   // 最大重试次数
@@ -385,6 +399,10 @@ export class ChatViewModel {
 
   private clearPendingAIMessageIfMatches(messageId: string): void {
     this.pendingAIMessages.delete(messageId)
+    // hosted 搜索去抖集合在请求结束时一并释放, 避免泄漏
+    this.inflightHostedSearchCalls.delete(messageId)
+    this.openPageHostedItemIds.delete(messageId)
+    this.inflightHostedImageGenCalls.delete(messageId)
   }
 
   private markPendingAIMessagePersisted(messageId: string): void {
@@ -1013,7 +1031,9 @@ export class ChatViewModel {
     apiPath?: string,  // 可选的自定义 API 路径
     customHeadersJson?: string,
     openaiTransport?: OpenAITransport,
-    maxOutputTokens?: number
+    maxOutputTokens?: number,
+    // OpenAI Responses 内置工具 (web_search / image_generation), 仅在 transport=responses 时下发
+    builtInResponsesTools?: BuiltInResponsesToolSpec[]
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -1306,13 +1326,30 @@ export class ChatViewModel {
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string, isPartial: boolean) => {
         if (cancelled) {
+          return
+        }
+        // P0: 渐进图(partial)先不落盘以免污染相册，等最终图; P2 再补 UI 预览。
+        if (isPartial) {
           return
         }
         this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
       },
-      reasoningLevel
+      reasoningLevel,
+      builtInResponsesTools,
+      (refs: SearchReference[]) => {
+        if (cancelled) {
+          return
+        }
+        this.appendBuiltinSearchReferences(aiMessage, refs, onAIMessageUpdated)
+      },
+      (event: HostedResponsesToolEvent) => {
+        if (cancelled) {
+          return
+        }
+        this.handleHostedResponsesToolEvent(aiMessage, event, onAIMessageUpdated)
+      }
     )
 
     // 注册到活跃请求 Map
@@ -1612,8 +1649,11 @@ ${webContext.content}
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string, isPartial: boolean) => {
         if (cancelled) {
+          return
+        }
+        if (isPartial) {
           return
         }
         this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
@@ -1950,8 +1990,12 @@ ${limitedSearchContext}
           this.appendStreamedReasoning(aiMessage, throttledContent, onAIMessageUpdated)
         })
       },
-      (base64Data: string, mimeType: string) => {
+      (base64Data: string, mimeType: string, isPartial: boolean) => {
         if (cancelled) {
+          return
+        }
+        // P0: 渐进图(partial)先不落盘以免污染相册，等最终图; P2 再补 UI 预览。
+        if (isPartial) {
           return
         }
         this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
@@ -1992,7 +2036,9 @@ ${limitedSearchContext}
     toolCallbacks?: ToolCallCallbacks,
     apiPath?: string,
     customHeadersJson?: string,
-    openaiTransport?: OpenAITransport
+    openaiTransport?: OpenAITransport,
+    // OpenAI Responses 内置工具 (web_search / image_generation), 与 function tools 可并存
+    builtInResponsesTools?: BuiltInResponsesToolSpec[]
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -2182,7 +2228,8 @@ ${limitedSearchContext}
       (v: boolean) => { hasReceivedFirstChunk = v },
       localFirstChunkThrottle,
       localContentThrottle,
-      localReasoningThrottle
+      localReasoningThrottle,
+      builtInResponsesTools
     )
   }
 
@@ -2256,6 +2303,364 @@ ${limitedSearchContext}
         console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
       })
     pendingImageSaves.push(task)
+  }
+
+  // OpenAI Responses 内置搜索引用累积:
+  // url_citation 流式按 annotation 增量到达, 这里按 url 去重 push 到 aiMessage.searchReferences。
+  // 来源标记 'openai_builtin', 引擎名固定为 'OpenAI Web Search', 让 SearchReferenceCard 走现有展示。
+  private appendBuiltinSearchReferences(
+    aiMessage: ChatMessage,
+    refs: SearchReference[],
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    if (refs.length === 0) {
+      return
+    }
+    let changed = false
+    for (let i = 0; i < refs.length; i++) {
+      const ref = refs[i]
+      let exists = false
+      for (let j = 0; j < aiMessage.searchReferences.length; j++) {
+        if (aiMessage.searchReferences[j].url === ref.url) {
+          exists = true
+          break
+        }
+      }
+      if (exists) {
+        continue
+      }
+      aiMessage.searchReferences.push(ref)
+      changed = true
+    }
+    if (!changed) {
+      return
+    }
+    if (aiMessage.searchSource === '') {
+      aiMessage.searchSource = 'openai_builtin'
+    }
+    if (aiMessage.searchEngine === '') {
+      aiMessage.searchEngine = 'OpenAI Web Search'
+    }
+    // isSearching 开关由 handleHostedResponsesToolEvent 通过 in-flight 计数器统一管理,
+    // 引用累积阶段不要主动关; 否则 OpenAI 在两次搜索之间下发首批 annotation 会导致卡片瞬时关闭。
+    onAIMessageUpdated(aiMessage)
+  }
+
+  // OpenAI Responses 内置工具 (web_search / image_generation) 状态事件处理。
+  //
+  // 设计要点:
+  // - 每次 web_search_call 创建一个独立的 TOOL part 写入 aiMessage.parts (toolCallId='hws_<itemId>'),
+  //   后续 in_progress / searching / completed 只更新这一个 part. 保证 "新一轮搜索 ≠ 覆盖老结果",
+  //   timeline 上能逐条看到每一次搜索的 query/状态, 不再使用 message.searchQuery 字符串拼接的低质量呈现。
+  // - aiMessage.isSearching 通过 in-flight itemId 集合做计数: 第一次 STARTED 才置 true, 最后一次
+  //   COMPLETED 才置 false, 避免多轮搜索时顶层 "searching" 标记反复闪烁。
+  // - aiMessage.searchSource / searchEngine 只在首次置入, 不会被 query 覆盖; searchQuery 字段保持为空,
+  //   让 SearchingIndicatorInline 不再走 fallback 文案 (parts 非空时也不显示该 indicator).
+  // - 生图事件先打日志, P2 再串 timeline / partial 预览。
+  private handleHostedResponsesToolEvent(
+    aiMessage: ChatMessage,
+    event: HostedResponsesToolEvent,
+    onAIMessageUpdated: (message: ChatMessage) => void
+  ): void {
+    const kind = event.kind
+    if (kind === HostedResponsesToolEventKind.WEB_SEARCH_STARTED ||
+      kind === HostedResponsesToolEventKind.WEB_SEARCH_SEARCHING) {
+      // itemId 可能为空 (旧版兜底), 用 outputIndex 拼接保持唯一; 若都缺则单次性 fallback
+      const key = event.itemId !== '' ? event.itemId :
+        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      // open_page action 识别: action.type='open_page' 时 SSE 给的是 url 不是 query。
+      // 这种调用在用户感知里更像 reasoning 段内的参考 URL, 单独 timeline 行会把 reasoning 切断,
+      // 改为只追加到 searchReferences 让顶部引用卡片可见, parts 不动 → reasoning 自然合并。
+      const url = event.url.trim()
+      const query = event.query.trim()
+      const isOpenPage = query === '' && url !== ''
+      if (isOpenPage || this.isOpenPageRecorded(aiMessage.id, key)) {
+        if (isOpenPage) {
+          this.rememberOpenPageItem(aiMessage.id, key)
+          const ref = new SearchReference(`hosted_openpage_${key}`, '', url, '')
+          this.appendBuiltinSearchReferences(aiMessage, [ref], onAIMessageUpdated)
+          console.info('ChatViewModel',
+            `[ResponsesHostedTool] ${kind} open_page item=${event.itemId} url=${url}`)
+        }
+        return
+      }
+      let inflight = this.inflightHostedSearchCalls.get(aiMessage.id)
+      if (inflight === undefined) {
+        inflight = new Set<string>()
+        this.inflightHostedSearchCalls.set(aiMessage.id, inflight)
+      }
+      const wasEmpty = inflight.size === 0
+      inflight.add(key)
+      let needUpdate = false
+      if (wasEmpty && !aiMessage.isSearching) {
+        aiMessage.isSearching = true
+        if (aiMessage.searchSource === '') {
+          aiMessage.searchSource = 'openai_builtin'
+        }
+        if (aiMessage.searchEngine === '') {
+          aiMessage.searchEngine = 'OpenAI Web Search'
+        }
+        needUpdate = true
+      }
+      // 每次 web_search_call 落一个独立 TOOL part, 状态置 RUNNING
+      if (this.upsertHostedWebSearchPart(aiMessage, key, event.query, event.url, ToolPartStatus.RUNNING)) {
+        needUpdate = true
+      }
+      if (needUpdate) {
+        onAIMessageUpdated(aiMessage)
+      }
+    } else if (kind === HostedResponsesToolEventKind.WEB_SEARCH_COMPLETED) {
+      const key = event.itemId !== '' ? event.itemId :
+        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      // COMPLETED 阶段也按 open_page 识别一次, 兜底 STARTED 里 url 漏掉的情况 (有些版本 action 只在 done 上挂)
+      const url = event.url.trim()
+      const query = event.query.trim()
+      const isOpenPageNow = query === '' && url !== ''
+      if (isOpenPageNow || this.isOpenPageRecorded(aiMessage.id, key)) {
+        if (isOpenPageNow) {
+          this.rememberOpenPageItem(aiMessage.id, key)
+          const ref = new SearchReference(`hosted_openpage_${key}`, '', url, '')
+          this.appendBuiltinSearchReferences(aiMessage, [ref], onAIMessageUpdated)
+        }
+        console.info('ChatViewModel',
+          `[ResponsesHostedTool] ${kind} open_page item=${event.itemId} url=${url}`)
+        this.forgetOpenPageItem(aiMessage.id, key)
+        return
+      }
+      // done 阶段补一次 query/url, 兜底 added 阶段没有挂载 action 的情况; 同时把状态置 SUCCEEDED
+      const partChanged = this.upsertHostedWebSearchPart(
+        aiMessage, key, event.query, event.url, ToolPartStatus.SUCCEEDED
+      )
+      const inflight = this.inflightHostedSearchCalls.get(aiMessage.id)
+      if (inflight !== undefined) {
+        inflight.delete(key)
+        if (inflight.size === 0) {
+          this.inflightHostedSearchCalls.delete(aiMessage.id)
+          if (aiMessage.isSearching) {
+            aiMessage.isSearching = false
+            onAIMessageUpdated(aiMessage)
+          } else if (partChanged) {
+            onAIMessageUpdated(aiMessage)
+          }
+        } else if (partChanged) {
+          onAIMessageUpdated(aiMessage)
+        }
+      } else if (aiMessage.isSearching) {
+        // 兜底: 没有 in-flight 记录但状态仍是 searching, 直接关闭
+        aiMessage.isSearching = false
+        onAIMessageUpdated(aiMessage)
+      } else if (partChanged) {
+        onAIMessageUpdated(aiMessage)
+      }
+    } else if (kind === HostedResponsesToolEventKind.IMAGE_GENERATION_STARTED ||
+      kind === HostedResponsesToolEventKind.IMAGE_GENERATION_PARTIAL) {
+      // 生图 STARTED / PARTIAL: 落一个独立 TOOL part (toolCallId='hig_<itemId>') 让 timeline 显示 "生成图片中",
+      // 同时把 parts 撑非空, 把 MessageBubble TypingIndicator (Bubble Dots) 自然顶掉; 否则模型在该轮里若
+      // 不出 reasoning/text, parts 会一直空, Bubble Dots 会从生图开始一直转到 stream completed (复盘
+      // 2026-05-23 gpt-5.5 生图后 5 秒空转就是这条路径)。
+      const key = event.itemId !== '' ? event.itemId :
+        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      let inflight = this.inflightHostedImageGenCalls.get(aiMessage.id)
+      if (inflight === undefined) {
+        inflight = new Set<string>()
+        this.inflightHostedImageGenCalls.set(aiMessage.id, inflight)
+      }
+      inflight.add(key)
+      const changed = this.upsertHostedImageGenPart(aiMessage, key, ToolPartStatus.RUNNING, event.partialIndex)
+      console.info('ChatViewModel',
+        `[ResponsesHostedTool] ${kind} item=${event.itemId} output=${event.outputIndex} ` +
+        `partial=${event.partialIndex} inflight=${inflight.size} partChanged=${changed}`)
+      if (changed) {
+        onAIMessageUpdated(aiMessage)
+      }
+    } else if (kind === HostedResponsesToolEventKind.IMAGE_GENERATION_COMPLETED) {
+      // 生图 COMPLETED: 把 TOOL part 置 SUCCEEDED, 清掉 inflight 记录。
+      // 注意: 这里不动 aiMessage.isGenerating, 让 finalizeAIMessage 在 stream completed 时统一收;
+      // 但 parts 已经非空, Bubble Dots 不会再出现, 哪怕后续服务端继续 echo 几 MB base64 也不影响 UX。
+      const key = event.itemId !== '' ? event.itemId :
+        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      const partChanged = this.upsertHostedImageGenPart(aiMessage, key, ToolPartStatus.SUCCEEDED, -1)
+      const inflight = this.inflightHostedImageGenCalls.get(aiMessage.id)
+      let inflightSize = -1
+      if (inflight !== undefined) {
+        inflight.delete(key)
+        inflightSize = inflight.size
+        if (inflight.size === 0) {
+          this.inflightHostedImageGenCalls.delete(aiMessage.id)
+        }
+      }
+      console.info('ChatViewModel',
+        `[ResponsesHostedTool] ${kind} item=${event.itemId} output=${event.outputIndex} ` +
+        `inflight=${inflightSize} partChanged=${partChanged}`)
+      if (partChanged) {
+        onAIMessageUpdated(aiMessage)
+      }
+    } else {
+      console.info('ChatViewModel',
+        `[ResponsesHostedTool] ${kind} item=${event.itemId} output=${event.outputIndex} partial=${event.partialIndex}`)
+    }
+  }
+
+  // 每次 hosted web_search_call 占用一个独立的 TOOL part, key=hws_<itemId>。
+  // - 首次出现: 在 parts 末尾追加 (会先封口前序 reasoning), 不复用任何已有 part
+  // - 后续事件: 仅在 part 上覆盖 query/url/status, 不影响其它 part
+  // 返回 true 表示真的有改动, 调用方可据此决定是否触发 UI 刷新。
+  private upsertHostedWebSearchPart(
+    aiMessage: ChatMessage,
+    itemKey: string,
+    query: string,
+    url: string,
+    status: string
+  ): boolean {
+    const partId = `hws_${itemKey}`
+    const trimmedQuery = query.trim()
+    const trimmedUrl = url.trim()
+
+    let part: MessagePart | null = null
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const candidate = aiMessage.parts[i]
+      if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === partId) {
+        part = candidate
+        break
+      }
+    }
+
+    let changed = false
+    if (part === null) {
+      this.finishTrailingReasoningPart(aiMessage)
+      part = new MessagePart(MessagePartKind.TOOL)
+      part.toolCallId = partId
+      // 'web_search' 已经被 isSearchWebFunctionName 识别为搜索类工具, 复用 timeline 已有搜索 step 渲染
+      part.toolName = 'web_search'
+      part.toolDisplayName = trimmedQuery !== '' ? trimmedQuery :
+        (trimmedUrl !== '' ? trimmedUrl : 'OpenAI Web Search')
+      part.toolArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl)
+      part.toolSourceType = ToolSourceType.BUILTIN
+      part.toolSourceLabel = 'OpenAI Web Search'
+      part.toolPermissionLevel = ToolPermissionLevel.READ
+      part.toolStatus = status
+      // 注意: hosted url_citation 没有 search_call_id 归属, 这里不写 toolSearchReferences,
+      // 让 message.searchReferences 聚合卡片兜底展示全部引用。
+      aiMessage.parts = aiMessage.parts.concat([part])
+      changed = true
+    } else {
+      // 已有 part: 增量补 query / url / 完成状态; 不允许把更精确的 query 退回到默认占位文案
+      const nextDisplayName = trimmedQuery !== '' ? trimmedQuery :
+        (trimmedUrl !== '' ? trimmedUrl : part.toolDisplayName)
+      if (nextDisplayName !== part.toolDisplayName) {
+        part.toolDisplayName = nextDisplayName
+        changed = true
+      }
+      if (trimmedQuery !== '' || trimmedUrl !== '') {
+        const nextArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl)
+        if (nextArguments !== part.toolArguments) {
+          part.toolArguments = nextArguments
+          changed = true
+        }
+      }
+      if (part.toolStatus !== status) {
+        part.toolStatus = status
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  // open_page itemId 跨事件阶段记忆: STARTED 阶段判定后入集合, SEARCHING/COMPLETED 阶段查集合走快路径。
+  // 这里只做"记/查/忘"三个 primitive, 业务策略在 handleHostedResponsesToolEvent 里。
+  private isOpenPageRecorded(messageId: string, itemKey: string): boolean {
+    const set = this.openPageHostedItemIds.get(messageId)
+    return set !== undefined && set.has(itemKey)
+  }
+
+  private rememberOpenPageItem(messageId: string, itemKey: string): void {
+    let set = this.openPageHostedItemIds.get(messageId)
+    if (set === undefined) {
+      set = new Set<string>()
+      this.openPageHostedItemIds.set(messageId, set)
+    }
+    set.add(itemKey)
+  }
+
+  private forgetOpenPageItem(messageId: string, itemKey: string): void {
+    const set = this.openPageHostedItemIds.get(messageId)
+    if (set === undefined) {
+      return
+    }
+    set.delete(itemKey)
+    if (set.size === 0) {
+      this.openPageHostedItemIds.delete(messageId)
+    }
+  }
+
+  // 每个 hosted image_generation_call 占一个独立 TOOL part, key=hig_<itemId>。
+  // - 首次出现: 在 parts 末尾追加 (会先封口前序 reasoning), status=RUNNING
+  // - 后续 partial / completed: 仅更新 toolStatus 与 partial 序号; 不重建 part
+  // 关键作用: 把 aiMessage.parts 撑非空, 顶掉 MessageBubble 的 Bubble Dots 等待动画。
+  // 返回 true 表示有改动, 调用方据此决定是否触发 UI 刷新。
+  private upsertHostedImageGenPart(
+    aiMessage: ChatMessage,
+    itemKey: string,
+    status: string,
+    partialIndex: number
+  ): boolean {
+    const partId = `hig_${itemKey}`
+
+    let part: MessagePart | null = null
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const candidate = aiMessage.parts[i]
+      if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === partId) {
+        part = candidate
+        break
+      }
+    }
+
+    let changed = false
+    if (part === null) {
+      this.finishTrailingReasoningPart(aiMessage)
+      part = new MessagePart(MessagePartKind.TOOL)
+      part.toolCallId = partId
+      part.toolName = 'image_generation'
+      part.toolDisplayName = 'OpenAI Image Generation'
+      part.toolArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
+      part.toolSourceType = ToolSourceType.BUILTIN
+      part.toolSourceLabel = 'OpenAI Image Generation'
+      part.toolPermissionLevel = ToolPermissionLevel.READ
+      part.toolStatus = status
+      aiMessage.parts = aiMessage.parts.concat([part])
+      changed = true
+    } else {
+      const nextArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
+      if (nextArguments !== part.toolArguments) {
+        part.toolArguments = nextArguments
+        changed = true
+      }
+      if (part.toolStatus !== status) {
+        part.toolStatus = status
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  // 构造 hosted web_search part 的 toolArguments JSON, 让 MessageBubble.extractToolStepSearchQuery
+  // 能从 query 字段读出关键词显示在 step 标题。url 也带上, 方便后续展示 open_page 动作。
+  private buildHostedWebSearchArguments(query: string, url: string): string {
+    if (query === '' && url === '') {
+      return '{}'
+    }
+    interface HostedSearchArgs {
+      query?: string
+      url?: string
+    }
+    const payload: HostedSearchArgs = {}
+    if (query !== '') {
+      payload.query = query
+    }
+    if (url !== '') {
+      payload.url = url
+    }
+    return JSON.stringify(payload)
   }
 
   private async waitForAIGeneratedImageSaves(pendingImageSaves: Promise<void>[]): Promise<void> {
@@ -2378,7 +2783,8 @@ ${limitedSearchContext}
     setHasReceivedFirstChunk: (v: boolean) => void,
     localFirstChunkThrottle: ThrottleUtil,
     localContentThrottle: ThrottleUtil,
-    localReasoningThrottle: ThrottleUtil
+    localReasoningThrottle: ThrottleUtil,
+    builtInResponsesTools?: BuiltInResponsesToolSpec[]
   ): Promise<void> {
     let toolStepIndex = initialToolStepIndex
     const pendingImageSaves: Promise<void>[] = []
@@ -2606,8 +3012,11 @@ ${limitedSearchContext}
               appendRoundReasoning(throttledContent)
             })
           },
-          (base64Data: string, mimeType: string) => {
+          (base64Data: string, mimeType: string, isPartial: boolean) => {
             if (isCancelledFn()) {
+              return
+            }
+            if (isPartial) {
               return
             }
             this.trackAIGeneratedImageSave(pendingImageSaves, base64Data, mimeType, aiMessage, onAIMessageUpdated)
@@ -2626,6 +3035,19 @@ ${limitedSearchContext}
               upsertRoundToolPart(toolCallDeltas[i])
             }
             onAIMessageUpdated(aiMessage)
+          },
+          builtInResponsesTools,
+          (refs: SearchReference[]) => {
+            if (isCancelledFn()) {
+              return
+            }
+            this.appendBuiltinSearchReferences(aiMessage, refs, onAIMessageUpdated)
+          },
+          (event: HostedResponsesToolEvent) => {
+            if (isCancelledFn()) {
+              return
+            }
+            this.handleHostedResponsesToolEvent(aiMessage, event, onAIMessageUpdated)
           }
         )
 

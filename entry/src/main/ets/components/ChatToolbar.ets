@@ -3,7 +3,7 @@
  * 包含工具选择入口、推理开关等功能按钮
  */
 
-import { ReasoningLevel } from '../models/ChatModels'
+import { OPENAI_BUILTIN_SEARCH_ENGINE_ID, ReasoningLevel } from '../models/ChatModels'
 import { ReasoningControlMode } from '../services/registry/CompatibilityResolver'
 import { getAppUiState } from '../state/AppUiState'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
@@ -27,6 +27,11 @@ export struct ChatToolbar {
   @Param toolSelectionAvailable: boolean = false
   @Param hasSelectedTools: boolean = false
   @Event onOpenTools: () => void = (): void => {}
+  // OpenAI Responses 内置生图 (hosted image_generation tool) 开关
+  // 仅在当前 provider/model 满足 transport=RESPONSES 且能走 hosted 工具时显示
+  @Param imageGenAvailable: boolean = false
+  @Param imageGenEnabled: boolean = false
+  @Event onImageGenToggle: () => void = (): void => {}
   // 当前模型是否支持推理
   @Param reasoningAvailable: boolean = false
   @Param reasoningControlMode: ReasoningControlMode = ReasoningControlMode.NONE
@@ -97,8 +102,13 @@ export struct ChatToolbar {
     return pickLocalizedText('联网', 'Web search')
   }
 
+  // chip 内 label 的最大宽度。超出走 ellipsis, 但因为整个工具栏外层是水平 Scroll,
+  // 用户可以左右滑看完整名字, 不必再像旧版那样为了塞下 4 个 chip 把每个 label 卡到 96vp。
+  private readonly chipLabelMaxWidth: number = 140
+
   build() {
-    Row() {
+    Scroll() {
+      Row() {
       if (this.webSearchAvailable) {
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Row() {
@@ -113,7 +123,7 @@ export struct ChatToolbar {
               .margin({ left: 4 })
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .constraintSize({ maxWidth: 96 })
+              .constraintSize({ maxWidth: this.chipLabelMaxWidth })
 
             SymbolGlyph($r('sys.symbol.chevron_down'))
               .fontSize(12)
@@ -137,6 +147,37 @@ export struct ChatToolbar {
           offset: { x: 0, y: 8 },
           backgroundColor: this.themeSurface,
           backgroundBlurStyle: BlurStyle.Regular
+        })
+      }
+
+      if (this.imageGenAvailable) {
+        Button({ type: ButtonType.Capsule, stateEffect: false }) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.picture_star_fill'))
+              .fontSize(16)
+              .fontColor([this.imageGenEnabled ? this.themePrimary : $r('app.color.text_secondary')])
+
+            Text(pickLocalizedText('生图', 'Image'))
+              .fontSize(14)
+              .fontColor(this.imageGenEnabled ? this.themePrimary : $r('app.color.text_secondary'))
+              .fontWeight(this.imageGenEnabled ? FontWeight.Medium : FontWeight.Regular)
+              .margin({ left: 4 })
+          }
+        }
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .borderRadius(16)
+        .backgroundColor(this.getChipBackgroundColor())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
+        .border({
+          width: 1,
+          color: this.imageGenEnabled ? this.getActiveChipBorderColor() : this.getInactiveChipBorderColor()
+        })
+        .shadow({ radius: 10, color: this.getChipShadowColor(), offsetX: 0, offsetY: 2 })
+        .margin({ left: this.webSearchAvailable ? 8 : 0 })
+        .animation({ duration: 200, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.onImageGenToggle()
         })
       }
 
@@ -164,7 +205,7 @@ export struct ChatToolbar {
           color: this.hasSelectedTools ? this.getActiveChipBorderColor() : this.getInactiveChipBorderColor()
         })
         .shadow({ radius: 10, color: this.getChipShadowColor(), offsetX: 0, offsetY: 2 })
-        .margin({ left: this.webSearchAvailable ? 8 : 0 })
+        .margin({ left: (this.webSearchAvailable || this.imageGenAvailable) ? 8 : 0 })
         .animation({ duration: 200, curve: Curve.EaseOut })
         .onClick(() => {
           this.onOpenTools()
@@ -212,9 +253,15 @@ export struct ChatToolbar {
         })
       }
 
-      Blank()
+      }
+      .height(32)
     }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
     .width('100%')
+    .height(32)
+    .align(Alignment.Start)
     .padding({ left: 4, right: 4 })
     .margin({ bottom: 8 })
   }
@@ -266,12 +313,23 @@ export struct ChatToolbar {
     }
   }
 
+  // OpenAI 内置搜索项右侧加一个灰色 labelInfo 标签 (中文"内置" / 英文"Built-in"),
+  // 让用户在菜单里一眼区分"模型自己调用的搜索 / 我自己配的外部搜索 API",
+  // 避免误以为内置搜索也走 Bing/Tavily 那条带 API Key 的路径。
+  private getEngineMenuLabelInfo(engineId: string): string {
+    if (engineId === OPENAI_BUILTIN_SEARCH_ENGINE_ID) {
+      return pickLocalizedText('内置', 'Built-in')
+    }
+    return ''
+  }
+
   @Builder
   private WebSearchEngineMenuItem(engineId: string, label: string) {
     if (this.webSearchEnabled && this.activeSearchEngineId === engineId) {
       MenuItem({
         startIcon: $r('sys.symbol.checkmark'),
-        content: label
+        content: label,
+        labelInfo: this.getEngineMenuLabelInfo(engineId)
       })
         .contentFont({ size: 14 })
         .onClick(() => {
@@ -279,7 +337,8 @@ export struct ChatToolbar {
         })
     } else {
       MenuItem({
-        content: label
+        content: label,
+        labelInfo: this.getEngineMenuLabelInfo(engineId)
       })
         .contentFont({ size: 14 })
         .onClick(() => {

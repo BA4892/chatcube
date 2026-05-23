@@ -11,6 +11,7 @@ import {
   ToolCall,
   OpenAITransport
 } from '../models/ChatModels'
+import { SearchReference } from '../models/SearchReference'
 import {
   AnthropicAuthStrategy,
   CompatibilityProviderInfo,
@@ -175,11 +176,58 @@ interface OpenAITool {
   function: OpenAIToolFunction
 }
 
+// OpenAI Responses 工具定义
+// type === 'function' 时使用 name/description/parameters
+// type === 'web_search' 时可选 search_context_size / user_location
+// type === 'image_generation' 时可选 size/quality/output_format/background/partial_images
+export interface OpenAIResponsesUserLocation {
+  type?: string
+  city?: string
+  region?: string
+  country?: string
+  timezone?: string
+}
+
 interface OpenAIResponsesTool {
   type: string
-  name: string
-  description: string
-  parameters: object
+  // function 专用字段
+  name?: string
+  description?: string
+  parameters?: object
+  // web_search 专用
+  search_context_size?: string
+  user_location?: OpenAIResponsesUserLocation
+  // image_generation 专用
+  size?: string
+  quality?: string
+  output_format?: string
+  background?: string
+  partial_images?: number
+}
+
+// 用于聊天/任务层向 AIApiService 透传 OpenAI Responses 内置 (hosted) 工具配置
+// kind === 'web_search' / 'image_generation'
+export enum BuiltInResponsesToolKind {
+  WEB_SEARCH = 'web_search',
+  IMAGE_GENERATION = 'image_generation'
+}
+
+export class BuiltInResponsesToolSpec {
+  kind: BuiltInResponsesToolKind
+  // web_search 选项
+  searchContextSize?: string
+  searchUserLocation?: OpenAIResponsesUserLocation
+  // image_generation 选项
+  imageSize?: string
+  imageQuality?: string
+  imageOutputFormat?: string
+  imageBackground?: string
+  // 流式 image_generation 必须 ≥ 1, 默认 2
+  imagePartialImages?: number
+
+  constructor(kind: BuiltInResponsesToolKind) {
+    this.kind = kind
+  }
 }
 
 // OpenAI 工具调用接口（用于 API 响应）
@@ -250,6 +298,15 @@ interface OpenAIResponsesContentPart {
   detail?: string
 }
 
+// web_search_call item 上的 action 字段, OpenAI 会在 output_item.added/done 携带:
+//   { type: 'search', query: '...' }  或  { type: 'open_page', url: '...' }
+// 用来给用户展示"这一轮在搜什么 / 在读什么"。
+interface OpenAIResponsesItemAction {
+  type?: string
+  query?: string
+  url?: string
+}
+
 interface OpenAIResponsesInputItem {
   type?: string
   role?: string
@@ -264,6 +321,8 @@ interface OpenAIResponsesInputItem {
   // reasoning item 专用字段(仅当 type === 'reasoning' 时出现)
   summary?: OpenAIResponsesReasoningSummaryItem[]
   encrypted_content?: string
+  // web_search_call 专用: 当次搜索动作(关键词或读取的页面)
+  action?: OpenAIResponsesItemAction
 }
 
 interface OpenAIResponsesReasoningConfig {
@@ -554,6 +613,18 @@ interface OpenAIResponsesResponse {
   usage?: OpenAIResponsesUsageInfo
 }
 
+// 流式 url_citation annotation
+interface OpenAIResponsesAnnotation {
+  type?: string
+  url?: string
+  title?: string
+  start_index?: number
+  end_index?: number
+  // file_citation 等其它类型预留, 当前不展示
+  file_id?: string
+  index?: number
+}
+
 interface OpenAIResponsesStreamEvent {
   type?: string
   delta?: string
@@ -563,6 +634,13 @@ interface OpenAIResponsesStreamEvent {
   item_id?: string
   item?: OpenAIResponsesInputItem
   error?: ApiError
+  // response.output_text.annotation.added 携带的引用
+  annotation?: OpenAIResponsesAnnotation
+  annotation_index?: number
+  content_index?: number
+  // response.image_generation_call.partial_image
+  partial_image_b64?: string
+  partial_image_index?: number
 }
 
 // OpenAI 流式响应块增量
@@ -655,6 +733,44 @@ interface GoogleStreamChunk {
   candidates: GoogleStreamCandidate[]
 }
 
+// OpenAI Responses 内置工具 (hosted tool) 运行事件类型
+export enum HostedResponsesToolEventKind {
+  WEB_SEARCH_STARTED = 'web_search_started',
+  WEB_SEARCH_SEARCHING = 'web_search_searching',
+  WEB_SEARCH_COMPLETED = 'web_search_completed',
+  IMAGE_GENERATION_STARTED = 'image_generation_started',
+  IMAGE_GENERATION_PARTIAL = 'image_generation_partial',
+  IMAGE_GENERATION_COMPLETED = 'image_generation_completed'
+}
+
+export class HostedResponsesToolEvent {
+  kind: HostedResponsesToolEventKind
+  itemId: string
+  outputIndex: number
+  // image_generation_partial 渐进序号, 其它事件为 -1
+  partialIndex: number
+  // web_search_call 携带: 当次搜索关键词 (action.type === 'search') 或读取的页面 url (action.type === 'open_page')
+  // 其它事件为 ''. 上层可用于在搜索卡片实时展示"在搜什么 / 在读什么".
+  query: string
+  url: string
+
+  constructor(
+    kind: HostedResponsesToolEventKind,
+    itemId: string = '',
+    outputIndex: number = -1,
+    partialIndex: number = -1,
+    query: string = '',
+    url: string = ''
+  ) {
+    this.kind = kind
+    this.itemId = itemId
+    this.outputIndex = outputIndex
+    this.partialIndex = partialIndex
+    this.query = query
+    this.url = url
+  }
+}
+
 // 流式响应块解析结果
 interface StreamChunkResult {
   content: string
@@ -662,9 +778,12 @@ interface StreamChunkResult {
   // 推理内容是否来自结构化字段（reasoning/reasoning_content/reasoning_details 等）。
   // 若来自 <think> 标签解析，则为 false/undefined（避免做 overlap 裁剪等“猜测”）。
   reasoningIsStructured?: boolean
-  // 图片数据（Gemini 生成图片时返回）
+  // 图片数据（Gemini 生成图片 / OpenAI Responses image_generation_call 都走这里）
   imageData?: string
   imageMimeType?: string
+  // image_generation_call.partial_image 返回的是阶段性预览，用于让 UI 区分“最终”与“渐进”图
+  imageIsPartial?: boolean
+  imagePartialIndex?: number
   // Function Calling 工具调用增量
   toolCallDeltas?: ToolCallDelta[]
   finishReason?: string
@@ -672,6 +791,10 @@ interface StreamChunkResult {
   // OpenAI Responses 一个完整的 reasoning output item(type='reasoning',含 encrypted_content)
   // 来自 response.output_item.done 事件,供 ChatViewModel 累积到 aiMessage.reasoningSignatureBlob
   reasoningItem?: OpenAIResponsesInputItem
+  // OpenAI Responses 内置工具 (web_search / image_generation) 状态事件
+  hostedToolEvent?: HostedResponsesToolEvent
+  // OpenAI Responses url_citation annotation 产生的引用增量
+  searchReferences?: SearchReference[]
 }
 
 // 工具调用增量（用于流式响应累积）
@@ -892,7 +1015,11 @@ export class AIApiService {
     return openaiTools
   }
 
-  private buildOpenAIResponsesTools(config: AIApiConfig, tools: ToolDefinition[]): OpenAIResponsesTool[] {
+  private buildOpenAIResponsesTools(
+    config: AIApiConfig,
+    tools: ToolDefinition[],
+    builtInTools?: BuiltInResponsesToolSpec[]
+  ): OpenAIResponsesTool[] {
     const responseTools: OpenAIResponsesTool[] = []
     for (let i = 0; i < tools.length; i++) {
       const tool = tools[i]
@@ -902,6 +1029,47 @@ export class AIApiService {
         description: tool.function.description,
         parameters: this.getToolParametersForProvider(config, tool)
       })
+    }
+    if (builtInTools !== undefined) {
+      for (let i = 0; i < builtInTools.length; i++) {
+        const spec = builtInTools[i]
+        if (spec.kind === BuiltInResponsesToolKind.WEB_SEARCH) {
+          const tool: OpenAIResponsesTool = { type: 'web_search' }
+          if (spec.searchContextSize !== undefined && spec.searchContextSize !== '') {
+            tool.search_context_size = spec.searchContextSize
+          }
+          if (spec.searchUserLocation !== undefined) {
+            tool.user_location = spec.searchUserLocation
+          }
+          responseTools.push(tool)
+        } else if (spec.kind === BuiltInResponsesToolKind.IMAGE_GENERATION) {
+          const tool: OpenAIResponsesTool = { type: 'image_generation' }
+          if (spec.imageSize !== undefined && spec.imageSize !== '') {
+            tool.size = spec.imageSize
+          }
+          if (spec.imageQuality !== undefined && spec.imageQuality !== '') {
+            tool.quality = spec.imageQuality
+          }
+          if (spec.imageOutputFormat !== undefined && spec.imageOutputFormat !== '') {
+            tool.output_format = spec.imageOutputFormat
+          }
+          if (spec.imageBackground !== undefined && spec.imageBackground !== '') {
+            tool.background = spec.imageBackground
+          }
+          // partial_images 决定 SSE 流里生图阶段会下发几张渐进预览图 (取值 0-3, 0 表示完全不发)。
+          // 历史默认 2 → 单次生图至少要在 SSE buffer 里拼 3 帧 5 MB+ 单行 JSON, 触发
+          //   `AllocateHugeObject(~5 MB) shared heap oom` 直接崩进程 (2026-05-23 fault).
+          // 改为默认 0 关闭渐进预览: 客户端反正没把 partial 渲染到 UI, 损失为零, 内存压力降到 1/3。
+          // 调用方仍可显式传 1/2/3 强开。
+          const partial = spec.imagePartialImages !== undefined && spec.imagePartialImages >= 0 ?
+            spec.imagePartialImages : 0
+          tool.partial_images = partial
+          console.info('AIApiService',
+            `[Responses] image_generation tool: partial_images=${partial}, size=${tool.size ?? 'auto'}, ` +
+            `quality=${tool.quality ?? 'auto'}, format=${tool.output_format ?? 'png'}`)
+          responseTools.push(tool)
+        }
+      }
     }
     return responseTools
   }
@@ -1560,7 +1728,8 @@ export class AIApiService {
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
     toolChoice?: string,
-    forceChatCompletions: boolean = false
+    forceChatCompletions: boolean = false,
+    builtInResponsesTools?: BuiltInResponsesToolSpec[]
   ): OpenAIRequestBody | OpenAIResponsesRequestBody | AnthropicRequestBody | GoogleRequestBody {
     const reasoningRequestStrategy = this.getReasoningRequestStrategy(config, model)
     const normalizedReasoningLevel = normalizeReasoningLevelForControl(reasoningLevel)
@@ -1872,12 +2041,21 @@ export class AIApiService {
           model,
           normalizedReasoningLevel
         )
-        if (effort !== undefined) {
-          responsesBody.reasoning = { effort: effort }
-          if (normalizedReasoningLevel !== ReasoningLevel.OFF) {
-            responsesBody.reasoning.summary = 'auto'
+        // ReasoningLevel.AUTO 不传 effort (让服务端按模型默认决策), 但仍然需要主动开 summary='auto',
+        // 否则 OpenAI Responses 在 SSE 流里不会下发 response.reasoning_summary_text.delta,
+        // 客户端会出现 "模型其实推理了, 但前端拿不到推理摘要" 的现象 (see ChatPage feedback 2026-05-23)。
+        if (normalizedReasoningLevel !== ReasoningLevel.OFF) {
+          responsesBody.reasoning = { summary: 'auto' }
+          if (effort !== undefined) {
+            responsesBody.reasoning.effort = effort
           }
+        } else if (effort !== undefined) {
+          // OFF + 模型支持 'none' effort 时仍要把 effort 设上 (gpt-5 系列), 但不开 summary
+          responsesBody.reasoning = { effort: effort }
         }
+        console.info('AIApiService',
+          `[Responses] reasoning config: level=${normalizedReasoningLevel}, effort=${effort ?? 'unset'}, ` +
+          `summary=${responsesBody.reasoning?.summary ?? 'unset'}`)
         // 跨轮保持推理状态:请求头里声明需要 encrypted_content,并把上一轮的 reasoning items 一起回传
         if (allowEncryptedReasoning && normalizedReasoningLevel !== ReasoningLevel.OFF) {
           responsesBody.include = ['reasoning.encrypted_content']
@@ -1885,8 +2063,15 @@ export class AIApiService {
       } else if (reasoningRequestStrategy === ReasoningRequestStrategy.DASHSCOPE_THINKING) {
         this.applyDashScopeReasoningConfig(responsesBody, normalizedReasoningLevel, reasoningTokenLimit)
       }
-      if (tools !== undefined && tools.length > 0) {
-        responsesBody.tools = this.buildOpenAIResponsesTools(config, tools)
+      const effectiveFunctionTools: ToolDefinition[] = tools !== undefined ? tools : []
+      const hasFunctionTools = effectiveFunctionTools.length > 0
+      const hasBuiltInTools = builtInResponsesTools !== undefined && builtInResponsesTools.length > 0
+      if (hasFunctionTools || hasBuiltInTools) {
+        responsesBody.tools = this.buildOpenAIResponsesTools(
+          config,
+          effectiveFunctionTools,
+          builtInResponsesTools
+        )
         if (toolChoice !== undefined && toolChoice !== '') {
           responsesBody.tool_choice = toolChoice
         }
@@ -2722,8 +2907,11 @@ export class AIApiService {
     temperature?: number,
     maxTokens?: number,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void,
-    reasoningLevel: ReasoningLevel = ReasoningLevel.OFF  // 推理级别参数
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,  // 推理级别参数
+    builtInResponsesTools?: BuiltInResponsesToolSpec[],
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): http.HttpRequest {
     this.resetThinkingState()
 
@@ -2733,7 +2921,10 @@ export class AIApiService {
     if (config.apiStyle !== ApiStyle.GOOGLE) {
       headers['Accept'] = 'text/event-stream'
     }
-    const requestBody = this.buildRequestBody(config, messages, model, temperature, maxTokens, reasoningLevel)
+    const requestBody = this.buildRequestBody(
+      config, messages, model, temperature, maxTokens, reasoningLevel,
+      undefined, undefined, false, builtInResponsesTools
+    )
     this.configureStreamState(config, model)
 
     if (config.apiStyle === ApiStyle.OPENAI) {
@@ -2771,7 +2962,8 @@ export class AIApiService {
           buffer = lines.pop() || ''
 
           for (let i = 0; i < lines.length; i++) {
-            this.handleStreamLine(config.apiStyle, useOpenAIResponses, lines[i], onData, onError, onReasoningData, onImageData)
+            this.handleStreamLine(config.apiStyle, useOpenAIResponses, lines[i],
+              onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
           }
         } catch (e) {
           console.error('AIApiService', `Stream decode error: ${JSON.stringify(e)}`)
@@ -2779,7 +2971,8 @@ export class AIApiService {
       },
       (response) => {
         if (buffer.trim() !== '') {
-          this.handleStreamLine(config.apiStyle, useOpenAIResponses, buffer, onData, onError, onReasoningData, onImageData)
+          this.handleStreamLine(config.apiStyle, useOpenAIResponses, buffer,
+            onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
           buffer = ''
         }
         if (!response.success) {
@@ -2808,11 +3001,14 @@ export class AIApiService {
     temperature?: number,
     maxTokens?: number,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
     toolChoice?: string,
-    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void
+    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
+    builtInResponsesTools?: BuiltInResponsesToolSpec[],
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): http.HttpRequest {
     this.resetThinkingState()
 
@@ -2822,7 +3018,10 @@ export class AIApiService {
     if (config.apiStyle !== ApiStyle.GOOGLE) {
       headers['Accept'] = 'text/event-stream'
     }
-    const requestBody = this.buildRequestBody(config, messages, model, temperature, maxTokens, reasoningLevel, tools, toolChoice)
+    const requestBody = this.buildRequestBody(
+      config, messages, model, temperature, maxTokens, reasoningLevel,
+      tools, toolChoice, false, builtInResponsesTools
+    )
     this.configureStreamState(config, model)
 
     if (config.apiStyle === ApiStyle.OPENAI) {
@@ -2859,7 +3058,8 @@ export class AIApiService {
           buffer = lines.pop() || ''
 
           for (let i = 0; i < lines.length; i++) {
-            this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, lines[i], onData, onError, onReasoningData, onImageData, onToolCallDelta)
+            this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, lines[i],
+              onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
           }
         } catch (e) {
           console.error('AIApiService', `Stream decode error: ${JSON.stringify(e)}`)
@@ -2867,7 +3067,8 @@ export class AIApiService {
       },
       (response) => {
         if (buffer.trim() !== '') {
-          this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, buffer, onData, onError, onReasoningData, onImageData, onToolCallDelta)
+          this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, buffer,
+            onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
           buffer = ''
         }
         if (!response.success) {
@@ -2894,8 +3095,10 @@ export class AIApiService {
     onData: (content: string) => void,
     onError: (error: string) => void,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void,
-    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): void {
     const trimmedLine = line.trim()
     if (trimmedLine === '') {
@@ -2920,7 +3123,8 @@ export class AIApiService {
 
     try {
       const json = JSON.parse(jsonStr) as object
-      this.emitStreamContentWithTools(apiStyle, useOpenAIResponses, json, onData, onError, onReasoningData, onImageData, onToolCallDelta)
+      this.emitStreamContentWithTools(apiStyle, useOpenAIResponses, json,
+        onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
     } catch (_e) {
       console.warn('AIApiService', `JSON parse error for line: ${jsonStr.substring(0, 100)}...`)
     }
@@ -2934,8 +3138,10 @@ export class AIApiService {
     onData: (content: string) => void,
     onError: (error: string) => void,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void,
-    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): void {
     if (Array.isArray(json)) {
       const items = json as object[]
@@ -2959,9 +3165,23 @@ export class AIApiService {
         }
         if (result.imageData && result.imageMimeType && onImageData) {
           try {
-            onImageData(result.imageData, result.imageMimeType)
+            onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
           } catch (e) {
             console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
+          }
+        }
+        if (result.searchReferences !== undefined && result.searchReferences.length > 0 && onSearchReferences) {
+          try {
+            onSearchReferences(result.searchReferences)
+          } catch (e) {
+            console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
+          }
+        }
+        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+          try {
+            onHostedToolEvent(result.hostedToolEvent)
+          } catch (e) {
+            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
           }
         }
         if (result.reasoningItem !== undefined) {
@@ -2990,9 +3210,23 @@ export class AIApiService {
     }
     if (result.imageData && result.imageMimeType && onImageData) {
       try {
-        onImageData(result.imageData, result.imageMimeType)
+        onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
       } catch (e) {
         console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
+      }
+    }
+    if (result.searchReferences !== undefined && result.searchReferences.length > 0 && onSearchReferences) {
+      try {
+        onSearchReferences(result.searchReferences)
+      } catch (e) {
+        console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
+      }
+    }
+    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+      try {
+        onHostedToolEvent(result.hostedToolEvent)
+      } catch (e) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
       }
     }
     if (result.reasoningItem !== undefined) {
@@ -3105,8 +3339,104 @@ export class AIApiService {
         } else if (event.type === 'response.output_item.done' &&
           event.item !== undefined && event.item.type === 'image_generation_call' &&
           event.item.result !== undefined && event.item.result !== '') {
+          // 最终图(image_generation_call 完成)
           result.imageData = event.item.result
           result.imageMimeType = 'image/png'
+          result.imageIsPartial = false
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.IMAGE_GENERATION_COMPLETED,
+            event.item.id !== undefined ? event.item.id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.output_item.added' &&
+          event.item !== undefined && event.item.type === 'image_generation_call') {
+          // 生图开始
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.IMAGE_GENERATION_STARTED,
+            event.item.id !== undefined ? event.item.id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.image_generation_call.partial_image' &&
+          event.partial_image_b64 !== undefined && event.partial_image_b64 !== '') {
+          // 渐进图: 让 onImageData 链路按"最新预览"覆盖式刷新
+          result.imageData = event.partial_image_b64
+          result.imageMimeType = 'image/png'
+          result.imageIsPartial = true
+          result.imagePartialIndex = event.partial_image_index !== undefined ?
+            event.partial_image_index : -1
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.IMAGE_GENERATION_PARTIAL,
+            event.item_id !== undefined ? event.item_id : '',
+            event.output_index !== undefined ? event.output_index : -1,
+            event.partial_image_index !== undefined ? event.partial_image_index : -1
+          )
+        } else if (event.type === 'response.image_generation_call.in_progress' ||
+          event.type === 'response.image_generation_call.generating') {
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.IMAGE_GENERATION_STARTED,
+            event.item_id !== undefined ? event.item_id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.image_generation_call.completed') {
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.IMAGE_GENERATION_COMPLETED,
+            event.item_id !== undefined ? event.item_id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.output_item.added' &&
+          event.item !== undefined && event.item.type === 'web_search_call') {
+          // added 时 item.action 一般已经携带 query/url, 是最早能拿到关键词的位置
+          const action = event.item.action
+          const actionQuery: string = action !== undefined && action.query !== undefined ? action.query : ''
+          const actionUrl: string = action !== undefined && action.url !== undefined ? action.url : ''
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.WEB_SEARCH_STARTED,
+            event.item.id !== undefined ? event.item.id : '',
+            event.output_index !== undefined ? event.output_index : -1,
+            -1,
+            actionQuery,
+            actionUrl
+          )
+        } else if (event.type === 'response.web_search_call.in_progress') {
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.WEB_SEARCH_STARTED,
+            event.item_id !== undefined ? event.item_id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.web_search_call.searching') {
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.WEB_SEARCH_SEARCHING,
+            event.item_id !== undefined ? event.item_id : '',
+            event.output_index !== undefined ? event.output_index : -1
+          )
+        } else if (event.type === 'response.web_search_call.completed' ||
+          (event.type === 'response.output_item.done' &&
+            event.item !== undefined && event.item.type === 'web_search_call')) {
+          // done 时 action 一定完整, 兜底再取一次 (有些版本只在 done 上挂 action)
+          const doneItem = event.item
+          const doneAction = doneItem !== undefined ? doneItem.action : undefined
+          const doneQuery: string = doneAction !== undefined && doneAction.query !== undefined ? doneAction.query : ''
+          const doneUrl: string = doneAction !== undefined && doneAction.url !== undefined ? doneAction.url : ''
+          result.hostedToolEvent = new HostedResponsesToolEvent(
+            HostedResponsesToolEventKind.WEB_SEARCH_COMPLETED,
+            event.item !== undefined && event.item.id !== undefined ? event.item.id :
+              (event.item_id !== undefined ? event.item_id : ''),
+            event.output_index !== undefined ? event.output_index : -1,
+            -1,
+            doneQuery,
+            doneUrl
+          )
+        } else if (event.type === 'response.output_text.annotation.added' &&
+          event.annotation !== undefined && event.annotation.type === 'url_citation' &&
+          event.annotation.url !== undefined && event.annotation.url !== '') {
+          // url_citation -> SearchReference, 唯一 id 用 url + index 拼接保持稳定
+          const ann = event.annotation
+          const annUrl: string = ann.url !== undefined ? ann.url : ''
+          const annTitle: string = ann.title !== undefined && ann.title !== '' ? ann.title : annUrl
+          const annIndex = event.annotation_index !== undefined ? event.annotation_index : 0
+          const refId = `ws_${event.item_id !== undefined ? event.item_id : 'na'}_${annIndex}`
+          const ref = new SearchReference(refId, annTitle, annUrl, '')
+          result.searchReferences = [ref]
         } else if (event.type === 'response.function_call_arguments.delta' && event.delta !== undefined) {
           const index = this.getOpenAIResponsesToolCallIndex(event)
           result.toolCallDeltas = [
@@ -3340,7 +3670,9 @@ export class AIApiService {
     onData: (content: string) => void,
     onError: (error: string) => void,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): void {
     const trimmedLine = line.trim()
     if (trimmedLine === '') {
@@ -3365,7 +3697,8 @@ export class AIApiService {
 
     try {
       const json = JSON.parse(jsonStr) as object
-      this.emitStreamContent(apiStyle, useOpenAIResponses, json, onData, onError, onReasoningData, onImageData)
+      this.emitStreamContent(apiStyle, useOpenAIResponses, json,
+        onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
     } catch (_e) {
       console.warn('AIApiService', `JSON parse error for line: ${jsonStr.substring(0, 100)}...`)
     }
@@ -3378,7 +3711,9 @@ export class AIApiService {
     onData: (content: string) => void,
     onError: (error: string) => void,
     onReasoningData?: (content: string) => void,
-    onImageData?: (base64Data: string, mimeType: string) => void
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
   ): void {
     if (Array.isArray(json)) {
       const items = json as object[]
@@ -3395,9 +3730,23 @@ export class AIApiService {
         }
         if (result.imageData && result.imageMimeType && onImageData) {
           try {
-            onImageData(result.imageData, result.imageMimeType)
+            onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
           } catch (e) {
             console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
+          }
+        }
+        if (result.searchReferences !== undefined && result.searchReferences.length > 0 && onSearchReferences) {
+          try {
+            onSearchReferences(result.searchReferences)
+          } catch (e) {
+            console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
+          }
+        }
+        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+          try {
+            onHostedToolEvent(result.hostedToolEvent)
+          } catch (e) {
+            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
           }
         }
         if (result.reasoningItem !== undefined) {
@@ -3419,9 +3768,23 @@ export class AIApiService {
     }
     if (result.imageData && result.imageMimeType && onImageData) {
       try {
-        onImageData(result.imageData, result.imageMimeType)
+        onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
       } catch (e) {
         console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(e)}`)
+      }
+    }
+    if (result.searchReferences !== undefined && result.searchReferences.length > 0 && onSearchReferences) {
+      try {
+        onSearchReferences(result.searchReferences)
+      } catch (e) {
+        console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
+      }
+    }
+    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+      try {
+        onHostedToolEvent(result.hostedToolEvent)
+      } catch (e) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
       }
     }
     if (result.reasoningItem !== undefined) {

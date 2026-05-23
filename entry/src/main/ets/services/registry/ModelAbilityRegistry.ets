@@ -11,7 +11,13 @@ import { ModelMatchSpec } from './types'
 export enum ModelAbility {
   TOOL = 'tool',
   REASONING = 'reasoning',
-  IMAGE_GENERATION = 'image_generation'
+  // 模型本身就是图像生成模型 (输出图模型, 走独立生图路由 ImageGenerationCapabilityResolver),
+  // 例如 gpt-image-1 / dall-e-* / imagen / gemini-*-image / grok-imagine 等
+  IMAGE_GENERATION = 'image_generation',
+  // 对话模型可以在 Responses API 里调用 hosted image_generation tool 中转生图
+  // (底层由 OpenAI 服务端代为调用 gpt-image-2 完成实际生图), 例如 gpt-5.x 系列 / gpt-5-codex 系列。
+  // 跟 IMAGE_GENERATION 区分: 这是 "对话模型 + 工具", IMAGE_GENERATION 是 "模型本身输出图"
+  IMAGE_GEN_TOOL = 'image_gen_tool'
 }
 
 export enum ModelModality {
@@ -70,6 +76,7 @@ const I = ModelModality.IMAGE
 const TOOL = ModelAbility.TOOL
 const REASON = ModelAbility.REASONING
 const IMAGE_GEN = ModelAbility.IMAGE_GENERATION
+const IMG_TOOL = ModelAbility.IMAGE_GEN_TOOL
 
 function def(match: ModelMatchSpec[], abilities: ModelAbility[], input: ModelModality[] = [T],
   output: ModelModality[] = [T]): AbilityDef {
@@ -88,12 +95,15 @@ const DEFS: AbilityDef[] = [
   def([{ tokens: ['gpt', '4', '1'] }], [TOOL], [T, I]),
   def([{ tokens: ['^o$', '^\\d+$'] }], [TOOL, REASON], [T, I]),
   def([{ tokens: ['gpt', 'oss'] }], [TOOL, REASON]),
-  def([{ tokens: ['gpt', '5'] }, { notTokens: ['gpt', '5', '.'] }, { notTokens: ['gpt', '5', 'chat'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gpt', '5', '1'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gpt', '5', '2'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gpt', '5', '3'] }], [TOOL], [T, I]),
-  def([{ tokens: ['gpt', '5', '4'] }], [TOOL, REASON], [T, I]),
-  def([{ tokens: ['gpt', '5', '5'] }], [TOOL, REASON], [T, I]),
+  // GPT-5 系列全部能调用 hosted image_generation tool (gpt-5 / gpt-5-codex / gpt-5.x / gpt-5.x-codex-spark 等),
+  // 不区分官方 / 第三方 OpenAI 兼容 provider, 仅按 modelId token 子序列识别 gpt + 5 即可命中。
+  // 实际请求时还要满足 provider.openaiTransport === RESPONSES, 由调用方组合判定。
+  def([{ tokens: ['gpt', '5'] }, { notTokens: ['gpt', '5', '.'] }, { notTokens: ['gpt', '5', 'chat'] }], [TOOL, REASON, IMG_TOOL], [T, I]),
+  def([{ tokens: ['gpt', '5', '1'] }], [TOOL, REASON, IMG_TOOL], [T, I]),
+  def([{ tokens: ['gpt', '5', '2'] }], [TOOL, REASON, IMG_TOOL], [T, I]),
+  def([{ tokens: ['gpt', '5', '3'] }], [TOOL, IMG_TOOL], [T, I]),
+  def([{ tokens: ['gpt', '5', '4'] }], [TOOL, REASON, IMG_TOOL], [T, I]),
+  def([{ tokens: ['gpt', '5', '5'] }], [TOOL, REASON, IMG_TOOL], [T, I]),
 
   // --- Gemini ---
   def([{ tokens: ['gemini', '2', '0', 'flash'] }], [TOOL], [T, I]),
@@ -237,4 +247,10 @@ export function modelSupportsImageGeneration(modelId: string): boolean {
   const result = lookupModelAbilities(modelId)
   return result.abilities.includes(ModelAbility.IMAGE_GENERATION) ||
     result.outputModalities.includes(ModelModality.IMAGE)
+}
+
+// 模型是否支持在 Responses API 里调用 hosted image_generation tool (跟 IMAGE_GENERATION 区分)。
+// 该判定仅基于 modelId token 匹配, 不考虑 provider; 上层在使用时还需结合 provider.openaiTransport === RESPONSES。
+export function modelSupportsImageGenerationTool(modelId: string): boolean {
+  return lookupModelAbilities(modelId).abilities.includes(ModelAbility.IMAGE_GEN_TOOL)
 }

@@ -1,8 +1,10 @@
 import {
   ApiStyle,
   ChatMessage,
+  ChatSearchMode,
   MessageAttachment,
   ModelProvider,
+  OpenAITransport,
   ReasoningLevel,
   ToolCall,
   ToolResult
@@ -11,6 +13,10 @@ import { ChatViewModel, ToolCallCallbacks } from '../../viewmodels/ChatViewModel
 import { ChatTaskOrchestratorService } from '../../services/ChatTaskOrchestratorService'
 import { ToolRegistry } from '../../services/ToolRegistry'
 import { WebSearchService } from '../../services/WebSearchService'
+import {
+  BuiltInResponsesToolKind,
+  BuiltInResponsesToolSpec
+} from '../../services/AIApiService'
 import { appendUniqueToolId } from './ChatToolIdHelper'
 import { syncChatMessageFromSource } from './ChatMessageActionHelper'
 import { validateProviderConfig } from '../../utils/ProviderValidationUtils'
@@ -39,11 +45,19 @@ class ChatExecutionPlan {
   kind: ChatExecutionPlanKind
   enabledToolIds: string[]
   learnToolsOnSuccess: boolean
+  // OpenAI Responses 内置工具 (web_search / image_generation), 仅在 transport=responses 时下发
+  builtInResponsesTools: BuiltInResponsesToolSpec[]
 
-  constructor(kind: ChatExecutionPlanKind, enabledToolIds: string[] = [], learnToolsOnSuccess: boolean = false) {
+  constructor(
+    kind: ChatExecutionPlanKind,
+    enabledToolIds: string[] = [],
+    learnToolsOnSuccess: boolean = false,
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+  ) {
     this.kind = kind
     this.enabledToolIds = enabledToolIds
     this.learnToolsOnSuccess = learnToolsOnSuccess
+    this.builtInResponsesTools = builtInResponsesTools
   }
 }
 
@@ -154,18 +168,24 @@ export class ChatSendFlow {
     webSearchConversationEnabled: boolean,
     selectedToolIds: string[],
     forcedToolIds: string[],
-    currentModelId: string
+    currentModelId: string,
+    // 联网模式: external_engine 走本地 search_web 工具; openai_builtin 走 Responses hosted web_search
+    searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE,
+    // OpenAI Responses 内置生图开关 (hosted image_generation tool)
+    builtinImageGenEnabled: boolean = false
   ): Promise<void> {
     const plan = await this.buildExecutionPlan(
       currentProvider,
       webSearchConversationEnabled,
       selectedToolIds,
       forcedToolIds,
-      currentModelId
+      currentModelId,
+      searchMode,
+      builtinImageGenEnabled
     )
     console.info(
       'ChatSendFlow',
-      `[executeSend] plan=${plan.kind}, search=${webSearchConversationEnabled}, selected=${selectedToolIds.join(',')}, forced=${forcedToolIds.join(',')}, tools=${plan.enabledToolIds.join(',')}`
+      `[executeSend] plan=${plan.kind}, search=${webSearchConversationEnabled}, mode=${searchMode}, imageGen=${builtinImageGenEnabled}, selected=${selectedToolIds.join(',')}, forced=${forcedToolIds.join(',')}, tools=${plan.enabledToolIds.join(',')}, builtin=${plan.builtInResponsesTools.length}`
     )
 
     if (plan.kind === ChatExecutionPlanKind.TOOLS) {
@@ -175,7 +195,8 @@ export class ChatSendFlow {
         effectiveApiKey,
         attachmentsToSend,
         plan.enabledToolIds,
-        plan.learnToolsOnSuccess
+        plan.learnToolsOnSuccess,
+        plan.builtInResponsesTools
       )
       return
     }
@@ -191,7 +212,8 @@ export class ChatSendFlow {
       messageContent,
       currentProvider,
       effectiveApiKey,
-      attachmentsToSend
+      attachmentsToSend,
+      plan.builtInResponsesTools
     )
   }
 
@@ -264,12 +286,23 @@ export class ChatSendFlow {
     return ids
   }
 
+  // 判断当前 provider 是否允许走 OpenAI Responses 内置 (hosted) 工具。
+  // 必要条件: apiStyle === OPENAI && openaiTransport === RESPONSES。
+  private isOpenAIResponsesHostedToolEligible(currentProvider: ModelProvider): boolean {
+    if (currentProvider.apiStyle !== ApiStyle.OPENAI) {
+      return false
+    }
+    return currentProvider.openaiTransport === OpenAITransport.RESPONSES
+  }
+
   private async buildExecutionPlan(
     currentProvider: ModelProvider,
     webSearchConversationEnabled: boolean,
     selectedToolIds: string[],
     forcedToolIds: string[],
-    currentModelId: string
+    currentModelId: string,
+    searchMode: ChatSearchMode,
+    builtinImageGenEnabled: boolean
   ): Promise<ChatExecutionPlan> {
     const searchEnabled = this.shouldEnableWebSearch(webSearchConversationEnabled, forcedToolIds)
     const enabledToolIds = this.buildEnabledToolIds(
@@ -285,31 +318,55 @@ export class ChatSendFlow {
         }
       }
     }
-    if (searchEnabled && this.deps.toolRegistry.isToolRegistered(SEARCH_WEB_TOOL_ID)) {
-      appendUniqueToolId(enabledToolIds, SEARCH_WEB_TOOL_ID)
-    } else if (searchEnabled && this.deps.toolRegistry.isToolRegistered(LEGACY_WEB_SEARCH_TOOL_ID)) {
-      appendUniqueToolId(enabledToolIds, LEGACY_WEB_SEARCH_TOOL_ID)
+
+    // 搜索路径分流:
+    //   openai_builtin: 不注入本地 search_web/scrape_web function tool, 改为 hosted web_search
+    //   external_engine (默认): 走原有 function tool 路径
+    const builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+    const hostedEligible = this.isOpenAIResponsesHostedToolEligible(currentProvider)
+    const useBuiltinSearch = searchEnabled &&
+      searchMode === ChatSearchMode.OPENAI_BUILTIN &&
+      hostedEligible
+    if (useBuiltinSearch) {
+      builtInResponsesTools.push(new BuiltInResponsesToolSpec(BuiltInResponsesToolKind.WEB_SEARCH))
     }
-    if (searchEnabled &&
-      this.deps.toolRegistry.isToolRegistered(SCRAPE_WEB_TOOL_ID) &&
-      await this.deps.webSearchService.canExposeScrapeWebToModel()) {
-      appendUniqueToolId(enabledToolIds, SCRAPE_WEB_TOOL_ID)
+    // 内置生图: 与 hosted 搜索独立, 只要开关打开 + provider 满足 transport=RESPONSES 就注入。
+    // 流式生图必须 partial_images >= 1, BuiltInResponsesToolSpec 默认 2 (在 AIApiService 内兜底)。
+    if (builtinImageGenEnabled && hostedEligible) {
+      builtInResponsesTools.push(new BuiltInResponsesToolSpec(BuiltInResponsesToolKind.IMAGE_GENERATION))
     }
-    if (enabledToolIds.length === 0) {
+    if (!useBuiltinSearch) {
+      if (searchEnabled && this.deps.toolRegistry.isToolRegistered(SEARCH_WEB_TOOL_ID)) {
+        appendUniqueToolId(enabledToolIds, SEARCH_WEB_TOOL_ID)
+      } else if (searchEnabled && this.deps.toolRegistry.isToolRegistered(LEGACY_WEB_SEARCH_TOOL_ID)) {
+        appendUniqueToolId(enabledToolIds, LEGACY_WEB_SEARCH_TOOL_ID)
+      }
+      if (searchEnabled &&
+        this.deps.toolRegistry.isToolRegistered(SCRAPE_WEB_TOOL_ID) &&
+        await this.deps.webSearchService.canExposeScrapeWebToModel()) {
+        appendUniqueToolId(enabledToolIds, SCRAPE_WEB_TOOL_ID)
+      }
+    }
+
+    if (enabledToolIds.length === 0 && builtInResponsesTools.length === 0) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.PLAIN_DIRECT)
+    }
+    // 仅 hosted 工具时, 不必要求模型 supportsTools (hosted 不走 function calling)
+    if (builtInResponsesTools.length > 0 && enabledToolIds.length === 0) {
+      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, false, builtInResponsesTools)
     }
 
     if (this.isCurrentModelSupportsTools(currentProvider, currentModelId)) {
-      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds)
+      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, false, builtInResponsesTools)
     }
 
     if (this.shouldProbeToolsForCurrentModel(currentProvider)) {
       console.info('ChatSendFlow',
         `[Function Calling] 当前模型未标记 supportsTools, 先尝试 tools 请求: modelId=${currentModelId}`)
-      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, true)
+      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, true, builtInResponsesTools)
     }
 
-    return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds)
+    return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds, false, builtInResponsesTools)
   }
 
   private includesAny(text: string, keywords: string[]): boolean {
@@ -512,7 +569,8 @@ export class ChatSendFlow {
     messageContent: string,
     currentProvider: ModelProvider,
     effectiveApiKey: string,
-    attachmentsToSend: MessageAttachment[] = []
+    attachmentsToSend: MessageAttachment[] = [],
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
   ): Promise<void> {
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
@@ -559,7 +617,8 @@ export class ChatSendFlow {
         currentProvider.apiPath || undefined,
         currentProvider.customHeadersJson || undefined,
         currentProvider.openaiTransport,
-        maxOutputTokens > 0 ? maxOutputTokens : undefined
+        maxOutputTokens > 0 ? maxOutputTokens : undefined,
+        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined
       )
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`
@@ -573,7 +632,8 @@ export class ChatSendFlow {
     effectiveApiKey: string,
     attachmentsToSend: MessageAttachment[] = [],
     enabledToolIds: string[] = [],
-    learnToolsOnSuccess: boolean = false
+    learnToolsOnSuccess: boolean = false,
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
   ): Promise<void> {
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
@@ -655,7 +715,8 @@ export class ChatSendFlow {
         toolCallbacks,
         currentProvider.apiPath || undefined,
         currentProvider.customHeadersJson || undefined,
-        currentProvider.openaiTransport
+        currentProvider.openaiTransport,
+        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined
       )
       if (completedSuccessfully && learnToolsOnSuccess && !fallbackStarted) {
         await this.deps.onConfirmModelSupportsTools(currentProvider.id, modelId)

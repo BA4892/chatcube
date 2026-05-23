@@ -403,6 +403,19 @@ export enum SearchEngine {
   CUSTOM = 'custom'
 }
 
+// 联网搜索模式: external_engine = 走本地搜索引擎(Bing/Brave/...) + search_web 工具
+//              openai_builtin   = 走 OpenAI Responses 内置 web_search hosted tool (不消耗本地 function tool)
+//              none / 兜底       = 不联网
+// 旧版本只有"开/关 + 引擎选择"，新版增加 mode 区分以支持 hosted 搜索。
+export enum ChatSearchMode {
+  EXTERNAL_ENGINE = 'external_engine',
+  OPENAI_BUILTIN = 'openai_builtin'
+}
+
+// 联网菜单里给"OpenAI 内置搜索"项使用的 id 哨兵, 与 SearchEngine 枚举值刻意不重合,
+// 让现有 SearchEngineMenuOption / 选择回调可以共用同一条路径。
+export const OPENAI_BUILTIN_SEARCH_ENGINE_ID: string = 'openai_builtin'
+
 // 搜索服务配置类
 @ObservedV2
 export class SearchServiceConfig {

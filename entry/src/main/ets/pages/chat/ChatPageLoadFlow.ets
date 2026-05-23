@@ -1,4 +1,4 @@
-import { ChatMessage, MessageAttachment, ModelProvider, ReasoningLevel } from '../../models/ChatModels'
+import { ChatMessage, ChatSearchMode, MessageAttachment, ModelProvider, ReasoningLevel } from '../../models/ChatModels'
 import { AppStateManager } from '../../viewmodels/AppStateManager'
 import { ProviderViewModel } from '../../viewmodels/ProviderViewModel'
 import { ChatViewModel } from '../../viewmodels/ChatViewModel'
@@ -12,6 +12,8 @@ import { DEFAULT_PRIMARY_COLOR } from '../../config/ThemeDefaults'
 export class ChatPageLoadResult {
   webSearchEnabled: boolean = false
   webSearchConversationEnabled: boolean = false
+  // 联网模式: external_engine (默认) | openai_builtin
+  searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
   reasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   providers: ModelProvider[] = []
   pendingInitialPrompt: string = ''
@@ -59,6 +61,12 @@ export class ChatPageLoadFlow {
       PreferenceKeys.SEARCH_CONVERSATION_ENABLED,
       result.webSearchEnabled
     )
+    const rawSearchMode = await this.deps.preferencesService.getString(
+      PreferenceKeys.SEARCH_MODE,
+      ChatSearchMode.EXTERNAL_ENGINE
+    )
+    result.searchMode = rawSearchMode === ChatSearchMode.OPENAI_BUILTIN ?
+      ChatSearchMode.OPENAI_BUILTIN : ChatSearchMode.EXTERNAL_ENGINE
     result.reasoningLevel = normalizeStoredChatReasoningLevel(await this.deps.preferencesService.getString(
       PreferenceKeys.CHAT_REASONING_LEVEL,
       ReasoningLevel.OFF

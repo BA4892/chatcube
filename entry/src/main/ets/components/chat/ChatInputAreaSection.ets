@@ -31,6 +31,10 @@ export struct ChatInputAreaSection {
   @Param toolSelectionAvailable: boolean = false
   @Param hasSelectedTools: boolean = false
   @Event onOpenTools: () => void = (): void => {}
+  // OpenAI Responses 内置生图 chip
+  @Param imageGenAvailable: boolean = false
+  @Param imageGenEnabled: boolean = false
+  @Event onImageGenToggle: () => void = (): void => {}
   @Param reasoningAvailable: boolean = false
   @Param reasoningControlMode: ReasoningControlMode = ReasoningControlMode.NONE
   @Param reasoningXhighAvailable: boolean = false
@@ -90,6 +94,11 @@ export struct ChatInputAreaSection {
           hasSelectedTools: this.hasSelectedTools,
           onOpenTools: (): void => {
             this.onOpenTools()
+          },
+          imageGenAvailable: this.imageGenAvailable,
+          imageGenEnabled: this.imageGenEnabled,
+          onImageGenToggle: (): void => {
+            this.onImageGenToggle()
           },
           reasoningAvailable: this.reasoningAvailable,
           reasoningControlMode: this.reasoningControlMode,

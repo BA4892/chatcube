@@ -48,6 +48,9 @@ export class PreferenceKeys {
   static readonly SEARCH_SERVICE_ENABLED: string = 'search_service_enabled'
   static readonly SEARCH_CONVERSATION_ENABLED: string = 'search_conversation_enabled'
   static readonly SEARCH_ENGINE: string = 'search_engine'
+  // 联网搜索模式: 'external_engine' (默认) | 'openai_builtin' (走 OpenAI Responses hosted web_search)
+  // 与 SEARCH_ENGINE 解耦, 后者只表示外部引擎选择, 不受影响。
+  static readonly SEARCH_MODE: string = 'search_mode'
   static readonly SEARCH_ENABLED_ENGINE_IDS_JSON: string = 'search_enabled_engine_ids_json'
   static readonly SEARCH_MAX_RESULTS: string = 'search_max_results'
   static readonly SEARCH_BRAVE_API_KEY: string = 'search_brave_api_key'

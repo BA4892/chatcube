@@ -12,13 +12,17 @@ import {
   HdsNavigationTitleBarOptions
 } from '@kit.UIDesignKit'
 import {
+  ApiStyle,
   ChatMessage,
+  ChatSearchMode,
   MessageRole,
   ModelProvider,
   ModelInfo,
   ModelInfoExtendedJson,
   MessageAttachment,
   AttachmentProcessState,
+  OpenAITransport,
+  OPENAI_BUILTIN_SEARCH_ENGINE_ID,
   ReasoningLevel,
   ModelRole,
   ToolCall,
@@ -75,6 +79,7 @@ import {
   resolveReasoningControlMode,
   supportsReasoningXhighControl
 } from '../services/registry/CompatibilityResolver'
+import { modelSupportsImageGenerationTool } from '../services/registry/ModelAbilityRegistry'
 import {
   getListBottomPaddingForChat,
   getPreviewTimeTextForChat,
@@ -220,9 +225,19 @@ export struct ChatPage {
   // 联网查询全局可用状态（工具中心控制）
   @Local webSearchAvailable: boolean = false
   @Local webSearchConversationEnabled: boolean = false
+  // 联网搜索模式: external_engine(默认) / openai_builtin
+  // 与外部 SEARCH_ENGINE 解耦, openai_builtin 走 Responses hosted web_search hosted tool。
+  @Local searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
+  // 编辑消息时的临时 mode 覆盖, 不持久化, 退出编辑后失效。
+  @Local editingSearchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
+  // OpenAI Responses 内置生图开关 (会话级, 不持久化, 切换 provider 自动复位)
+  @Local builtinImageGenEnabled: boolean = false
+  @Local editingBuiltinImageGenEnabled: boolean = false
   // 联网菜单内可选的引擎列表(Bing 永远在内, 其它引擎填了 API Key 才出现)
+  // 当 currentProvider 满足 OpenAI Responses 条件时, 末尾追加 OPENAI_BUILTIN_SEARCH_ENGINE_ID 哨兵项
   @Local availableSearchEngines: SearchEngineMenuOption[] = []
-  // 当前选中的引擎 id(SearchEngine 枚举字符串)。和 PreferenceKeys.SEARCH_ENGINE 同步。
+  // 当前选中的引擎 id(SearchEngine 枚举字符串或 OPENAI_BUILTIN_SEARCH_ENGINE_ID)。
+  // 普通引擎与 PreferenceKeys.SEARCH_ENGINE 同步; 哨兵 id 与 PreferenceKeys.SEARCH_MODE 同步。
   @Local activeSearchEngineId: string = SearchEngine.BING
   @Local selectedToolIds: string[] = []
   @Local availableChatTools: ToolConfig[] = []
@@ -631,6 +646,14 @@ export struct ChatPage {
     this.sessionTitle = loadResult.sessionTitle
     this.webSearchConversationEnabled =
       loadResult.webSearchEnabled && this.availableSearchEngines.length > 0 && loadResult.webSearchConversationEnabled
+    // 联网模式: 若菜单里此刻不含 OPENAI_BUILTIN 项(provider 不满足或菜单尚未刷新), 自动回退到 external_engine。
+    this.searchMode = loadResult.searchMode === ChatSearchMode.OPENAI_BUILTIN &&
+      this.isOpenAIBuiltinSearchAvailableForCurrentProvider() ?
+      ChatSearchMode.OPENAI_BUILTIN : ChatSearchMode.EXTERNAL_ENGINE
+    if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN) {
+      this.activeSearchEngineId = OPENAI_BUILTIN_SEARCH_ENGINE_ID
+    }
+    this.editingSearchMode = this.searchMode
     this.reasoningLevel = loadResult.reasoningLevel
     // initialDraft(来自推荐提示词点击)优先于持久化 draftText, 仅 prefill 不自动发送
     this.inputText = loadResult.pendingInitialDraft !== '' ? loadResult.pendingInitialDraft : loadResult.draftText
@@ -1104,6 +1127,57 @@ export struct ChatPage {
     return this.webSearchAvailable && this.availableSearchEngines.length > 0
   }
 
+  // 当前 provider 是否能走 OpenAI Responses 内置 web_search hosted tool。
+  // 判定: apiStyle === OPENAI && openaiTransport === RESPONSES。
+  // 模型层面的 supportsWebSearch 不卡, 让 OpenAI 路径自然 fallback (官方支持的 GPT 全系都能用)。
+  private isOpenAIBuiltinSearchAvailableForCurrentProvider(): boolean {
+    const provider = this.currentProvider
+    if (provider === null) {
+      return false
+    }
+    if (provider.apiStyle !== ApiStyle.OPENAI) {
+      return false
+    }
+    return provider.openaiTransport === OpenAITransport.RESPONSES
+  }
+
+  // hosted image_generation 走 Responses, transport 与 web_search 同口径; 模型层面卡 IMAGE_GEN_TOOL 白名单
+  // (GPT-5 全系, 详见 ModelAbilityRegistry), 不在白名单内的模型不展示该 chip, 避免请求被 OpenAI 端拒绝。
+  private isOpenAIBuiltinImageGenAvailableForCurrentProvider(): boolean {
+    if (!this.isOpenAIBuiltinSearchAvailableForCurrentProvider()) {
+      return false
+    }
+    if (this.currentModelId === '') {
+      return false
+    }
+    return modelSupportsImageGenerationTool(this.currentModelId)
+  }
+
+  private getActiveComposerBuiltinImageGenEnabled(): boolean {
+    if (this.isEditingMessage) {
+      return this.editingBuiltinImageGenEnabled
+    }
+    return this.builtinImageGenEnabled
+  }
+
+  private handleComposerImageGenToggle(): void {
+    if (!this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()) {
+      return
+    }
+    if (this.isEditingMessage) {
+      this.editingBuiltinImageGenEnabled = !this.editingBuiltinImageGenEnabled
+      return
+    }
+    this.builtinImageGenEnabled = !this.builtinImageGenEnabled
+  }
+
+  // 切换搜索模式持久化 (external_engine / openai_builtin)。
+  private persistSearchModePreference(mode: ChatSearchMode): void {
+    this.preferencesService.setString(PreferenceKeys.SEARCH_MODE, mode).catch((error: Object) => {
+      console.error('ChatPage', `Failed to persist search mode: ${JSON.stringify(error)}`)
+    })
+  }
+
   private async setWebSearchConversationEnabled(enabled: boolean): Promise<void> {
     const normalized = this.isWebSearchReady() && enabled
     await this.preferencesService.setBoolean(PreferenceKeys.SEARCH_CONVERSATION_ENABLED, normalized)
@@ -1185,6 +1259,8 @@ export struct ChatPage {
 
   // 重建联网菜单的引擎列表 + 当前活跃引擎。
   // 可用 = 在工具中心启用，并且引擎没有需要密码的配置项(Bing) 或至少一个密码字段非空。
+  // 末尾若 currentProvider 满足 OpenAI Responses 条件, 自动追加 OPENAI_BUILTIN_SEARCH_ENGINE_ID 哨兵项,
+  // 让用户在同一个菜单内切换"外部引擎 / OpenAI 内置搜索"。
   private async refreshAvailableSearchEngines(): Promise<void> {
     registerAllSearchEngines()
     const registry = getSearchEngineRegistry()
@@ -1198,16 +1274,46 @@ export struct ChatPage {
         next.push({ id: descriptors[i].id as string, label: descriptors[i].label })
       }
     }
+    if (this.isOpenAIBuiltinSearchAvailableForCurrentProvider()) {
+      next.push({
+        id: OPENAI_BUILTIN_SEARCH_ENGINE_ID,
+        label: pickLocalizedText('OpenAI 内置搜索', 'OpenAI built-in search')
+      })
+    }
     this.availableSearchEngines = next
 
+    // 优先级:
+    // 1) searchMode === OPENAI_BUILTIN 且菜单仍有哨兵 → 哨兵 id
+    // 2) 已存的外部引擎 id 仍可用 → 沿用
+    // 3) 退化到列表第一项 (持久化到 SEARCH_ENGINE)
+    if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN &&
+      this.isSearchEngineMenuOptionAvailable(OPENAI_BUILTIN_SEARCH_ENGINE_ID)) {
+      this.activeSearchEngineId = OPENAI_BUILTIN_SEARCH_ENGINE_ID
+      return
+    }
+    // mode 是 builtin 但菜单已不含哨兵 → 自动降级
+    if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN) {
+      this.searchMode = ChatSearchMode.EXTERNAL_ENGINE
+      this.persistSearchModePreference(ChatSearchMode.EXTERNAL_ENGINE)
+    }
     if (this.isSearchEngineMenuOptionAvailable(storedEngine)) {
       this.activeSearchEngineId = storedEngine
       return
     }
     if (next.length > 0) {
-      this.activeSearchEngineId = next[0].id
-      await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, next[0].id)
-      return
+      // 不能把哨兵当默认引擎写到 SEARCH_ENGINE; 选第一个真正的外部引擎
+      let fallbackEngineId: string = ''
+      for (let i = 0; i < next.length; i++) {
+        if (next[i].id !== OPENAI_BUILTIN_SEARCH_ENGINE_ID) {
+          fallbackEngineId = next[i].id
+          break
+        }
+      }
+      if (fallbackEngineId !== '') {
+        this.activeSearchEngineId = fallbackEngineId
+        await this.preferencesService.setString(PreferenceKeys.SEARCH_ENGINE, fallbackEngineId)
+        return
+      }
     }
     this.activeSearchEngineId = storedEngine
   }
@@ -1477,7 +1583,7 @@ export struct ChatPage {
 
   private handleComposerWebSearchSelect(engineId: string): void {
     // engineId 非空 = 选择某个引擎并启用联网; 空串 = "禁用联网"项。
-    // 引擎选择全局持久化(SEARCH_ENGINE), 即便在编辑模式下也跟随; 启用/禁用在编辑模式下只改本地状态。
+    // 'openai_builtin' 哨兵 → 切到 hosted 搜索模式 (不写 SEARCH_ENGINE), 其它 → 外部引擎模式。
     if (engineId !== '') {
       if (!this.isSearchEngineMenuOptionAvailable(engineId)) {
         this.showError(pickLocalizedText('该搜索服务不可用，请先在工具中心启用并完成配置',
@@ -1485,7 +1591,23 @@ export struct ChatPage {
         return
       }
       this.activeSearchEngineId = engineId
-      this.persistSearchEnginePreference(engineId)
+      if (engineId === OPENAI_BUILTIN_SEARCH_ENGINE_ID) {
+        // hosted 搜索: 持久化 mode, 不要写 SEARCH_ENGINE 避免污染下次外部引擎切换
+        if (this.isEditingMessage) {
+          this.editingSearchMode = ChatSearchMode.OPENAI_BUILTIN
+        } else {
+          this.searchMode = ChatSearchMode.OPENAI_BUILTIN
+          this.persistSearchModePreference(ChatSearchMode.OPENAI_BUILTIN)
+        }
+      } else {
+        if (this.isEditingMessage) {
+          this.editingSearchMode = ChatSearchMode.EXTERNAL_ENGINE
+        } else {
+          this.searchMode = ChatSearchMode.EXTERNAL_ENGINE
+          this.persistSearchModePreference(ChatSearchMode.EXTERNAL_ENGINE)
+        }
+        this.persistSearchEnginePreference(engineId)
+      }
     }
     const enableSearch = engineId !== ''
     if (this.isEditingMessage) {
@@ -1967,6 +2089,14 @@ export struct ChatPage {
       await this.appStateManager.setCurrentModel(model.id, modelName, provider.id)
     }
     await this.chatViewModel.updateCurrentSessionModelSelection(model.id, provider.id)
+    // 模型/服务商变更后, 联网菜单里的 "OpenAI 内置搜索" 项可能要出现或消失, 触发一次刷新。
+    // 内部还会按 searchMode/storedEngine 决定 activeSearchEngineId 的最终值, 失效模式自动降级到 external_engine。
+    await this.refreshAvailableSearchEngines()
+    // 内置生图开关跟当前 provider 强绑定: 不支持时强制关闭, 避免用户在切换模型后误发 hosted 工具请求。
+    if (!this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()) {
+      this.builtinImageGenEnabled = false
+      this.editingBuiltinImageGenEnabled = false
+    }
   }
 
   // 验证当前模型是否有效，如果无效则自动选择第一个可用模型
@@ -2393,6 +2523,11 @@ export struct ChatPage {
                 this.getActiveComposerSelectedToolIds().length
               ),
               hasSelectedTools: this.hasSelectedTools(),
+              imageGenAvailable: this.isOpenAIBuiltinImageGenAvailableForCurrentProvider(),
+              imageGenEnabled: this.getActiveComposerBuiltinImageGenEnabled(),
+              onImageGenToggle: (): void => {
+                this.handleComposerImageGenToggle()
+              },
               reasoningAvailable: this.supportsReasoningForCurrentModel(),
               reasoningControlMode: this.getReasoningControlModeForCurrentModel(),
               reasoningXhighAvailable: this.supportsReasoningXhighForCurrentModel(),
@@ -3808,6 +3943,10 @@ export struct ChatPage {
       const searchEnabled = this.isWebSearchReady() && this.webSearchConversationEnabled
       const selectedToolIds = [...this.selectedToolIds]
       const forcedToolIds = [...this.forcedToolIdsOnce]
+      // 联网模式: 编辑消息走 editingSearchMode, 否则走会话级 searchMode
+      const activeSearchMode: ChatSearchMode = this.isEditingMessage ? this.editingSearchMode : this.searchMode
+      const activeBuiltinImageGen = this.getActiveComposerBuiltinImageGenEnabled() &&
+        this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()
       await this.getSendFlow().executeSend(
         messageContent,
         currentProvider,
@@ -3816,7 +3955,9 @@ export struct ChatPage {
         searchEnabled,
         selectedToolIds,
         forcedToolIds,
-        this.currentModelId
+        this.currentModelId,
+        activeSearchMode,
+        activeBuiltinImageGen
       )
       this.forcedToolIdsOnce = []
     } catch (error) {
