@@ -281,6 +281,12 @@ export class ShareService {
     const firstInfo = await segments[0].pixelMap.getImageInfo()
     const widthPx = firstInfo.size.width
     const segHeightPx = firstInfo.size.height
+    // componentSnapshot.get 在 HarmonyOS 多个机型上即使 getImageInfo().pixelFormat 自报
+    // RGBA_8888,readPixelsToBuffer 出来的字节实际是 BGRA 排布(谎报)。ImagePacker PNG
+    // 编码按 RGBA 读字节,导致纯蓝 #0000FF 被编码为纯红 #FF0000。所以这里无条件 swap R/B,
+    // 不再相信 pixelFormat 字段。stitched 强制 RGBA_8888,swap 后数据就是真 RGBA,PNG 正确。
+    console.info('ShareService',
+      `[stitchSegments] segment pixelFormat=${firstInfo.pixelFormat}, will swap R/B unconditionally`)
 
     let totalHeightPx = Math.round(totalContentVp * density * scale)
     if (totalHeightPx <= 0) {
@@ -288,12 +294,9 @@ export class ShareService {
     }
 
     const totalBuffer = new ArrayBuffer(widthPx * totalHeightPx * 4)
-    // 关键:stitched 必须用 segment 自身的 pixelFormat。componentSnapshot 返回的 PixelMap
-    // 在很多机型上是 BGRA_8888,如果 stitched 硬编码 RGBA_8888,readPixelsToBuffer 出来的
-    // BGRA 字节被 writePixels 当 RGBA 写入,R/B 通道交换,纯蓝 #0000FF 会变成纯红 #FF0000。
     const initOpts: image.InitializationOptions = {
       size: { width: widthPx, height: totalHeightPx },
-      pixelFormat: firstInfo.pixelFormat,
+      pixelFormat: image.PixelMapFormat.RGBA_8888,
       alphaType: image.AlphaType.UNPREMUL,
       editable: true
     }
@@ -316,6 +319,13 @@ export class ShareService {
 
       const segBuffer = new ArrayBuffer(widthPx * segHeightPx * 4)
       await seg.pixelMap.readPixelsToBuffer(segBuffer)
+
+      const u8 = new Uint8Array(segBuffer)
+      for (let j = 0; j < u8.length; j += 4) {
+        const r = u8[j]
+        u8[j] = u8[j + 2]
+        u8[j + 2] = r
+      }
 
       const area: image.PositionArea = {
         pixels: segBuffer,
