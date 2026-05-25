@@ -26,6 +26,8 @@ import {
 import { AttachmentContentService } from './AttachmentContentService'
 import { normalizeCustomHeaderName, parseCustomHeadersMap } from '../utils/CustomHeaderUtils'
 
+const STREAM_DROP_PREFIX_MAX_LEN = 192
+
 // URL 解析工具类
 class ApiUrlResolver {
   /**
@@ -65,6 +67,165 @@ class ApiUrlResolver {
     }
 
     return url + apiPath
+  }
+}
+
+class StreamLineAccumulator {
+  private segments: Uint8Array[] = []
+  private length: number = 0
+  private droppingLine: boolean = false
+  private dropOpenAIResponsesLargeLines: boolean = false
+
+  constructor(dropOpenAIResponsesLargeLines: boolean) {
+    this.dropOpenAIResponsesLargeLines = dropOpenAIResponsesLargeLines
+  }
+
+  append(chunk: Uint8Array): Uint8Array[] {
+    const lines: Uint8Array[] = []
+    let start = 0
+    while (start < chunk.length) {
+      const newlineIndex = this.indexOfNewline(chunk, start)
+      const end = newlineIndex >= 0 ? newlineIndex : chunk.length
+
+      if (this.droppingLine) {
+        if (newlineIndex >= 0) {
+          this.droppingLine = false
+          start = newlineIndex + 1
+          continue
+        }
+        return lines
+      }
+
+      const segment = chunk.subarray(start, end)
+      if (this.segments.length === 0 && this.length === 0 && this.shouldDropLinePrefix(segment)) {
+        if (newlineIndex >= 0) {
+          start = newlineIndex + 1
+          continue
+        }
+        this.droppingLine = true
+        return lines
+      }
+
+      if (newlineIndex >= 0) {
+        if (this.segments.length === 0) {
+          lines.push(segment)
+        } else {
+          if (segment.length > 0) {
+            this.segments.push(segment)
+            this.length += segment.length
+          }
+          const line = this.mergeSegments()
+          this.clearPending()
+          lines.push(line)
+        }
+        start = newlineIndex + 1
+        continue
+      }
+
+      if (segment.length > 0) {
+        this.segments.push(segment)
+        this.length += segment.length
+        if (this.shouldDropPendingLine()) {
+          this.clearPending()
+          this.droppingLine = true
+        }
+      }
+      return lines
+    }
+    return lines
+  }
+
+  flush(): Uint8Array | null {
+    if (this.droppingLine) {
+      this.droppingLine = false
+      this.clearPending()
+      return null
+    }
+    if (this.length === 0) {
+      return null
+    }
+    const line = this.mergeSegments()
+    this.clearPending()
+    return line
+  }
+
+  private shouldDropLinePrefix(segment: Uint8Array): boolean {
+    if (!this.dropOpenAIResponsesLargeLines || segment.length === 0) {
+      return false
+    }
+    const prefixLength = Math.min(segment.length, STREAM_DROP_PREFIX_MAX_LEN)
+    return this.isOpenAIResponsesLargeEventPrefix(segment.subarray(0, prefixLength))
+  }
+
+  private shouldDropPendingLine(): boolean {
+    if (!this.dropOpenAIResponsesLargeLines || this.length < 32) {
+      return false
+    }
+    const prefixBytes = this.getPendingPrefixBytes(STREAM_DROP_PREFIX_MAX_LEN)
+    if (prefixBytes.length === 0) {
+      return false
+    }
+    return this.isOpenAIResponsesLargeEventPrefix(prefixBytes)
+  }
+
+  private isOpenAIResponsesLargeEventPrefix(prefixBytes: Uint8Array): boolean {
+    const prefix = this.bytesToAsciiString(prefixBytes).trimStart()
+    if (!prefix.startsWith('data:')) {
+      return false
+    }
+    return prefix.includes('"type":"response.completed"') ||
+      prefix.includes('"type": "response.completed"') ||
+      prefix.includes('"type":"response.image_generation_call.partial_image"') ||
+      prefix.includes('"type": "response.image_generation_call.partial_image"')
+  }
+
+  private bytesToAsciiString(bytes: Uint8Array): string {
+    let result = ''
+    for (let i = 0; i < bytes.length; i++) {
+      result += String.fromCharCode(bytes[i])
+    }
+    return result
+  }
+
+  private getPendingPrefixBytes(maxLength: number): Uint8Array {
+    const total = Math.min(this.length, maxLength)
+    const prefix = new Uint8Array(total)
+    let offset = 0
+    for (let i = 0; i < this.segments.length && offset < total; i++) {
+      const remaining = total - offset
+      const segment = this.segments[i]
+      const take = Math.min(segment.length, remaining)
+      prefix.set(segment.subarray(0, take), offset)
+      offset += take
+    }
+    return prefix
+  }
+
+  private mergeSegments(): Uint8Array {
+    if (this.segments.length === 1 && this.segments[0].length === this.length) {
+      return this.segments[0]
+    }
+    const merged = new Uint8Array(this.length)
+    let offset = 0
+    for (let i = 0; i < this.segments.length; i++) {
+      merged.set(this.segments[i], offset)
+      offset += this.segments[i].length
+    }
+    return merged
+  }
+
+  private indexOfNewline(chunk: Uint8Array, start: number): number {
+    for (let i = start; i < chunk.length; i++) {
+      if (chunk[i] === 10) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private clearPending(): void {
+    this.segments = []
+    this.length = 0
   }
 }
 
@@ -179,7 +340,7 @@ interface OpenAITool {
 // OpenAI Responses 工具定义
 // type === 'function' 时使用 name/description/parameters
 // type === 'web_search' 时可选 search_context_size / user_location
-// type === 'image_generation' 时可选 size/quality/output_format/background/partial_images
+// type === 'image_generation' 时可选 model/size/quality/output_format/output_compression/background/partial_images
 export interface OpenAIResponsesUserLocation {
   type?: string
   city?: string
@@ -198,9 +359,11 @@ interface OpenAIResponsesTool {
   search_context_size?: string
   user_location?: OpenAIResponsesUserLocation
   // image_generation 专用
+  model?: string
   size?: string
   quality?: string
   output_format?: string
+  output_compression?: number
   background?: string
   partial_images?: number
 }
@@ -218,11 +381,13 @@ export class BuiltInResponsesToolSpec {
   searchContextSize?: string
   searchUserLocation?: OpenAIResponsesUserLocation
   // image_generation 选项
+  imageModel?: string
   imageSize?: string
   imageQuality?: string
   imageOutputFormat?: string
+  imageOutputCompression?: number
   imageBackground?: string
-  // 流式 image_generation 必须 ≥ 1, 默认 2
+  // partial_images 取值 0-3; 不显式设置时走 OpenAI 默认值。
   imagePartialImages?: number
 
   constructor(kind: BuiltInResponsesToolKind) {
@@ -821,6 +986,7 @@ export class AIApiService {
   private isInThinkingBlock: boolean = false
   // 当前 OpenAI 流是否使用 MiniMax 的累计 content 语义
   private currentOpenAIStreamUsesCumulativeContent: boolean = false
+  private currentResponsesHostedImageMimeType: string = 'image/png'
   // MiniMax reasoning_details 累积内容缓冲区（用于计算增量）
   private minimaxReasoningBuffer: string = ''
   // MiniMax content 累积内容缓冲区（用于计算增量，因为 MiniMax 的 content 也是累积的）
@@ -841,6 +1007,7 @@ export class AIApiService {
   resetThinkingState(): void {
     this.isInThinkingBlock = false
     this.currentOpenAIStreamUsesCumulativeContent = false
+    this.currentResponsesHostedImageMimeType = 'image/png'
     this.minimaxReasoningBuffer = ''
     this.minimaxContentBuffer = ''
     this.partialTagBuffer = ''
@@ -923,6 +1090,341 @@ export class AIApiService {
     return incrementalContent
   }
 
+  private getImageMimeTypeForOutputFormat(format: string): string {
+    const normalized = format.toLowerCase()
+    if (normalized === 'jpeg' || normalized === 'jpg') {
+      return 'image/jpeg'
+    }
+    if (normalized === 'webp') {
+      return 'image/webp'
+    }
+    return 'image/png'
+  }
+
+  private tryEmitResponsesImageDoneLine(
+    jsonStr: string,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+  ): boolean {
+    if (!jsonStr.includes('response.output_item.done') || !jsonStr.includes('image_generation_call')) {
+      return false
+    }
+    const resultStart = this.findJsonStringValueStart(jsonStr, 'result', 0)
+    if (resultStart < 0) {
+      return false
+    }
+    const resultEnd = jsonStr.indexOf('"', resultStart)
+    if (resultEnd <= resultStart) {
+      return false
+    }
+    const base64Data = jsonStr.substring(resultStart, resultEnd)
+    if (base64Data === '') {
+      return false
+    }
+    const itemIdStart = this.findJsonStringValueStartBefore(jsonStr, 'id', resultStart)
+    let itemId = ''
+    if (itemIdStart >= 0) {
+      const itemIdEnd = jsonStr.indexOf('"', itemIdStart)
+      if (itemIdEnd > itemIdStart) {
+        itemId = jsonStr.substring(itemIdStart, itemIdEnd)
+      }
+    }
+    const outputIndex = this.findJsonNumberValueBefore(jsonStr, 'output_index', resultStart)
+    if (onImageData !== undefined) {
+      try {
+        onImageData(base64Data, this.currentResponsesHostedImageMimeType, false)
+      } catch (error) {
+        console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(error)}`)
+      }
+    }
+    if (onHostedToolEvent !== undefined) {
+      try {
+        onHostedToolEvent(new HostedResponsesToolEvent(
+          HostedResponsesToolEventKind.IMAGE_GENERATION_COMPLETED,
+          itemId,
+          outputIndex
+        ))
+      } catch (error) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(error)}`)
+      }
+    }
+    return true
+  }
+
+  private tryEmitResponsesImageDoneBytes(
+    lineBytes: Uint8Array,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+  ): boolean {
+    if (!this.containsAsciiPattern(lineBytes, 'response.output_item.done')) {
+      return false
+    }
+    if (!this.containsAsciiPattern(lineBytes, 'image_generation_call')) {
+      return false
+    }
+    const resultStart = this.findJsonStringValueStartBytes(lineBytes, 'result', 0)
+    const itemIdStart = resultStart >= 0 ?
+      this.findJsonStringValueStartBeforeBytes(lineBytes, 'id', resultStart) :
+      this.findJsonStringValueStartBytes(lineBytes, 'id', 0)
+    let itemId = ''
+    if (itemIdStart >= 0) {
+      const itemIdEnd = this.indexOfByte(lineBytes, 34, itemIdStart)
+      if (itemIdEnd > itemIdStart) {
+        itemId = this.decodeUtf8Bytes(lineBytes.subarray(itemIdStart, itemIdEnd))
+      }
+    }
+    const outputIndex = resultStart >= 0 ?
+      this.findJsonNumberValueBeforeBytes(lineBytes, 'output_index', resultStart) :
+      this.findJsonNumberValueBytes(lineBytes, 'output_index', 0)
+    if (resultStart < 0) {
+      this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+      return true
+    }
+    const resultEnd = this.indexOfByte(lineBytes, 34, resultStart)
+    if (resultEnd <= resultStart) {
+      this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+      return true
+    }
+    const base64Data = this.decodeUtf8Bytes(lineBytes.subarray(resultStart, resultEnd))
+    if (base64Data === '') {
+      this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+      return true
+    }
+    this.emitResponsesImageData(base64Data, onImageData)
+    this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+    return true
+  }
+
+  private emitResponsesImageData(
+    base64Data: string,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void
+  ): void {
+    if (onImageData === undefined) {
+      return
+    }
+    try {
+      onImageData(base64Data, this.currentResponsesHostedImageMimeType, false)
+    } catch (error) {
+      console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private emitHostedImageGenerationCompleted(
+    itemId: string,
+    outputIndex: number,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+  ): void {
+    if (onHostedToolEvent !== undefined) {
+      try {
+        onHostedToolEvent(new HostedResponsesToolEvent(
+          HostedResponsesToolEventKind.IMAGE_GENERATION_COMPLETED,
+          itemId,
+          outputIndex
+        ))
+      } catch (error) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(error)}`)
+      }
+    }
+  }
+
+  private decodeUtf8Bytes(bytes: Uint8Array): string {
+    const decoder = util.TextDecoder.create('utf-8')
+    return decoder.decodeToString(bytes)
+  }
+
+  private indexOfByte(bytes: Uint8Array, target: number, fromIndex: number): number {
+    for (let i = Math.max(0, fromIndex); i < bytes.length; i++) {
+      if (bytes[i] === target) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private containsAsciiPattern(bytes: Uint8Array, pattern: string): boolean {
+    return this.indexOfAsciiPattern(bytes, pattern, 0, bytes.length) >= 0
+  }
+
+  private indexOfAsciiPattern(bytes: Uint8Array, pattern: string, fromIndex: number, beforeIndex: number): number {
+    if (pattern.length === 0) {
+      return -1
+    }
+    const start = Math.max(0, fromIndex)
+    const limit = Math.min(beforeIndex, bytes.length) - pattern.length
+    const first = pattern.charCodeAt(0)
+    for (let i = start; i <= limit; i++) {
+      if (bytes[i] !== first) {
+        continue
+      }
+      let matched = true
+      for (let j = 1; j < pattern.length; j++) {
+        if (bytes[i + j] !== pattern.charCodeAt(j)) {
+          matched = false
+          break
+        }
+      }
+      if (matched) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private findJsonStringValueStartBytes(bytes: Uint8Array, key: string, fromIndex: number): number {
+    let searchIndex = fromIndex
+    const keyPattern = `"${key}"`
+    while (searchIndex < bytes.length) {
+      const keyIndex = this.indexOfAsciiPattern(bytes, keyPattern, searchIndex, bytes.length)
+      if (keyIndex < 0) {
+        return -1
+      }
+      const valueStart = this.findJsonValueStartAfterKeyBytes(bytes, keyIndex + keyPattern.length)
+      if (valueStart >= 0 && bytes[valueStart] === 34) {
+        return valueStart + 1
+      }
+      searchIndex = keyIndex + keyPattern.length
+    }
+    return -1
+  }
+
+  private findJsonStringValueStartBeforeBytes(bytes: Uint8Array, key: string, beforeIndex: number): number {
+    let searchIndex = 0
+    let result = -1
+    while (searchIndex < beforeIndex) {
+      const found = this.findJsonStringValueStartBytes(bytes, key, searchIndex)
+      if (found < 0 || found >= beforeIndex) {
+        return result
+      }
+      result = found
+      searchIndex = found + 1
+    }
+    return result
+  }
+
+  private findJsonNumberValueBytes(bytes: Uint8Array, key: string, fromIndex: number): number {
+    const keyPattern = `"${key}"`
+    const keyIndex = this.indexOfAsciiPattern(bytes, keyPattern, fromIndex, bytes.length)
+    if (keyIndex < 0) {
+      return -1
+    }
+    const valueStart = this.findJsonValueStartAfterKeyBytes(bytes, keyIndex + keyPattern.length)
+    if (valueStart < 0) {
+      return -1
+    }
+    return this.parseJsonNumberAtBytes(bytes, valueStart, bytes.length)
+  }
+
+  private findJsonNumberValueBeforeBytes(bytes: Uint8Array, key: string, beforeIndex: number): number {
+    let searchIndex = 0
+    let result = -1
+    while (searchIndex < beforeIndex) {
+      const keyPattern = `"${key}"`
+      const keyIndex = this.indexOfAsciiPattern(bytes, keyPattern, searchIndex, beforeIndex)
+      if (keyIndex < 0) {
+        return result
+      }
+      const valueStart = this.findJsonValueStartAfterKeyBytes(bytes, keyIndex + keyPattern.length)
+      if (valueStart >= 0 && valueStart < beforeIndex) {
+        const parsed = this.parseJsonNumberAtBytes(bytes, valueStart, beforeIndex)
+        if (parsed >= 0) {
+          result = parsed
+        }
+      }
+      searchIndex = keyIndex + keyPattern.length
+    }
+    return result
+  }
+
+  private findJsonValueStartAfterKeyBytes(bytes: Uint8Array, fromIndex: number): number {
+    let index = fromIndex
+    while (index < bytes.length && this.isJsonWhitespaceByte(bytes[index])) {
+      index++
+    }
+    if (index >= bytes.length || bytes[index] !== 58) {
+      return -1
+    }
+    index++
+    while (index < bytes.length && this.isJsonWhitespaceByte(bytes[index])) {
+      index++
+    }
+    return index < bytes.length ? index : -1
+  }
+
+  private parseJsonNumberAtBytes(bytes: Uint8Array, fromIndex: number, beforeIndex: number): number {
+    let index = fromIndex
+    let value = 0
+    let hasDigit = false
+    while (index < beforeIndex) {
+      const byte = bytes[index]
+      if (byte < 48 || byte > 57) {
+        break
+      }
+      value = value * 10 + byte - 48
+      hasDigit = true
+      index++
+    }
+    return hasDigit ? value : -1
+  }
+
+  private isJsonWhitespaceByte(byte: number): boolean {
+    return byte === 32 || byte === 9 || byte === 10 || byte === 13
+  }
+
+  private findJsonStringValueStart(source: string, key: string, fromIndex: number): number {
+    const compactPattern = `"${key}":"`
+    const spacedPattern = `"${key}": "`
+    const compactIndex = source.indexOf(compactPattern, fromIndex)
+    const spacedIndex = source.indexOf(spacedPattern, fromIndex)
+    if (compactIndex < 0 && spacedIndex < 0) {
+      return -1
+    }
+    if (spacedIndex < 0 || (compactIndex >= 0 && compactIndex < spacedIndex)) {
+      return compactIndex + compactPattern.length
+    }
+    return spacedIndex + spacedPattern.length
+  }
+
+  private findJsonStringValueStartBefore(source: string, key: string, beforeIndex: number): number {
+    const compactPattern = `"${key}":"`
+    const spacedPattern = `"${key}": "`
+    const compactIndex = source.lastIndexOf(compactPattern, beforeIndex)
+    const spacedIndex = source.lastIndexOf(spacedPattern, beforeIndex)
+    if (compactIndex < 0 && spacedIndex < 0) {
+      return -1
+    }
+    if (spacedIndex < 0 || compactIndex > spacedIndex) {
+      return compactIndex + compactPattern.length
+    }
+    return spacedIndex + spacedPattern.length
+  }
+
+  private findJsonNumberValueBefore(source: string, key: string, beforeIndex: number): number {
+    const keyIndex = source.lastIndexOf(`"${key}"`, beforeIndex)
+    if (keyIndex < 0) {
+      return -1
+    }
+    const colonIndex = source.indexOf(':', keyIndex)
+    if (colonIndex < 0 || colonIndex >= beforeIndex) {
+      return -1
+    }
+    let start = colonIndex + 1
+    while (start < beforeIndex && source.charAt(start) === ' ') {
+      start++
+    }
+    let end = start
+    while (end < beforeIndex) {
+      const ch = source.charAt(end)
+      if (ch < '0' || ch > '9') {
+        break
+      }
+      end++
+    }
+    if (end <= start) {
+      return -1
+    }
+    const parsed = Number(source.substring(start, end))
+    return isNaN(parsed) ? -1 : parsed
+  }
 
   private shouldUseOpenAIResponses(config: AIApiConfig, forceChatCompletions: boolean = false): boolean {
     return !forceChatCompletions &&
@@ -1044,6 +1546,7 @@ export class AIApiService {
           responseTools.push(tool)
         } else if (spec.kind === BuiltInResponsesToolKind.IMAGE_GENERATION) {
           const tool: OpenAIResponsesTool = { type: 'image_generation' }
+          tool.model = spec.imageModel !== undefined && spec.imageModel !== '' ? spec.imageModel : 'gpt-image-2'
           if (spec.imageSize !== undefined && spec.imageSize !== '') {
             tool.size = spec.imageSize
           }
@@ -1053,20 +1556,31 @@ export class AIApiService {
           if (spec.imageOutputFormat !== undefined && spec.imageOutputFormat !== '') {
             tool.output_format = spec.imageOutputFormat
           }
+          if (tool.output_format !== undefined && tool.output_format !== '') {
+            const normalizedOutputFormat = tool.output_format.toLowerCase()
+            if (spec.imageOutputCompression !== undefined &&
+              (normalizedOutputFormat === 'jpeg' || normalizedOutputFormat === 'webp')) {
+              tool.output_compression = Math.max(0, Math.min(100, Math.round(spec.imageOutputCompression)))
+            }
+            this.currentResponsesHostedImageMimeType = this.getImageMimeTypeForOutputFormat(normalizedOutputFormat)
+          } else {
+            this.currentResponsesHostedImageMimeType = 'image/png'
+          }
           if (spec.imageBackground !== undefined && spec.imageBackground !== '') {
             tool.background = spec.imageBackground
           }
-          // partial_images 决定 SSE 流里生图阶段会下发几张渐进预览图 (取值 0-3, 0 表示完全不发)。
-          // 历史默认 2 → 单次生图至少要在 SSE buffer 里拼 3 帧 5 MB+ 单行 JSON, 触发
-          //   `AllocateHugeObject(~5 MB) shared heap oom` 直接崩进程 (2026-05-23 fault).
-          // 改为默认 0 关闭渐进预览: 客户端反正没把 partial 渲染到 UI, 损失为零, 内存压力降到 1/3。
-          // 调用方仍可显式传 1/2/3 强开。
-          const partial = spec.imagePartialImages !== undefined && spec.imagePartialImages >= 0 ?
-            spec.imagePartialImages : 0
-          tool.partial_images = partial
+          // 与 RikkaHub 保持一致: 默认不传 partial_images, 让 OpenAI 使用官方默认值。
+          // 如果调用方显式设置, 才透传 0-3; 流解析侧仍会丢弃 partial_image 大行兜底防 OOM。
+          let partialLog = 'default'
+          if (spec.imagePartialImages !== undefined && spec.imagePartialImages >= 0) {
+            const partial = Math.min(3, Math.round(spec.imagePartialImages))
+            tool.partial_images = partial
+            partialLog = `${partial}`
+          }
           console.info('AIApiService',
-            `[Responses] image_generation tool: partial_images=${partial}, size=${tool.size ?? 'auto'}, ` +
-            `quality=${tool.quality ?? 'auto'}, format=${tool.output_format ?? 'png'}`)
+            `[Responses] image_generation tool: model=${tool.model}, partial_images=${partialLog}, size=${tool.size ?? 'auto'}, ` +
+            `quality=${tool.quality ?? 'auto'}, format=${tool.output_format ?? 'png'}, ` +
+            `compression=${tool.output_compression ?? 'auto'}`)
           responseTools.push(tool)
         }
       }
@@ -2946,8 +3460,7 @@ export class AIApiService {
     console.info('AIApiService', `Streaming request to: ${url}`)
     console.info('AIApiService', `Request body: ${JSON.stringify(requestBody).substring(0, 500)}...`)
 
-    const textDecoder = util.TextDecoder.create('utf-8')
-    let buffer = ''
+    const lineAccumulator = new StreamLineAccumulator(useOpenAIResponses)
 
     return this.httpService.streamPost(
       url,
@@ -2955,14 +3468,9 @@ export class AIApiService {
       headers,
       (chunk: ArrayBuffer) => {
         try {
-          const text = textDecoder.decodeToString(new Uint8Array(chunk), { stream: true })
-          buffer += text
-
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
+          const lines = lineAccumulator.append(new Uint8Array(chunk))
           for (let i = 0; i < lines.length; i++) {
-            this.handleStreamLine(config.apiStyle, useOpenAIResponses, lines[i],
+            this.handleStreamLineBytes(config.apiStyle, useOpenAIResponses, lines[i],
               onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
           }
         } catch (e) {
@@ -2970,10 +3478,10 @@ export class AIApiService {
         }
       },
       (response) => {
-        if (buffer.trim() !== '') {
-          this.handleStreamLine(config.apiStyle, useOpenAIResponses, buffer,
+        const remainingLine = lineAccumulator.flush()
+        if (remainingLine !== null) {
+          this.handleStreamLineBytes(config.apiStyle, useOpenAIResponses, remainingLine,
             onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
-          buffer = ''
         }
         if (!response.success) {
           console.error('AIApiService', `Stream response error: ${response.errorMessage}`)
@@ -3042,8 +3550,7 @@ export class AIApiService {
     console.info('AIApiService', `Streaming request with tools to: ${url}`)
     console.info('AIApiService', `Request body: ${JSON.stringify(requestBody).substring(0, 500)}...`)
 
-    const textDecoder = util.TextDecoder.create('utf-8')
-    let buffer = ''
+    const lineAccumulator = new StreamLineAccumulator(useOpenAIResponses)
 
     return this.httpService.streamPost(
       url,
@@ -3051,14 +3558,9 @@ export class AIApiService {
       headers,
       (chunk: ArrayBuffer) => {
         try {
-          const text = textDecoder.decodeToString(new Uint8Array(chunk), { stream: true })
-          buffer += text
-
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
+          const lines = lineAccumulator.append(new Uint8Array(chunk))
           for (let i = 0; i < lines.length; i++) {
-            this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, lines[i],
+            this.handleStreamLineWithToolsBytes(config.apiStyle, useOpenAIResponses, lines[i],
               onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
           }
         } catch (e) {
@@ -3066,10 +3568,10 @@ export class AIApiService {
         }
       },
       (response) => {
-        if (buffer.trim() !== '') {
-          this.handleStreamLineWithTools(config.apiStyle, useOpenAIResponses, buffer,
+        const remainingLine = lineAccumulator.flush()
+        if (remainingLine !== null) {
+          this.handleStreamLineWithToolsBytes(config.apiStyle, useOpenAIResponses, remainingLine,
             onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
-          buffer = ''
         }
         if (!response.success) {
           console.error('AIApiService', `Stream response error: ${response.errorMessage}`)
@@ -3088,6 +3590,36 @@ export class AIApiService {
   }
 
   // 处理流式响应行（支持工具调用回调）
+  private handleStreamLineWithToolsBytes(
+    apiStyle: ApiStyle,
+    useOpenAIResponses: boolean,
+    lineBytes: Uint8Array,
+    onData: (content: string) => void,
+    onError: (error: string) => void,
+    onReasoningData?: (content: string) => void,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+  ): void {
+    if (apiStyle === ApiStyle.OPENAI && useOpenAIResponses &&
+      this.tryEmitResponsesImageDoneBytes(lineBytes, onImageData, onHostedToolEvent)) {
+      return
+    }
+    this.handleStreamLineWithTools(
+      apiStyle,
+      useOpenAIResponses,
+      this.decodeUtf8Bytes(lineBytes),
+      onData,
+      onError,
+      onReasoningData,
+      onImageData,
+      onToolCallDelta,
+      onSearchReferences,
+      onHostedToolEvent
+    )
+  }
+
   private handleStreamLineWithTools(
     apiStyle: ApiStyle,
     useOpenAIResponses: boolean,
@@ -3118,6 +3650,11 @@ export class AIApiService {
     }
 
     if (jsonStr === '[DONE]') {
+      return
+    }
+
+    if (apiStyle === ApiStyle.OPENAI && useOpenAIResponses &&
+      this.tryEmitResponsesImageDoneLine(jsonStr, onImageData, onHostedToolEvent)) {
       return
     }
 
@@ -3663,6 +4200,34 @@ export class AIApiService {
     return trimmed
   }
 
+  private handleStreamLineBytes(
+    apiStyle: ApiStyle,
+    useOpenAIResponses: boolean,
+    lineBytes: Uint8Array,
+    onData: (content: string) => void,
+    onError: (error: string) => void,
+    onReasoningData?: (content: string) => void,
+    onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
+    onSearchReferences?: (references: SearchReference[]) => void,
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+  ): void {
+    if (apiStyle === ApiStyle.OPENAI && useOpenAIResponses &&
+      this.tryEmitResponsesImageDoneBytes(lineBytes, onImageData, onHostedToolEvent)) {
+      return
+    }
+    this.handleStreamLine(
+      apiStyle,
+      useOpenAIResponses,
+      this.decodeUtf8Bytes(lineBytes),
+      onData,
+      onError,
+      onReasoningData,
+      onImageData,
+      onSearchReferences,
+      onHostedToolEvent
+    )
+  }
+
   private handleStreamLine(
     apiStyle: ApiStyle,
     useOpenAIResponses: boolean,
@@ -3692,6 +4257,11 @@ export class AIApiService {
     }
 
     if (jsonStr === '[DONE]') {
+      return
+    }
+
+    if (apiStyle === ApiStyle.OPENAI && useOpenAIResponses &&
+      this.tryEmitResponsesImageDoneLine(jsonStr, onImageData, onHostedToolEvent)) {
       return
     }
 

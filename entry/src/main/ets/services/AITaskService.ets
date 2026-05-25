@@ -428,11 +428,11 @@ export class AITaskService {
         ReasoningLevel.OFF
       )
       if (!result.success) {
-        return { success: false, content: '', errorMessage: result.errorMessage }
+        return { success: false, content: '', errorMessage: this.formatImagePromptOptimizeError(result.errorMessage) }
       }
       const optimizedPrompt = this.cleanOptimizedImagePrompt(result.content)
       if (optimizedPrompt === '') {
-        return { success: false, content: '', errorMessage: '提示词优化失败' }
+        return { success: false, content: '', errorMessage: '提示词优化失败：模型未返回可用提示词' }
       }
       return { success: true, content: optimizedPrompt, errorMessage: '' }
     } catch (error) {
@@ -465,6 +465,19 @@ export class AITaskService {
     }
     prompt = prompt.replace(/^["'""'']+|["'""'']+$/g, '').trim()
     return prompt
+  }
+
+  private formatImagePromptOptimizeError(errorMessage: string): string {
+    const normalized = errorMessage.trim()
+    if (normalized === '' || normalized === 'No output in response' || normalized === 'No choices in response' ||
+      normalized === 'No content in response' || normalized === 'No candidates in response') {
+      return '提示词优化失败：模型未返回可用提示词'
+    }
+    if (normalized.startsWith('Failed to parse response') || normalized.indexOf('无法解析响应') >= 0 ||
+      normalized.indexOf('返回内容格式异常') >= 0) {
+      return '提示词优化失败：模型返回内容格式异常'
+    }
+    return normalized
   }
 }
 

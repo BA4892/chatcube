@@ -21,6 +21,7 @@ export struct AttachmentPicker {
   }
   @Event onClose: () => void = () => {
   }
+  private attachmentIdSequence: number = 0
 
   private get themeBackground(): string {
     return getAppUiState().themeBackground
@@ -202,7 +203,7 @@ export struct AttachmentPicker {
       console.info('AttachmentPicker', `Base64 data length: ${base64Data.length}`)
 
       // 创建附件对象
-      const attachmentId = `img_${Date.now()}`
+      const attachmentId = this.createAttachmentId('img')
       const attachment = new MessageAttachment(
         attachmentId,
         AttachmentType.IMAGE,
@@ -241,7 +242,7 @@ export struct AttachmentPicker {
       const base64Data = base64Helper.encodeToStringSync(uint8Array)
 
       const mimeType = AttachmentContentService.resolveMimeType(fileName)
-      const attachmentId = `file_${Date.now()}`
+      const attachmentId = this.createAttachmentId('file')
       const attachment = new MessageAttachment(
         attachmentId,
         AttachmentType.FILE,
@@ -274,6 +275,11 @@ export struct AttachmentPicker {
     } catch (e) {
       return encodedName
     }
+  }
+
+  private createAttachmentId(prefix: string): string {
+    this.attachmentIdSequence = this.attachmentIdSequence + 1
+    return `${prefix}_${Date.now()}_${this.attachmentIdSequence}_${Math.random().toString(36).substring(2, 9)}`
   }
 
 }

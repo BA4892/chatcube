@@ -166,7 +166,7 @@ export class WebDocumentParserService {
       return result
     }
     this.throwIfCanceled(shouldCancel)
-    await this.waitUntilReady()
+    await this.waitUntilReady(shouldCancel)
     this.throwIfCanceled(shouldCancel)
     const base64Data = await this.loadBase64Data(attachment)
     this.throwIfCanceled(shouldCancel)
@@ -178,9 +178,10 @@ export class WebDocumentParserService {
     return this.parseBase64(attachment, base64Data, shouldCancel)
   }
 
-  private async waitUntilReady(): Promise<void> {
+  private async waitUntilReady(shouldCancel: (() => boolean) | null): Promise<void> {
     const start = Date.now()
     while (!this.isReady) {
+      this.throwIfCanceled(shouldCancel)
       if (Date.now() - start > WEB_READY_TIMEOUT_MS) {
         throw new Error('document_parser_not_ready')
       }

@@ -69,6 +69,7 @@ export class ImageGenerationViewModel {
   @Trace moderation: ImageGenerationModeration = ImageGenerationModeration.LOW
   @Trace isGenerating: boolean = false
   @Trace errorMessage: string = ''
+  @Trace generationErrorMessage: string = ''
   @Trace currentImages: GeneratedMedia[] = []
   @Trace referenceImages: string[] = []
   @Trace activeTaskType: GeneratedMediaType = GeneratedMediaType.IMAGE_GENERATION
@@ -234,6 +235,7 @@ export class ImageGenerationViewModel {
     const referencePaths = this.referenceImages.slice()
     this.prompt = ''
     this.errorMessage = ''
+    this.generationErrorMessage = ''
     this.currentImages = []
     this.referenceImages = []
     for (let i = 0; i < referencePaths.length; i++) {
@@ -263,19 +265,23 @@ export class ImageGenerationViewModel {
     if (this.prompt.trim() === '') {
       return
     }
+    this.generationErrorMessage = ''
     const provider = this.findProvider(this.selectedProviderId)
     const model = this.findModel(provider, this.selectedModelId)
     if (provider === null || model === null) {
       this.errorMessage = '请先选择图像生成模型'
+      this.generationErrorMessage = this.errorMessage
       return
     }
     if (getEffectiveOutputMode(model) !== OutputMode.IMAGE) {
       this.errorMessage = '当前模型未标记为图片生成模型'
+      this.generationErrorMessage = this.errorMessage
       return
     }
     const providerValidation = validateProviderConfig(provider)
     if (!providerValidation.isValid) {
       this.errorMessage = providerValidation.errorMessage
+      this.generationErrorMessage = this.errorMessage
       return
     }
 
@@ -291,6 +297,7 @@ export class ImageGenerationViewModel {
     this.activeController = controller
     this.isGenerating = true
     this.errorMessage = ''
+    this.generationErrorMessage = ''
     this.currentImages = []
     this.backgroundGuard.updateImageGenerationRunningTaskCount(1)
 
@@ -319,6 +326,7 @@ export class ImageGenerationViewModel {
       if (token === this.generationToken && !controller.isCancelled()) {
         const message = this.formatError(error)
         this.errorMessage = message
+        this.generationErrorMessage = message
         await this.publishGenerationResult(taskId, type, true, 0, message)
       }
     } finally {
@@ -336,6 +344,7 @@ export class ImageGenerationViewModel {
     }
     this.isOptimizingPrompt = true
     this.errorMessage = ''
+    this.generationErrorMessage = ''
     try {
       const result = await this.aiTaskService.optimizeImagePrompt(
         this.prompt,
@@ -344,6 +353,7 @@ export class ImageGenerationViewModel {
       )
       if (!result.success) {
         this.errorMessage = result.errorMessage
+        this.generationErrorMessage = result.errorMessage
         return false
       }
       this.prompt = result.content
@@ -351,6 +361,7 @@ export class ImageGenerationViewModel {
     } catch (error) {
       console.error('ImageGenerationViewModel', `Optimize prompt failed: ${JSON.stringify(error)}`)
       this.errorMessage = '提示词优化失败'
+      this.generationErrorMessage = this.errorMessage
       return false
     } finally {
       this.isOptimizingPrompt = false

@@ -1,6 +1,7 @@
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
+import { inputMethod } from '@kit.IMEKit'
 import {
   DefaultMediaModel,
   DefaultMediaType,
@@ -145,8 +146,54 @@ struct ImageGenerationPage {
     return provider !== null ? provider.brandColor : ''
   }
 
+  private async safeStopPromptInputSession(): Promise<void> {
+    try {
+      this.getUIContext().getFocusController().clearFocus()
+    } catch (error) {
+      console.error('ImageGenerationPage', `Clear prompt focus failed: ${JSON.stringify(error)}`)
+    }
+    try {
+      await inputMethod.getController().stopInputSession()
+    } catch (error) {
+      console.error('ImageGenerationPage', `Stop prompt input session failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private async handleOptimizePrompt(): Promise<void> {
+    try {
+      await this.safeStopPromptInputSession()
+      const success = await this.viewModel.optimizePrompt()
+      if (success) {
+        await this.safeStopPromptInputSession()
+        showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_success'))
+      } else {
+        this.showImageGenerationErrorToast()
+      }
+    } catch (error) {
+      console.error('ImageGenerationPage', `Optimize prompt failed: ${JSON.stringify(error)}`)
+      showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_failed'))
+    }
+  }
+
+  private async handleGenerate(): Promise<void> {
+    try {
+      await this.safeStopPromptInputSession()
+      await this.viewModel.generate()
+      this.showImageGenerationErrorToast()
+    } catch (error) {
+      console.error('ImageGenerationPage', `Generate image failed: ${JSON.stringify(error)}`)
+      showToast(this.getUIContext(), '图片生成失败')
+    }
+  }
+
   private isEditingMode(): boolean {
     return this.viewModel.isCurrentRequestEditing()
+  }
+
+  private showImageGenerationErrorToast(): void {
+    if (this.viewModel.generationErrorMessage !== '') {
+      showToast(this.getUIContext(), this.viewModel.generationErrorMessage)
+    }
   }
 
   private handleBackNavigation(): boolean {
@@ -864,19 +911,10 @@ struct ImageGenerationPage {
           this.pickReferenceImages()
         },
         onOptimizePrompt: (): void => {
-          this.viewModel.optimizePrompt().then((success: boolean): void => {
-            if (success) {
-              showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_success'))
-            } else if (this.viewModel.errorMessage !== '') {
-              showToast(this.getUIContext(), this.viewModel.errorMessage)
-            }
-          }).catch((error: Error): void => {
-            console.error('ImageGenerationPage', `Optimize prompt failed: ${JSON.stringify(error)}`)
-            showToast(this.getUIContext(), $r('app.string.image_generation_optimize_prompt_failed'))
-          })
+          this.handleOptimizePrompt()
         },
         onGenerate: (): void => {
-          this.viewModel.generate()
+          this.handleGenerate()
         },
         onCancel: (): void => {
           this.showCancelSheet = true

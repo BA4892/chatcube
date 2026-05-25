@@ -180,6 +180,8 @@ export struct ChatPage {
   private documentParseQueue: MessageAttachment[] = []
   private isDocumentParseQueueRunning: boolean = false
   private documentParseEpoch: number = 0
+  private documentParseRunnerId: number = 0
+  @Local shouldMountDocumentParserWeb: boolean = false
   // 是否在列表底部
   @Local isAtBottom: boolean = false
   // 是否在列表顶部
@@ -405,7 +407,6 @@ export struct ChatPage {
   }
 
   aboutToAppear(): void {
-    this.documentParserService.attachController(this.documentParserWebController)
     if (this.routeParams === null && this.routeParamsSeed !== null) {
       this.routeParams = this.routeParamsSeed
       this.applyRouteDisplaySeed(this.routeParamsSeed)
@@ -2387,24 +2388,26 @@ export struct ChatPage {
           .height('100%')
           .backgroundColor(this.themeBackground)
 
-        Web({ src: DocumentParsePolicy.WEB_PARSER_URL, controller: this.documentParserWebController })
-          .width(1)
-          .height(1)
-          .opacity(0)
-          .position({ x: -2, y: -2 })
-          .hitTestBehavior(HitTestMode.None)
-          .onControllerAttached(() => {
-            this.documentParserService.attachController(this.documentParserWebController)
-          })
-          .onPageEnd(() => {
-            this.documentParserService.markReady()
-            if (this.isPageVisible) {
-              this.preparePendingDocumentAttachments()
-            }
-          })
-          .javaScriptAccess(true)
-          .fileAccess(false)
-          .backgroundColor(Color.Transparent)
+        if (this.shouldMountDocumentParserWeb) {
+          Web({ src: DocumentParsePolicy.WEB_PARSER_URL, controller: this.documentParserWebController })
+            .width(1)
+            .height(1)
+            .opacity(0)
+            .position({ x: -2, y: -2 })
+            .hitTestBehavior(HitTestMode.None)
+            .onControllerAttached(() => {
+              this.documentParserService.attachController(this.documentParserWebController)
+            })
+            .onPageEnd(() => {
+              this.documentParserService.markReady()
+              if (this.isPageVisible) {
+                this.preparePendingDocumentAttachments()
+              }
+            })
+            .javaScriptAccess(true)
+            .fileAccess(false)
+            .backgroundColor(Color.Transparent)
+        }
 
         // 编辑模式覆盖层 - 点击/滑动空白处都取消编辑
         // 滑动不再传透给 List,List 不会跟随滚动(已与产品确认)
@@ -3241,6 +3244,7 @@ export struct ChatPage {
     if (changed) {
       this.refreshPendingAttachments()
     }
+    this.teardownDocumentParserWebIfIdle()
   }
 
   private preparePendingDocumentAttachments(): void {
@@ -3287,11 +3291,12 @@ export struct ChatPage {
 
   private enqueueDocumentParse(attachment: MessageAttachment): void {
     for (let i = 0; i < this.documentParseQueue.length; i++) {
-      if (this.documentParseQueue[i] === attachment) {
+      if (this.isSamePendingAttachment(this.documentParseQueue[i], attachment)) {
         return
       }
     }
     this.documentParseQueue.push(attachment)
+    this.ensureDocumentParserWebMounted()
     this.runDocumentParseQueue()
   }
 
@@ -3300,10 +3305,13 @@ export struct ChatPage {
       return
     }
     this.isDocumentParseQueueRunning = true
+    this.documentParseRunnerId = this.documentParseRunnerId + 1
+    const runnerId = this.documentParseRunnerId
     const epoch = this.documentParseEpoch
+    this.ensureDocumentParserWebMounted()
     try {
       while (this.documentParseQueue.length > 0) {
-        if (epoch !== this.documentParseEpoch) {
+        if (runnerId !== this.documentParseRunnerId || epoch !== this.documentParseEpoch) {
           break
         }
         const attachment = this.documentParseQueue.shift()
@@ -3313,11 +3321,34 @@ export struct ChatPage {
         await this.parsePendingAttachment(attachment, epoch)
       }
     } finally {
-      this.isDocumentParseQueueRunning = false
-      if (this.documentParseQueue.length > 0) {
-        this.runDocumentParseQueue()
+      if (runnerId === this.documentParseRunnerId) {
+        this.isDocumentParseQueueRunning = false
+        if (this.documentParseQueue.length > 0) {
+          this.runDocumentParseQueue()
+        } else {
+          this.teardownDocumentParserWebIfIdle()
+        }
       }
     }
+  }
+
+  private ensureDocumentParserWebMounted(): void {
+    if (!this.shouldMountDocumentParserWeb) {
+      this.documentParserService.markNotReady()
+      this.shouldMountDocumentParserWeb = true
+    }
+  }
+
+  private teardownDocumentParserWebIfIdle(): void {
+    if (this.isDocumentParseQueueRunning || this.hasActiveDocumentParseWork()) {
+      return
+    }
+    if (!this.shouldMountDocumentParserWeb) {
+      this.documentParserService.markNotReady()
+      return
+    }
+    this.documentParserService.markNotReady()
+    this.shouldMountDocumentParserWeb = false
   }
 
   private async parsePendingAttachment(attachment: MessageAttachment, epoch: number): Promise<void> {
@@ -3328,10 +3359,10 @@ export struct ChatPage {
     attachment.parseError = ''
     this.refreshPendingAttachments()
 
+    const cancelChecker = (): boolean => {
+      return epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)
+    }
     try {
-      const cancelChecker = (): boolean => {
-        return epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)
-      }
       this.documentParserService.cancelChecker = cancelChecker
       const result = await this.documentParserService.parseAttachment(attachment)
       if (epoch !== this.documentParseEpoch || !this.isPendingAttachmentActive(attachment)) {
@@ -3346,7 +3377,9 @@ export struct ChatPage {
       attachment.parseError = this.normalizeDocumentParseError(this.stringifyDocumentParseError(error))
       this.refreshPendingAttachments()
     } finally {
-      this.documentParserService.cancelChecker = null
+      if (this.documentParserService.cancelChecker === cancelChecker) {
+        this.documentParserService.cancelChecker = null
+      }
     }
   }
 
@@ -3372,13 +3405,34 @@ export struct ChatPage {
 
   private isPendingAttachmentActive(attachment: MessageAttachment): boolean {
     for (let i = 0; i < this.pendingAttachments.length; i++) {
-      const current = this.pendingAttachments[i]
-      if (current === attachment) {
+      if (this.isSamePendingAttachment(this.pendingAttachments[i], attachment)) {
         return true
       }
-      if (current.id === attachment.id &&
-        current.filePath === attachment.filePath &&
-        current.name === attachment.name) {
+    }
+    return false
+  }
+
+  private isSamePendingAttachment(left: MessageAttachment, right: MessageAttachment): boolean {
+    if (left === right) {
+      return true
+    }
+    return left.id === right.id &&
+      left.filePath === right.filePath &&
+      left.name === right.name
+  }
+
+  private hasActiveDocumentParseWork(): boolean {
+    if (this.documentParseQueue.length > 0) {
+      return true
+    }
+    for (let i = 0; i < this.pendingAttachments.length; i++) {
+      const attachment = this.pendingAttachments[i]
+      if (!DocumentParsePolicy.isWebParseCandidate(attachment) || attachment.parsedText !== '') {
+        continue
+      }
+      if (attachment.processState === AttachmentProcessState.QUEUED ||
+        attachment.processState === AttachmentProcessState.PARSING ||
+        attachment.processState === AttachmentProcessState.COPYING) {
         return true
       }
     }

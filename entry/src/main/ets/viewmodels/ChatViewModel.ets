@@ -21,6 +21,7 @@ import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '.
 import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
 import { WebSearchResult, SearchResult } from '../services/WebSearchService'
 import { http } from '@kit.NetworkKit'
+import { util } from '@kit.ArkTS'
 import { getEffectiveApiKey } from '../config/PresetProviders'
 import { getPreferencesService } from '../services/PreferencesService'
 import { PreferenceKeys } from '../services/PreferencesService'
@@ -3329,17 +3330,8 @@ ${limitedSearchContext}
 
       const buffer = response.result as ArrayBuffer
       const bytes = new Uint8Array(buffer)
-      const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-      let base64 = ''
-      for (let i = 0; i < bytes.length; i += 3) {
-        const b0 = bytes[i]
-        const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0
-        const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0
-        base64 += base64Chars.charAt(b0 >> 2)
-        base64 += base64Chars.charAt(((b0 & 3) << 4) | (b1 >> 4))
-        base64 += (i + 1 < bytes.length) ? base64Chars.charAt(((b1 & 15) << 2) | (b2 >> 6)) : '='
-        base64 += (i + 2 < bytes.length) ? base64Chars.charAt(b2 & 63) : '='
-      }
+      const base64Helper = new util.Base64Helper()
+      const base64 = base64Helper.encodeToStringSync(bytes)
 
       let mimeType = 'image/png'
       const contentType = response.header?.['content-type'] as string | undefined
@@ -3402,6 +3394,9 @@ ${limitedSearchContext}
     if (this.attachmentStorageService.isReady()) {
       const filePath = await this.attachmentStorageService.saveAttachment(attachment)
       attachment.filePath = filePath
+      if (filePath !== '') {
+        attachment.base64Data = ''
+      }
       console.info('ChatViewModel', `AI generated image saved to: ${filePath}`)
     } else {
       console.warn('ChatViewModel', 'AttachmentStorageService not ready, image not persisted to file')

@@ -331,7 +331,7 @@ export class ChatSendFlow {
       builtInResponsesTools.push(new BuiltInResponsesToolSpec(BuiltInResponsesToolKind.WEB_SEARCH))
     }
     // 内置生图: 与 hosted 搜索独立, 只要开关打开 + provider 满足 transport=RESPONSES 就注入。
-    // 流式生图必须 partial_images >= 1, BuiltInResponsesToolSpec 默认 2 (在 AIApiService 内兜底)。
+    // 默认不传 partial_images, 与 RikkaHub 一样走 OpenAI 默认值; 解析侧会丢弃 partial 大行兜底防 OOM。
     if (builtinImageGenEnabled && hostedEligible) {
       builtInResponsesTools.push(new BuiltInResponsesToolSpec(BuiltInResponsesToolKind.IMAGE_GENERATION))
     }

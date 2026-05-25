@@ -44,6 +44,10 @@ export struct ImagePromptBar {
     return getAppUiState().themeSurface
   }
 
+  private get chatInputEnterKeySend(): boolean {
+    return getAppUiState().chatInputEnterKeySend
+  }
+
   private hasSelectedModel(): boolean {
     return this.selectedModelName !== '' && this.selectedProviderId !== ''
   }
@@ -103,8 +107,17 @@ export struct ImagePromptBar {
           .borderRadius(12)
           .constraintSize({ minHeight: 76, maxHeight: 190 })
           .padding({ left: 12, right: 12, top: 10, bottom: 52 })
+          .enterKeyType(this.chatInputEnterKeySend ? EnterKeyType.Send : EnterKeyType.NEW_LINE)
           .onChange((value: string): void => {
             this.onPromptChange(value)
+          })
+          .onSubmit((): void => {
+            if (!this.chatInputEnterKeySend) {
+              return
+            }
+            if (!this.isGenerating && this.canGenerate) {
+              this.onGenerate()
+            }
           })
 
         Row({ space: 8 }) {
@@ -253,7 +266,7 @@ export struct ImagePromptBar {
     }
     .height(34)
     .padding({ left: 10, right: 12 })
-    .backgroundColor(this.canAddReferenceImages ? getAppUiState().themePrimaryLight : this.themeSurface)
+    .backgroundColor(Color.Transparent)
     .accessibilityText($r('app.string.image_generation_add_reference'))
     .enabled(this.canAddReferenceImages)
     .onClick(() => {
@@ -295,7 +308,7 @@ export struct ImagePromptBar {
     .type(ButtonType.Circle)
     .width(34)
     .height(34)
-    .backgroundColor(this.canOptimizePrompt || this.isOptimizingPrompt ? getAppUiState().themePrimaryLight : this.themeSurface)
+    .backgroundColor(Color.Transparent)
     .accessibilityText($r('app.string.image_generation_optimize_prompt'))
     .enabled(this.canOptimizePrompt)
     .onClick(() => {
