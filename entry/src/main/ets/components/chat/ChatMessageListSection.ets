@@ -416,9 +416,7 @@ export struct ChatMessageListSection {
       // 用户视线被 spinner 挡住, 不会看到"从顶部滚到底部"的过渡
       List({ scroller: this.scroller }) {
           ListItem() {
-            Column() {
-              Column().height(this.topInsetHeight)
-            }
+            Column().height(this.topInsetHeight)
           }
 
           LazyForEach(this.messageRowDataSource, (item: ChatMessageRowData, _index: number) => {
@@ -510,22 +508,20 @@ export struct ChatMessageListSection {
           if (!this.isEditingMessage && this.showDraftPreview) {
             ListItem({ style: ListItemStyle.NONE }) {
               Row() {
-                Column() {
-                  DraftPreviewBubble({
-                    inputText: this.inputText,
-                    pendingAttachments: this.pendingAttachments,
-                    previewTimeText: this.draftPreviewTimeText,
-                    chatFontSize: this.chatFontSize,
-                    onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
-                      this.onImageClick(images, imageIndex, sourceIds)
-                    },
-                    onContentLayoutChange: (): void => {
-                      this.onContentLayoutChange()
-                    }
-                  })
-                }
-                .width('100%')
-                .constraintSize({ maxWidth: this.getEffectiveContentMaxWidth() })
+                DraftPreviewBubble({
+                  inputText: this.inputText,
+                  pendingAttachments: this.pendingAttachments,
+                  previewTimeText: this.draftPreviewTimeText,
+                  chatFontSize: this.chatFontSize,
+                  onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+                    this.onImageClick(images, imageIndex, sourceIds)
+                  },
+                  onContentLayoutChange: (): void => {
+                    this.onContentLayoutChange()
+                  }
+                })
+                  .width('100%')
+                  .constraintSize({ maxWidth: this.getEffectiveContentMaxWidth() })
               }
               .width('100%')
               .justifyContent(FlexAlign.Center)

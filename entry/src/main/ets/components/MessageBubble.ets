@@ -1881,24 +1881,16 @@ export struct MessageBubble {
         // 只在 showHeader 为 true 时显示
         if (this.showHeader) {
           Row() {
-            // 助手头像
-            Column() {
-              AssistantAvatarView({
-                value: this.assistantAvatarSymbol,
-                color: this.assistantAvatarColor,
-                avatarSize: 30,
-                radius: 8,
-                fontSize: 14,
-                cacheKey: this.assistantAvatarCacheKey,
-                modelId: this.message.modelId !== '' ? this.message.modelId : this.currentModelId,
-                modelName: this.message.modelName
-              })
-            }
-            .width(30)
-            .height(30)
-            .borderRadius(8)
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
+            AssistantAvatarView({
+              value: this.assistantAvatarSymbol,
+              color: this.assistantAvatarColor,
+              avatarSize: 30,
+              radius: 8,
+              fontSize: 14,
+              cacheKey: this.assistantAvatarCacheKey,
+              modelId: this.message.modelId !== '' ? this.message.modelId : this.currentModelId,
+              modelName: this.message.modelName
+            })
 
             // 模型名称
             Text(this.message.modelName || 'AI')
