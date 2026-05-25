@@ -1,7 +1,8 @@
 import { ChatMessage, MessageAttachment } from '../../models/ChatModels'
 import { DraftPreviewBubble } from './DraftPreviewBubble'
 import { shouldShowMessageHeader } from '../../utils/MessageListUtils'
-import { ChatMessageListItem } from './ChatMessageListItem'
+import { DateDivider } from '../DateDivider'
+import { MessageBubble } from '../MessageBubble'
 import { CubeSpinner3D } from '../loading/CubeSpinner'
 import { getAppUiState } from '../../state/AppUiState'
 import {
@@ -67,6 +68,8 @@ export struct ChatMessageListSection {
     _lastIndex: number): void => {}
   private messageRows: ChatMessageRowData[] = []
   private messageRowDataSource: ChatMessageListDataSource = new ChatMessageListDataSource()
+  private rowLayoutWidths: Map<string, number> = new Map()
+  private rowLayoutHeights: Map<string, number> = new Map()
 
   aboutToAppear(): void {
     this.syncMessageRows(true)
@@ -188,6 +191,31 @@ export struct ChatMessageListSection {
       return 3
     }
     return 4
+  }
+
+  private readAreaDimension(value: Length): number {
+    if (typeof value === 'number') {
+      return Number.isNaN(value) || value <= 0 ? 0 : value
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value)
+      return Number.isNaN(parsed) || parsed <= 0 ? 0 : parsed
+    }
+    return 0
+  }
+
+  private handleMessageItemAreaChanged(rowId: string, listIndex: number, area: Area): void {
+    const width = this.readAreaDimension(area.width)
+    const height = this.readAreaDimension(area.height)
+    const previousWidth = this.rowLayoutWidths.get(rowId) ?? 0
+    const previousHeight = this.rowLayoutHeights.get(rowId) ?? 0
+    if (Math.abs(width - previousWidth) < 0.5 && Math.abs(height - previousHeight) < 0.5) {
+      return
+    }
+    this.rowLayoutWidths.set(rowId, width)
+    this.rowLayoutHeights.set(rowId, height)
+    this.onContentLayoutChange()
+    this.onMessageItemLayoutChange(listIndex)
   }
 
   // 取消 @ReusableV2 复用: LazyForEach + 手动 DataSource 下精确订阅会失效, 复用瞬间 @Param 不刷新会
@@ -395,77 +423,87 @@ export struct ChatMessageListSection {
 
           LazyForEach(this.messageRowDataSource, (item: ChatMessageRowData, _index: number) => {
             ListItem({ style: ListItemStyle.NONE }) {
-              ChatMessageListItem({
-                message: item.message,
-                showDateDivider: item.showDateDivider,
-                showHeader: item.showHeader,
-                isSelected: item.isSelected,
-                isEditing: item.isEditing,
-                isDimmed: item.isDimmed,
-                renderSignature: item.renderSignature,
-                contentRenderSignature: item.contentRenderSignature,
-                currentModelId: this.currentModelId,
-                assistantAvatarSymbol: item.assistantAvatarSymbol,
-                assistantAvatarColor: item.assistantAvatarColor,
-                assistantAvatarCacheKey: item.assistantAvatarCacheKey,
-                chatFontSize: this.chatFontSize,
-                themeRenderKey: this.themeRenderKey,
-                contentMaxWidth: this.getEffectiveContentMaxWidth(),
-                isMultiSelectMode: this.isMultiSelectMode,
-                previewContent: this.inputText,
-                previewAttachments: this.pendingAttachments,
-                onRegenerate: () => {
-                  this.onRegenerate(item.message)
-                },
-                onDelete: () => {
-                  this.onDelete(item.message)
-                },
-                onEdit: () => {
-                  this.onEdit(item.message)
-                },
-                onCancelEdit: () => {
-                  this.onCancelEdit()
-                },
-                onShareMessage: () => {
-                  this.onShareMessage(item.message)
-                },
-                onTranslate: (content: string, targetLang: string,
-                  callback: (result: string, errorMessage: string) => void): void => {
-                  this.onTranslate(content, targetLang, callback)
-                },
-                onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
-                  this.onImageClick(images, imageIndex, sourceIds)
-                },
-                onOpenLink: (title: string, url: string): void => {
-                  this.onOpenLink(title, url)
-                },
-                onTTS: (messageId: string, content: string): void => {
-                  this.onTTS(messageId, content)
-                },
-                onTTSStop: (): void => {
-                  this.onTTSStop()
-                },
-                onContentLayoutChange: (): void => {
-                  this.onContentLayoutChange()
-                  this.onMessageItemLayoutChange(_index + 1)
-                },
-                onSelect: (messageId: string): void => {
-                  this.onSelect(messageId)
-                },
-                onEnterMultiSelect: (messageId: string): void => {
-                  this.onEnterMultiSelect(messageId)
-                },
-                onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
-                  this.onAskUserAnswer(toolCallId, answerJson)
+              Row() {
+                Column() {
+                  if (item.showDateDivider) {
+                    DateDivider({ timestamp: item.message.timestamp })
+                  }
+
+                  MessageBubble({
+                    message: item.message,
+                    renderSignature: item.renderSignature,
+                    contentRenderSignature: item.contentRenderSignature,
+                    showHeader: item.showHeader,
+                    currentModelId: this.currentModelId,
+                    assistantAvatarSymbol: item.assistantAvatarSymbol,
+                    assistantAvatarColor: item.assistantAvatarColor,
+                    assistantAvatarCacheKey: item.assistantAvatarCacheKey,
+                    chatFontSize: this.chatFontSize,
+                    themeRenderKey: this.themeRenderKey,
+                    isMultiSelectMode: this.isMultiSelectMode,
+                    isSelected: item.isSelected,
+                    isEditing: item.isEditing,
+                    previewContent: item.isEditing ? this.inputText : '',
+                    previewAttachments: item.isEditing ? this.pendingAttachments : [],
+                    onRegenerate: () => {
+                      this.onRegenerate(item.message)
+                    },
+                    onDelete: () => {
+                      this.onDelete(item.message)
+                    },
+                    onEdit: () => {
+                      this.onEdit(item.message)
+                    },
+                    onCancelEdit: () => {
+                      this.onCancelEdit()
+                    },
+                    onShareMessage: () => {
+                      this.onShareMessage(item.message)
+                    },
+                    onTranslate: (content: string, targetLang: string,
+                      callback: (result: string, errorMessage: string) => void): void => {
+                      this.onTranslate(content, targetLang, callback)
+                    },
+                    onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
+                      this.onImageClick(images, imageIndex, sourceIds)
+                    },
+                    onOpenLink: (title: string, url: string): void => {
+                      this.onOpenLink(title, url)
+                    },
+                    onTTS: (messageId: string, content: string): void => {
+                      this.onTTS(messageId, content)
+                    },
+                    onTTSStop: (): void => {
+                      this.onTTSStop()
+                    },
+                    onContentLayoutChange: (): void => {
+                      this.onContentLayoutChange()
+                      this.onMessageItemLayoutChange(_index + 1)
+                    },
+                    onSelect: (messageId: string): void => {
+                      this.onSelect(messageId)
+                    },
+                    onEnterMultiSelect: (messageId: string): void => {
+                      this.onEnterMultiSelect(messageId)
+                    },
+                    onAskUserAnswer: (toolCallId: string, answerJson: string): void => {
+                      this.onAskUserAnswer(toolCallId, answerJson)
+                    }
+                  })
                 }
-              })
                 .width('100%')
+                .constraintSize({ maxWidth: this.getEffectiveContentMaxWidth() })
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 14, right: 14, top: 5, bottom: 5 })
+              .opacity(item.isDimmed ? 0.4 : 1)
             }
             .onAppear(() => {
               this.onMessageItemAppear(_index + 1)
             })
-            .onAreaChange((_oldArea: Area, _newArea: Area) => {
-              this.onMessageItemLayoutChange(_index + 1)
+            .onAreaChange((_oldArea: Area, newArea: Area) => {
+              this.handleMessageItemAreaChanged(item.stableId, _index + 1, newArea)
             })
           }, (item: ChatMessageRowData): string => item.key)
 
