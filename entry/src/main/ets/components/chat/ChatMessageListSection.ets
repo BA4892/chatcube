@@ -59,6 +59,8 @@ export struct ChatMessageListSection {
   @Event onScrollStart: () => void = (): void => {}
   @Event onScrollStop: () => void = (): void => {}
   @Event onContentLayoutChange: () => void = (): void => {}
+  @Event onMessageItemAppear: (listIndex: number) => void = (_listIndex: number): void => {}
+  @Event onMessageItemLayoutChange: (listIndex: number) => void = (_listIndex: number): void => {}
   @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
     _scrollState: ScrollState): void => {}
   @Event onScrollIndex: (firstIndex: number, lastIndex: number) => void = (_firstIndex: number,
@@ -445,6 +447,7 @@ export struct ChatMessageListSection {
                 },
                 onContentLayoutChange: (): void => {
                   this.onContentLayoutChange()
+                  this.onMessageItemLayoutChange(_index + 1)
                 },
                 onSelect: (messageId: string): void => {
                   this.onSelect(messageId)
@@ -458,6 +461,12 @@ export struct ChatMessageListSection {
               })
                 .width('100%')
             }
+            .onAppear(() => {
+              this.onMessageItemAppear(_index + 1)
+            })
+            .onAreaChange((_oldArea: Area, _newArea: Area) => {
+              this.onMessageItemLayoutChange(_index + 1)
+            })
           }, (item: ChatMessageRowData): string => item.key)
 
           if (!this.isEditingMessage && this.showDraftPreview) {

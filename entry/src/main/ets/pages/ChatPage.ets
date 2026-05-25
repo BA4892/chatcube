@@ -2368,12 +2368,19 @@ export struct ChatPage {
           onContentLayoutChange: (): void => {
             this.handleMessageListContentLayoutChanged()
           },
+          onMessageItemAppear: (listIndex: number): void => {
+            this.getScrollUiFlow().handleIndexedTargetItemReady(listIndex)
+          },
+          onMessageItemLayoutChange: (listIndex: number): void => {
+            this.getScrollUiFlow().handleIndexedTargetItemReady(listIndex)
+          },
           onDidScroll: (scrollOffset: number, scrollState: ScrollState): void => {
             this.handleMessageListDidScroll(scrollOffset, scrollState)
           },
           onScrollIndex: (firstIndex: number, lastIndex: number): void => {
             this.firstVisibleListIndex = firstIndex
             this.lastVisibleListIndex = lastIndex
+            this.getScrollUiFlow().handleScrollIndexChanged()
           }
         })
           .width('100%')
@@ -3073,7 +3080,7 @@ export struct ChatPage {
     })
   }
 
-  // 估算用户当前视觉焦点对应的 message index — 取首末可见 list index 的中点再减占位 header。
+  // 估算用户当前正在阅读的 message index: 取顶部可见消息,与消息地图"跳到消息开头"语义一致。
   // 用于消息地图 Sheet 打开时定位"我在哪"。messages 为空或 list index 异常返回 -1。
   private computeCurrentVisibleMessageIndex(): number {
     if (this.messages.length === 0) {
@@ -3081,11 +3088,17 @@ export struct ChatPage {
     }
     const first = this.firstVisibleListIndex
     const last = this.lastVisibleListIndex
-    if (first < 0 && last < 0) {
+    const hasVisibleRange = first >= 0 && last > 0 && last >= first
+    if (!hasVisibleRange) {
+      if (this.isAtBottom || this.syncIsAtBottomBoundaryFromScroller()) {
+        return this.messages.length - 1
+      }
+      if (this.isAtTop || this.readCurrentScrollOffset() <= 0) {
+        return 0
+      }
       return -1
     }
-    const mid = Math.floor((Math.max(first, 0) + Math.max(last, 0)) / 2)
-    const msgIdx = mid - 1 // toListScrollIndexForMessage = idx + 1 的反函数
+    const msgIdx = first - 1 // toListScrollIndexForMessage = idx + 1 的反函数
     if (msgIdx < 0) {
       return 0
     }
@@ -3108,27 +3121,16 @@ export struct ChatPage {
     this.showMessageMapSheet = false
     const targetMessageId = this.messages[messageIndex].id
     setTimeout(() => {
-      this.scroller.scrollToIndex(
-        toListScrollIndexForMessage(messageIndex),
-        true,
-        ScrollAlign.CENTER
-      )
-    }, 120)
-    // flash 高亮: 等 sheet 关闭(120) + scrollToIndex 动画(~300) 后触发, 让目标行有时间 mount。
-    // tick 用 Date.now() 单调递增, 写入 messageId 触发 MessageBubble 端动画。
-    setTimeout(() => {
-      if (targetMessageId.length === 0) {
+      const currentIndex = findMessageIndexById(this.messages, targetMessageId)
+      if (currentIndex < 0) {
         return
       }
-      setAppUiStateValue<string>(AppStorageKeys.FLASH_HIGHLIGHT_MESSAGE_ID, targetMessageId)
-      setAppUiStateValue<number>(AppStorageKeys.FLASH_HIGHLIGHT_TICK, Date.now())
-    }, 420)
-    // 动画结束后清掉 messageId, tick 保持单调不清零(清零会破坏边沿协议)
-    setTimeout(() => {
-      if (getAppUiState().flashHighlightMessageId === targetMessageId) {
-        setAppUiStateValue<string>(AppStorageKeys.FLASH_HIGHLIGHT_MESSAGE_ID, '')
-      }
-    }, 420 + 1500)
+      this.getScrollUiFlow().scrollToIndexWithStabilization(
+        toListScrollIndexForMessage(currentIndex),
+        ScrollAlign.START,
+        this.getMessageListTopSpacerHeight()
+      )
+    }, 120)
   }
 
   private handleToolSelectionToggle(toolId: string, enabled: boolean): void {

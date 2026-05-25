@@ -22,7 +22,7 @@ import { AssistantAvatarView } from './AssistantAvatar'
 import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
-import { getAppUiState, observeAppUiState } from '../state/AppUiState'
+import { getAppUiState } from '../state/AppUiState'
 import {
   getMarkdownBlockSpacing,
   getMarkdownQuotePadding,
@@ -148,11 +148,6 @@ export struct MessageBubble {
   @Local latexPreviewOffsetY: number = 0
   @Local latexPreviewLastOffsetX: number = 0
   @Local latexPreviewLastOffsetY: number = 0
-  // 跳转 flash 高亮: messageId 命中时 800ms 微缩放 + alpha 渐变
-  @Local flashScale: number = 1.0
-  @Local flashAlpha: number = 0
-  @Local lastConsumedFlashTick: number = 0
-
   // 深色模式状态（用于主题适配）
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
@@ -172,9 +167,6 @@ export struct MessageBubble {
   }
   private get themePrimaryLight(): string {
     return getAppUiState().themePrimaryLight
-  }
-  private get themePrimarySubtleBackground(): string {
-    return withColorAlpha(this.themePrimary, this.isDarkMode ? '28' : '16')
   }
 
   // 聊天字体大小
@@ -202,15 +194,8 @@ export struct MessageBubble {
   private reasoningTimerId: number = -1
   private reasoningShimmerTimerId: number = -1
   private reasoningScroller: Scroller = new Scroller()
-  private flashObserverDisposer: (() => void) | null = null
   private get speakingMessageId(): string {
     return getAppUiState().speakingMessageId
-  }
-  private get flashHighlightMessageId(): string {
-    return getAppUiState().flashHighlightMessageId
-  }
-  private get flashHighlightTick(): number {
-    return getAppUiState().flashHighlightTick
   }
   // 聊天图片紧凑展示参数
   private compactImageMaxHeight: number = 100
@@ -363,61 +348,11 @@ export struct MessageBubble {
 
     this.isReasoningExpanded = false
     this.syncReasoningRuntime()
-    this.registerFlashObserver()
-    this.tryConsumeFlash()
   }
 
   aboutToDisappear(): void {
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
-    this.unregisterFlashObserver()
-  }
-
-  // 全局 flash 高亮订阅: 跳转消息时 ChatPage 写入 flashHighlightMessageId + Tick,
-  // 命中本气泡时启动 800ms 微缩放 + alpha 渐变。tick 单调递增不清零, 用作边沿判断。
-  private registerFlashObserver(): void {
-    if (this.flashObserverDisposer !== null) {
-      return
-    }
-    this.flashObserverDisposer = observeAppUiState(['flashHighlightTick'], (): void => {
-      this.tryConsumeFlash()
-    })
-  }
-
-  private unregisterFlashObserver(): void {
-    if (this.flashObserverDisposer !== null) {
-      this.flashObserverDisposer()
-      this.flashObserverDisposer = null
-    }
-  }
-
-  private tryConsumeFlash(): void {
-    if (this.message.id.length === 0) {
-      return
-    }
-    if (this.flashHighlightMessageId !== this.message.id) {
-      return
-    }
-    const tick = this.flashHighlightTick
-    if (tick <= this.lastConsumedFlashTick) {
-      return
-    }
-    this.lastConsumedFlashTick = tick
-    this.startFlashAnimation()
-  }
-
-  private startFlashAnimation(): void {
-    // flash 视觉只用 scale 微脉冲: 1.0 → 1.02 (200ms) → 1.0 (300ms)。
-    // alpha overlay 层在 LazyForEach + ReusableV2 下 Stack height 100% 有 layout 风险,
-    // 暂不启用 alpha 闪烁,只保留 scale 表达视觉信号。
-    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-      this.flashScale = 1.02
-    })
-    setTimeout((): void => {
-      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-        this.flashScale = 1.0
-      })
-    }, 200)
   }
 
   // 消息状态变化回调（优化跳动点动画性能）
@@ -1006,9 +941,6 @@ export struct MessageBubble {
       }
     }
     .width('100%')
-    // flash 高亮: 仅用 scale 微脉冲表达视觉信号,
-    // 不叠 alpha overlay 层 (LazyForEach + ReusableV2 下 Stack height 100% 行为不稳定)
-    .scale({ x: this.flashScale, y: this.flashScale })
     // 入退场动画: 仅 opacity, 不再用方向性 translate。
     // 原因: transition 是组件级, LazyForEach 复用未启用时, 滚出 cachedCount 后再
     // 回到视野会重新构造组件并重播该动画, 让用户误以为"消息重新加载"。

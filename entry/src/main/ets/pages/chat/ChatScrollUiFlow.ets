@@ -1,4 +1,5 @@
 import { ChatMessage } from '../../models/ChatModels'
+import { LengthUnit } from '@kit.ArkUI'
 
 export interface ChatScrollUiFlowDependencies {
   scroller: Scroller
@@ -39,6 +40,14 @@ export class ChatScrollUiFlow {
   private static readonly EDGE_SCROLL_TARGET_NONE: number = 0
   private static readonly EDGE_SCROLL_TARGET_TOP: number = 1
   private static readonly EDGE_SCROLL_TARGET_BOTTOM: number = 2
+  private static readonly EDGE_SCROLL_CORRECTION_MAX_COUNT: number = 6
+  private static readonly EDGE_SCROLL_CORRECTION_WINDOW_MS: number = 2000
+  private static readonly BOTTOM_EDGE_PRELOAD_ITEM_COUNT: number = 3
+  private static readonly BOTTOM_EDGE_PRELOAD_SETTLE_MS: number = 50
+  private static readonly BOTTOM_EDGE_ANIMATION_DURATION_MS: number = 320
+  private static readonly INDEXED_SCROLL_TARGET_NONE: number = -1
+  private static readonly INDEXED_SCROLL_CORRECTION_MAX_COUNT: number = 8
+  private static readonly INDEXED_SCROLL_CORRECTION_WINDOW_MS: number = 1800
   private deps: ChatScrollUiFlowDependencies
   private pinnedBottomAlignmentTimerIds: number[] = []
   private pinnedBottomAlignmentCompletionTimerId: number = -1
@@ -46,7 +55,15 @@ export class ChatScrollUiFlow {
   private bottomPinMutedUntil: number = 0
   private bottomLayoutPinActive: boolean = false
   private pendingEdgeScrollTarget: number = ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE
-  private pendingEdgeScrollCorrectionIssued: boolean = false
+  private pendingEdgeScrollCorrectionCount: number = 0
+  private pendingEdgeScrollCorrectionDeadline: number = 0
+  private pendingBottomEdgePreloadActive: boolean = false
+  private pendingIndexedScrollTarget: number = ChatScrollUiFlow.INDEXED_SCROLL_TARGET_NONE
+  private pendingIndexedScrollAlign: ScrollAlign = ScrollAlign.CENTER
+  private pendingIndexedScrollOffset: number = 0
+  private pendingIndexedScrollCorrectionCount: number = 0
+  private pendingIndexedScrollCorrectionDeadline: number = 0
+  private pendingIndexedScrollCenteredOnce: boolean = false
 
   constructor(deps: ChatScrollUiFlowDependencies) {
     this.deps = deps
@@ -148,37 +165,90 @@ export class ChatScrollUiFlow {
     }, 50)
   }
 
-  private scrollBottomAnchor(smooth: boolean): void {
-    const bottomAnchorIndex = this.deps.getBottomAnchorIndex()
-    if (bottomAnchorIndex >= 0) {
-      this.deps.scroller.scrollToIndex(bottomAnchorIndex, smooth, ScrollAlign.END)
-      return
+  private scrollBottomEdge(): void {
+    try {
+      this.deps.scroller.scrollEdge(Edge.Bottom)
+    } catch (_error) {
+      const bottomAnchorIndex = this.deps.getBottomAnchorIndex()
+      if (bottomAnchorIndex >= 0) {
+        this.deps.scroller.scrollToIndex(bottomAnchorIndex, false, ScrollAlign.END)
+      }
     }
-    this.deps.scroller.scrollEdge(Edge.Bottom)
   }
 
-  private scrollTopAnchor(smooth: boolean): void {
+  private scrollTopEdge(): void {
     try {
-      this.deps.scroller.scrollToIndex(ChatScrollUiFlow.TOP_ANCHOR_INDEX, smooth, ScrollAlign.START)
-    } catch (_error) {
       this.deps.scroller.scrollEdge(Edge.Top)
+    } catch (_error) {
+      this.deps.scroller.scrollToIndex(ChatScrollUiFlow.TOP_ANCHOR_INDEX, false, ScrollAlign.START)
     }
+  }
+
+  private scrollNearBottomEdgeForPreload(): boolean {
+    const bottomAnchorIndex = this.deps.getBottomAnchorIndex()
+    if (bottomAnchorIndex <= ChatScrollUiFlow.BOTTOM_EDGE_PRELOAD_ITEM_COUNT) {
+      return false
+    }
+    const preloadIndex = bottomAnchorIndex - ChatScrollUiFlow.BOTTOM_EDGE_PRELOAD_ITEM_COUNT
+    try {
+      this.deps.scroller.scrollToIndex(preloadIndex, false, ScrollAlign.START)
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
+  private scrollBottomEdgeWithAnimation(): void {
+    this.deps.onAnimate(ChatScrollUiFlow.BOTTOM_EDGE_ANIMATION_DURATION_MS, Curve.EaseOut, () => {
+      this.scrollBottomEdge()
+    })
+  }
+
+  private scrollBottomEdgeFromPreloadPosition(): void {
+    this.pendingBottomEdgePreloadActive = false
+    if (!this.scrollNearBottomEdgeForPreload()) {
+      this.scrollBottomEdge()
+      return
+    }
+    this.pendingBottomEdgePreloadActive = true
+    setTimeout(() => {
+      this.pendingBottomEdgePreloadActive = false
+      if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+        return
+      }
+      this.scrollBottomEdgeWithAnimation()
+      this.captureBottomScrollBaseline()
+    }, ChatScrollUiFlow.BOTTOM_EDGE_PRELOAD_SETTLE_MS)
   }
 
   private setPendingEdgeScrollTarget(target: number): void {
     this.pendingEdgeScrollTarget = target
-    this.pendingEdgeScrollCorrectionIssued = false
+    this.pendingEdgeScrollCorrectionCount = 0
+    this.pendingEdgeScrollCorrectionDeadline = target === ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE ?
+      0 :
+      Date.now() + ChatScrollUiFlow.EDGE_SCROLL_CORRECTION_WINDOW_MS
   }
 
   private clearPendingEdgeScrollTarget(): void {
     this.pendingEdgeScrollTarget = ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE
-    this.pendingEdgeScrollCorrectionIssued = false
+    this.pendingEdgeScrollCorrectionCount = 0
+    this.pendingEdgeScrollCorrectionDeadline = 0
+    this.pendingBottomEdgePreloadActive = false
   }
 
   private clearPendingBottomScrollTarget(): void {
     if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
       this.clearPendingEdgeScrollTarget()
     }
+  }
+
+  private clearPendingIndexedScrollTarget(): void {
+    this.pendingIndexedScrollTarget = ChatScrollUiFlow.INDEXED_SCROLL_TARGET_NONE
+    this.pendingIndexedScrollAlign = ScrollAlign.CENTER
+    this.pendingIndexedScrollOffset = 0
+    this.pendingIndexedScrollCorrectionCount = 0
+    this.pendingIndexedScrollCorrectionDeadline = 0
+    this.pendingIndexedScrollCenteredOnce = false
   }
 
   private isAtTopBoundary(): boolean {
@@ -191,44 +261,123 @@ export class ChatScrollUiFlow {
       (bottomAnchorIndex >= 0 && this.deps.getLastVisibleIndex() >= bottomAnchorIndex)
   }
 
+  private isAtBottomEdgeBoundary(): boolean {
+    return this.deps.syncIsAtBottomBoundary()
+  }
+
+  private hasPendingIndexedScrollTarget(): boolean {
+    return this.pendingIndexedScrollTarget !== ChatScrollUiFlow.INDEXED_SCROLL_TARGET_NONE
+  }
+
+  private isPendingIndexedScrollTargetVisible(): boolean {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return false
+    }
+    const firstVisible = this.deps.getFirstVisibleIndex()
+    const lastVisible = this.deps.getLastVisibleIndex()
+    return firstVisible <= this.pendingIndexedScrollTarget && this.pendingIndexedScrollTarget <= lastVisible
+  }
+
+  private markPendingEdgeScrollCorrectionIssued(): boolean {
+    if (Date.now() > this.pendingEdgeScrollCorrectionDeadline ||
+      this.pendingEdgeScrollCorrectionCount >= ChatScrollUiFlow.EDGE_SCROLL_CORRECTION_MAX_COUNT) {
+      this.clearPendingEdgeScrollTarget()
+      return false
+    }
+    this.pendingEdgeScrollCorrectionCount++
+    return true
+  }
+
+  private markPendingIndexedScrollCorrectionIssued(): boolean {
+    if (Date.now() > this.pendingIndexedScrollCorrectionDeadline ||
+      this.pendingIndexedScrollCorrectionCount >= ChatScrollUiFlow.INDEXED_SCROLL_CORRECTION_MAX_COUNT) {
+      this.clearPendingIndexedScrollTarget()
+      return false
+    }
+    this.pendingIndexedScrollCorrectionCount++
+    return true
+  }
+
+  private scrollPendingIndexedTarget(animated: boolean, align: ScrollAlign): boolean {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return false
+    }
+    try {
+      this.deps.scroller.scrollToIndex(this.pendingIndexedScrollTarget, animated, align, {
+        extraOffset: {
+          value: this.pendingIndexedScrollOffset,
+          unit: LengthUnit.VP
+        }
+      })
+      return true
+    } catch (_error) {
+      this.clearPendingIndexedScrollTarget()
+      return false
+    }
+  }
+
+  private correctPendingIndexedScroll(animated: boolean): boolean {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return false
+    }
+    if (!this.markPendingIndexedScrollCorrectionIssued()) {
+      return false
+    }
+    if (!this.isPendingIndexedScrollTargetVisible()) {
+      return this.scrollPendingIndexedTarget(false, ScrollAlign.START)
+    }
+    this.pendingIndexedScrollCenteredOnce = true
+    return this.scrollPendingIndexedTarget(animated, this.pendingIndexedScrollAlign)
+  }
+
+  private correctPendingBottomEdge(): boolean {
+    if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      return false
+    }
+    if (!this.markPendingEdgeScrollCorrectionIssued()) {
+      return false
+    }
+    this.activateBottomLayoutPin()
+    this.clearPinnedBottomAlignmentTimers()
+    this.setIsAtBottom(true)
+    this.setInputBarVisible(true)
+    this.scrollBottomEdge()
+    this.captureBottomScrollBaseline()
+    return true
+  }
+
   private verifyPendingTopScrollOnStop(): boolean {
     if (this.isAtTopBoundary()) {
       this.clearPendingEdgeScrollTarget()
       return true
     }
-    if (this.pendingEdgeScrollCorrectionIssued) {
-      this.clearPendingEdgeScrollTarget()
-      return true
+    if (this.markPendingEdgeScrollCorrectionIssued()) {
+      this.scrollTopEdge()
     }
-    this.pendingEdgeScrollCorrectionIssued = true
-    this.scrollTopAnchor(false)
     return true
   }
 
   private verifyPendingBottomScrollOnStop(): boolean {
-    if (this.isAtBottomBoundary()) {
+    if (this.pendingBottomEdgePreloadActive) {
+      return true
+    }
+    if (this.isAtBottomEdgeBoundary()) {
       this.activateBottomLayoutPin()
       this.captureBottomScrollBaseline()
       this.clearPendingEdgeScrollTarget()
       return true
     }
-    if (this.pendingEdgeScrollCorrectionIssued) {
-      this.clearPendingEdgeScrollTarget()
-      return true
-    }
-    this.pendingEdgeScrollCorrectionIssued = true
-    this.scrollBottomAnchor(false)
-    this.captureBottomScrollBaseline()
+    this.correctPendingBottomEdge()
     return true
   }
 
   alignToBottomAfterLayout(): void {
     this.activateBottomLayoutPin()
     setTimeout(() => {
-      this.scrollBottomAnchor(false)
+      this.scrollBottomEdge()
     }, 0)
     setTimeout(() => {
-      this.scrollBottomAnchor(false)
+      this.scrollBottomEdge()
     }, 50)
     this.syncBottomScrollBaselineAfterLayout()
   }
@@ -248,7 +397,7 @@ export class ChatScrollUiFlow {
           this.clearPinnedBottomAlignmentTimers()
           return
         }
-        this.scrollBottomAnchor(false)
+        this.scrollBottomEdge()
         this.captureBottomScrollBaseline()
       }, delays[i])
       this.pinnedBottomAlignmentTimerIds.push(timerId)
@@ -360,7 +509,7 @@ export class ChatScrollUiFlow {
     this.setIsAtBottom(true)
     this.setIsAtTop(false)
     this.setInputBarVisible(true)
-    this.scrollBottomAnchor(true)
+    this.scrollBottomEdgeFromPreloadPosition()
     this.captureBottomScrollBaseline()
   }
 
@@ -369,7 +518,53 @@ export class ChatScrollUiFlow {
     this.setPendingEdgeScrollTarget(ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP)
     this.setIsAtBottom(false)
     this.setInputBarVisible(true)
-    this.scrollTopAnchor(true)
+    this.scrollTopEdge()
+  }
+
+  public prepareForIndexedJump(): void {
+    this.muteBottomPin(ChatScrollUiFlow.EDGE_SCROLL_BOTTOM_PIN_MUTE_MS)
+    this.clearPendingEdgeScrollTarget()
+    this.clearPendingIndexedScrollTarget()
+    this.setIsAtTop(false)
+    this.setIsAtBottom(false)
+    this.setInputBarVisible(true)
+  }
+
+  public scrollToIndexWithStabilization(index: number, align: ScrollAlign, offset: number = 0): void {
+    if (index < 0) {
+      return
+    }
+    this.prepareForIndexedJump()
+    this.pendingIndexedScrollTarget = index
+    this.pendingIndexedScrollAlign = align
+    this.pendingIndexedScrollOffset = this.normalizeScrollOffset(offset)
+    this.pendingIndexedScrollCorrectionDeadline = Date.now() +
+      ChatScrollUiFlow.INDEXED_SCROLL_CORRECTION_WINDOW_MS
+    this.scrollPendingIndexedTarget(false, ScrollAlign.START)
+  }
+
+  public handleScrollIndexChanged(): void {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return
+    }
+    if (!this.isPendingIndexedScrollTargetVisible()) {
+      return
+    }
+    if (this.pendingIndexedScrollCenteredOnce) {
+      return
+    }
+    this.correctPendingIndexedScroll(false)
+  }
+
+  public handleIndexedTargetItemReady(listIndex: number): void {
+    if (!this.hasPendingIndexedScrollTarget() || listIndex !== this.pendingIndexedScrollTarget) {
+      return
+    }
+    if (!this.markPendingIndexedScrollCorrectionIssued()) {
+      return
+    }
+    this.pendingIndexedScrollCenteredOnce = true
+    this.scrollPendingIndexedTarget(false, this.pendingIndexedScrollAlign)
   }
 
   handleScrollStart(): void {
@@ -381,6 +576,10 @@ export class ChatScrollUiFlow {
   }
 
   handleScrollStop(): boolean {
+    if (this.hasPendingIndexedScrollTarget()) {
+      this.correctPendingIndexedScroll(false)
+      return true
+    }
     if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP) {
       return this.verifyPendingTopScrollOnStop()
     }
@@ -397,7 +596,31 @@ export class ChatScrollUiFlow {
   }
 
   handleContentLayoutChanged(): void {
+    if (this.hasPendingIndexedScrollTarget() && this.pendingIndexedScrollCenteredOnce &&
+      this.isPendingIndexedScrollTargetVisible()) {
+      this.correctPendingIndexedScroll(false)
+      return
+    }
     if (this.isBottomPinMuted()) {
+      return
+    }
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      if (this.pendingBottomEdgePreloadActive) {
+        this.activateBottomLayoutPin()
+        this.setIsAtBottom(true)
+        this.setInputBarVisible(true)
+        return
+      }
+      if (this.isAtBottomEdgeBoundary()) {
+        this.activateBottomLayoutPin()
+        this.captureBottomScrollBaseline()
+        this.clearPendingEdgeScrollTarget()
+        return
+      }
+      this.activateBottomLayoutPin()
+      this.setIsAtBottom(true)
+      this.setInputBarVisible(true)
+      this.schedulePinnedBottomAlignmentAfterLayout()
       return
     }
     if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM &&
@@ -409,7 +632,7 @@ export class ChatScrollUiFlow {
     this.clearPinnedBottomAlignmentTimers()
     this.setIsAtBottom(true)
     this.setInputBarVisible(true)
-    this.scrollBottomAnchor(false)
+    this.scrollBottomEdge()
     this.captureBottomScrollBaseline()
   }
 
@@ -449,7 +672,7 @@ export class ChatScrollUiFlow {
     this.setInputBarVisible(true)
     this.captureBottomScrollBaseline()
     if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
-      this.pendingEdgeScrollCorrectionIssued = false
+      this.clearPendingEdgeScrollTarget()
     }
   }
 }

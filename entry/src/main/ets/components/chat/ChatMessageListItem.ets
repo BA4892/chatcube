@@ -42,9 +42,33 @@ export struct ChatMessageListItem {
   @Event onEnterMultiSelect: (messageId: string) => void = (_messageId: string): void => {}
   @Event onAskUserAnswer: (toolCallId: string, answerJson: string) => void =
     (_toolCallId: string, _answerJson: string): void => {}
+  private lastLayoutWidth: number = 0
+  private lastLayoutHeight: number = 0
 
   private getEffectiveContentMaxWidth(): number {
     return this.contentMaxWidth > 0 ? this.contentMaxWidth : 99999
+  }
+
+  private readAreaDimension(value: Length): number {
+    if (typeof value === 'number') {
+      return Number.isNaN(value) || value <= 0 ? 0 : value
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value)
+      return Number.isNaN(parsed) || parsed <= 0 ? 0 : parsed
+    }
+    return 0
+  }
+
+  private handleAreaChanged(area: Area): void {
+    const width = this.readAreaDimension(area.width)
+    const height = this.readAreaDimension(area.height)
+    if (Math.abs(width - this.lastLayoutWidth) < 0.5 && Math.abs(height - this.lastLayoutHeight) < 0.5) {
+      return
+    }
+    this.lastLayoutWidth = width
+    this.lastLayoutHeight = height
+    this.onContentLayoutChange()
   }
 
   build() {
@@ -122,5 +146,8 @@ export struct ChatMessageListItem {
     .justifyContent(FlexAlign.Center)
     .padding({ left: 14, right: 14, top: 5, bottom: 5 })
     .opacity(this.isDimmed ? 0.4 : 1)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      this.handleAreaChanged(newArea)
+    })
   }
 }
