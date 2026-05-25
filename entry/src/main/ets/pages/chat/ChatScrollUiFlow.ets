@@ -32,10 +32,21 @@ export interface ChatScrollUiFlowDependencies {
 
 export class ChatScrollUiFlow {
   private static readonly BOTTOM_OFFSET_TOLERANCE_VP: number = 8
+  private static readonly BOTTOM_AWAY_DELTA_VP: number = 10
+  private static readonly PAGE_SCROLL_BOTTOM_PIN_MUTE_MS: number = 700
+  private static readonly EDGE_SCROLL_BOTTOM_PIN_MUTE_MS: number = 1400
+  private static readonly TOP_ANCHOR_INDEX: number = 0
+  private static readonly EDGE_SCROLL_TARGET_NONE: number = 0
+  private static readonly EDGE_SCROLL_TARGET_TOP: number = 1
+  private static readonly EDGE_SCROLL_TARGET_BOTTOM: number = 2
   private deps: ChatScrollUiFlowDependencies
   private pinnedBottomAlignmentTimerIds: number[] = []
   private pinnedBottomAlignmentCompletionTimerId: number = -1
   private pendingPinnedBottomAlignment: boolean = false
+  private bottomPinMutedUntil: number = 0
+  private bottomLayoutPinActive: boolean = false
+  private pendingEdgeScrollTarget: number = ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE
+  private pendingEdgeScrollCorrectionIssued: boolean = false
 
   constructor(deps: ChatScrollUiFlowDependencies) {
     this.deps = deps
@@ -103,6 +114,31 @@ export class ChatScrollUiFlow {
     this.pendingPinnedBottomAlignment = false
   }
 
+  private isBottomPinMuted(): boolean {
+    return Date.now() < this.bottomPinMutedUntil
+  }
+
+  private muteBottomPin(durationMs: number): void {
+    this.bottomPinMutedUntil = Math.max(this.bottomPinMutedUntil, Date.now() + durationMs)
+    this.clearBottomLayoutPin()
+    this.clearPinnedBottomAlignmentTimers()
+  }
+
+  private clearBottomPinMute(): void {
+    this.bottomPinMutedUntil = 0
+  }
+
+  private activateBottomLayoutPin(): void {
+    if (this.isBottomPinMuted()) {
+      return
+    }
+    this.bottomLayoutPinActive = true
+  }
+
+  private clearBottomLayoutPin(): void {
+    this.bottomLayoutPinActive = false
+  }
+
   private syncBottomScrollBaselineAfterLayout(): void {
     setTimeout(() => {
       this.captureBottomScrollBaseline()
@@ -121,7 +157,73 @@ export class ChatScrollUiFlow {
     this.deps.scroller.scrollEdge(Edge.Bottom)
   }
 
+  private scrollTopAnchor(smooth: boolean): void {
+    try {
+      this.deps.scroller.scrollToIndex(ChatScrollUiFlow.TOP_ANCHOR_INDEX, smooth, ScrollAlign.START)
+    } catch (_error) {
+      this.deps.scroller.scrollEdge(Edge.Top)
+    }
+  }
+
+  private setPendingEdgeScrollTarget(target: number): void {
+    this.pendingEdgeScrollTarget = target
+    this.pendingEdgeScrollCorrectionIssued = false
+  }
+
+  private clearPendingEdgeScrollTarget(): void {
+    this.pendingEdgeScrollTarget = ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE
+    this.pendingEdgeScrollCorrectionIssued = false
+  }
+
+  private clearPendingBottomScrollTarget(): void {
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      this.clearPendingEdgeScrollTarget()
+    }
+  }
+
+  private isAtTopBoundary(): boolean {
+    return this.deps.getIsAtTop() || this.normalizeScrollOffset(this.deps.syncCurrentScrollOffset()) <= 0
+  }
+
+  private isAtBottomBoundary(): boolean {
+    const bottomAnchorIndex = this.deps.getBottomAnchorIndex()
+    return this.deps.syncIsAtBottomBoundary() ||
+      (bottomAnchorIndex >= 0 && this.deps.getLastVisibleIndex() >= bottomAnchorIndex)
+  }
+
+  private verifyPendingTopScrollOnStop(): boolean {
+    if (this.isAtTopBoundary()) {
+      this.clearPendingEdgeScrollTarget()
+      return true
+    }
+    if (this.pendingEdgeScrollCorrectionIssued) {
+      this.clearPendingEdgeScrollTarget()
+      return true
+    }
+    this.pendingEdgeScrollCorrectionIssued = true
+    this.scrollTopAnchor(false)
+    return true
+  }
+
+  private verifyPendingBottomScrollOnStop(): boolean {
+    if (this.isAtBottomBoundary()) {
+      this.activateBottomLayoutPin()
+      this.captureBottomScrollBaseline()
+      this.clearPendingEdgeScrollTarget()
+      return true
+    }
+    if (this.pendingEdgeScrollCorrectionIssued) {
+      this.clearPendingEdgeScrollTarget()
+      return true
+    }
+    this.pendingEdgeScrollCorrectionIssued = true
+    this.scrollBottomAnchor(false)
+    this.captureBottomScrollBaseline()
+    return true
+  }
+
   alignToBottomAfterLayout(): void {
+    this.activateBottomLayoutPin()
     setTimeout(() => {
       this.scrollBottomAnchor(false)
     }, 0)
@@ -132,6 +234,9 @@ export class ChatScrollUiFlow {
   }
 
   private schedulePinnedBottomAlignmentAfterLayout(): void {
+    if (this.isBottomPinMuted()) {
+      return
+    }
     if (this.pendingPinnedBottomAlignment) {
       return
     }
@@ -154,6 +259,9 @@ export class ChatScrollUiFlow {
   }
 
   alignToBottomIfPinned(): void {
+    if (this.isBottomPinMuted()) {
+      return
+    }
     if (!this.deps.getIsAtBottom()) {
       return
     }
@@ -178,9 +286,7 @@ export class ChatScrollUiFlow {
     if (this.deps.getIsInputBarVisible() === value) {
       return
     }
-    this.deps.onAnimate(300, Curve.FastOutSlowIn, () => {
-      this.deps.onSetInputBarVisibleState(value)
-    })
+    this.deps.onSetInputBarVisibleState(value)
   }
 
   handleMessageListDidScroll(scrollOffset: number, scrollState: ScrollState): boolean {
@@ -188,20 +294,29 @@ export class ChatScrollUiFlow {
     const measuredOffset = this.normalizeScrollOffset(this.deps.syncCurrentScrollOffset())
     const reportedOffset = this.normalizeScrollOffset(scrollOffset)
     const cumulativeOffset = measuredOffset > 0 ? measuredOffset : reportedOffset
-    const keepPinnedToBottom = this.deps.syncIsAtBottomBoundary() ||
+    const isActiveScroll = scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling
+    const isMovingAwayFromBottom = isActiveScroll &&
+      cumulativeOffset < lastScrollOffset - ChatScrollUiFlow.BOTTOM_AWAY_DELTA_VP
+    const keepPinnedToBottom = !this.isBottomPinMuted() && !isMovingAwayFromBottom &&
+      (this.deps.syncIsAtBottomBoundary() ||
       (this.deps.getIsAtBottom() && this.isWithinBottomTolerance(cumulativeOffset))
+      )
     const effectiveOffset = keepPinnedToBottom ? this.resolveStableBottomOffset(cumulativeOffset) : cumulativeOffset
 
     this.setCurrentScrollOffset(effectiveOffset)
     const positionDelta = effectiveOffset - lastScrollOffset
-    const userScrolledAwayFromBottom = !keepPinnedToBottom && positionDelta < 0 &&
-      (scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling)
+    const userScrolledAwayFromBottom = !keepPinnedToBottom &&
+      (isMovingAwayFromBottom || (positionDelta < 0 &&
+      (scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling)))
 
     if (userScrolledAwayFromBottom) {
       this.clearPinnedBottomAlignmentTimers()
+      this.clearPendingBottomScrollTarget()
+      this.clearBottomLayoutPin()
     }
 
     if (keepPinnedToBottom) {
+      this.activateBottomLayoutPin()
       this.setIsAtBottom(true)
       this.setInputBarVisible(true)
     } else if (userScrolledAwayFromBottom && this.deps.getIsAtBottom()) {
@@ -239,27 +354,102 @@ export class ChatScrollUiFlow {
 
   scrollToBottomWithAnimation(): void {
     this.clearPinnedBottomAlignmentTimers()
+    this.clearBottomPinMute()
+    this.activateBottomLayoutPin()
+    this.setPendingEdgeScrollTarget(ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM)
     this.setIsAtBottom(true)
     this.setIsAtTop(false)
     this.setInputBarVisible(true)
-    // 用 fling 而非 scrollToIndex/scrollEdge: fling 走用户手势路径, ArkUI 在该路径上
-    // 临时禁用 LazyForEach 的"维持视觉位置"补偿 (否则用户手动滑动也会被位置补偿卡住),
-    // 因此即使在 LazyForEach 异步加载未稳定时也能可靠到底
-    this.deps.scroller.fling(15000)
+    this.scrollBottomAnchor(true)
     this.captureBottomScrollBaseline()
   }
 
+  scrollToTopWithAnimation(): void {
+    this.muteBottomPin(ChatScrollUiFlow.EDGE_SCROLL_BOTTOM_PIN_MUTE_MS)
+    this.setPendingEdgeScrollTarget(ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP)
+    this.setIsAtBottom(false)
+    this.setInputBarVisible(true)
+    this.scrollTopAnchor(true)
+  }
+
+  handleScrollStart(): void {
+    if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE) {
+      return
+    }
+    this.clearPinnedBottomAlignmentTimers()
+    this.clearBottomLayoutPin()
+  }
+
+  handleScrollStop(): boolean {
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP) {
+      return this.verifyPendingTopScrollOnStop()
+    }
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      return this.verifyPendingBottomScrollOnStop()
+    }
+    if (!this.isBottomPinMuted() && this.isAtBottomBoundary()) {
+      this.activateBottomLayoutPin()
+      this.setIsAtBottom(true)
+      this.setInputBarVisible(true)
+      this.captureBottomScrollBaseline()
+    }
+    return false
+  }
+
+  handleContentLayoutChanged(): void {
+    if (this.isBottomPinMuted()) {
+      return
+    }
+    if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM &&
+      !this.bottomLayoutPinActive &&
+      !this.deps.syncIsAtBottomBoundary()) {
+      return
+    }
+    this.activateBottomLayoutPin()
+    this.clearPinnedBottomAlignmentTimers()
+    this.setIsAtBottom(true)
+    this.setInputBarVisible(true)
+    this.scrollBottomAnchor(false)
+    this.captureBottomScrollBaseline()
+  }
+
+  scrollPageUpWithAnimation(): void {
+    this.muteBottomPin(ChatScrollUiFlow.PAGE_SCROLL_BOTTOM_PIN_MUTE_MS)
+    this.clearPendingBottomScrollTarget()
+    this.setIsAtBottom(false)
+    this.setInputBarVisible(true)
+    this.deps.scroller.scrollPage({ next: false })
+  }
+
+  scrollPageDownWithAnimation(): void {
+    this.clearPinnedBottomAlignmentTimers()
+    this.setIsAtTop(false)
+    this.setInputBarVisible(true)
+    this.deps.scroller.scrollPage({ next: true })
+  }
+
   handleReachStart(): void {
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP) {
+      this.clearPendingEdgeScrollTarget()
+    }
+    this.clearBottomLayoutPin()
     this.setCurrentScrollOffset(0)
     this.deps.setLastScrollOffset(0)
     this.setIsAtTop(true)
   }
 
   handleReachEnd(): void {
+    if (this.isBottomPinMuted()) {
+      return
+    }
     const cumulativeOffset = this.deps.syncCurrentScrollOffset()
     this.deps.setLastScrollOffset(cumulativeOffset)
+    this.activateBottomLayoutPin()
     this.setIsAtBottom(true)
     this.setInputBarVisible(true)
     this.captureBottomScrollBaseline()
+    if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      this.pendingEdgeScrollCorrectionIssued = false
+    }
   }
 }

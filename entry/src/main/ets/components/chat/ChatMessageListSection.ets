@@ -56,6 +56,9 @@ export struct ChatMessageListSection {
   @Event onListAppear: () => void = (): void => {}
   @Event onReachStart: () => void = (): void => {}
   @Event onReachEnd: () => void = (): void => {}
+  @Event onScrollStart: () => void = (): void => {}
+  @Event onScrollStop: () => void = (): void => {}
+  @Event onContentLayoutChange: () => void = (): void => {}
   @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
     _scrollState: ScrollState): void => {}
   @Event onScrollIndex: (firstIndex: number, lastIndex: number) => void = (_firstIndex: number,
@@ -440,6 +443,9 @@ export struct ChatMessageListSection {
                 onTTSStop: (): void => {
                   this.onTTSStop()
                 },
+                onContentLayoutChange: (): void => {
+                  this.onContentLayoutChange()
+                },
                 onSelect: (messageId: string): void => {
                   this.onSelect(messageId)
                 },
@@ -465,6 +471,9 @@ export struct ChatMessageListSection {
                     chatFontSize: this.chatFontSize,
                     onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>): void => {
                       this.onImageClick(images, imageIndex, sourceIds)
+                    },
+                    onContentLayoutChange: (): void => {
+                      this.onContentLayoutChange()
                     }
                   })
                 }
@@ -494,6 +503,12 @@ export struct ChatMessageListSection {
         })
         .onReachEnd(() => {
           this.onReachEnd()
+        })
+        .onScrollStart(() => {
+          this.onScrollStart()
+        })
+        .onScrollStop(() => {
+          this.onScrollStop()
         })
         .onDidScroll((scrollOffset: number, scrollState: ScrollState) => {
           this.onDidScroll(scrollOffset, scrollState)

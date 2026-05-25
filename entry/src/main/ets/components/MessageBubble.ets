@@ -250,6 +250,7 @@ export struct MessageBubble {
   // TTS朗读回调
   @Event onTTS: (messageId: string, content: string) => void = () => {}
   @Event onTTSStop: () => void = () => {}
+  @Event onContentLayoutChange: () => void = () => {}
   // 多选模式回调
   @Event onSelect: (messageId: string) => void = () => {}
   @Event onEnterMultiSelect: (messageId: string) => void = () => {}
@@ -1658,6 +1659,9 @@ export struct MessageBubble {
         maxWidth: this.compactImageContainerWidth,
         maxHeight: this.compactImageMaxHeight,
         radius: 8,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handlePreviewImagePreview(attachmentIndex)
         }
@@ -1675,6 +1679,9 @@ export struct MessageBubble {
         maxWidth: (this.compactImageContainerWidth - this.compactImageGap) / 2,
         maxHeight: this.compactImageMaxHeight,
         radius: 8,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handlePreviewImagePreview(attachmentIndex)
         }
@@ -1691,6 +1698,9 @@ export struct MessageBubble {
         maxWidth: this.compactImageContainerWidth,
         maxHeight: this.compactImageMaxHeight,
         radius: 8,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handleImagePreview(attachmentIndex)
         }
@@ -1708,6 +1718,9 @@ export struct MessageBubble {
         maxWidth: (this.compactImageContainerWidth - this.compactImageGap) / 2,
         maxHeight: this.compactImageMaxHeight,
         radius: 8,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handleImagePreview(attachmentIndex)
         }

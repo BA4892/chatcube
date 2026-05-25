@@ -37,6 +37,7 @@ export struct ChatMessageListItem {
   @Event onOpenLink: (title: string, url: string) => void = (_title: string, _url: string): void => {}
   @Event onTTS: (messageId: string, content: string) => void = (_messageId: string, _content: string): void => {}
   @Event onTTSStop: () => void = (): void => {}
+  @Event onContentLayoutChange: () => void = (): void => {}
   @Event onSelect: (messageId: string) => void = (_messageId: string): void => {}
   @Event onEnterMultiSelect: (messageId: string) => void = (_messageId: string): void => {}
   @Event onAskUserAnswer: (toolCallId: string, answerJson: string) => void =
@@ -99,6 +100,9 @@ export struct ChatMessageListItem {
           },
           onTTSStop: (): void => {
             this.onTTSStop()
+          },
+          onContentLayoutChange: (): void => {
+            this.onContentLayoutChange()
           },
           onSelect: (messageId: string): void => {
             this.onSelect(messageId)

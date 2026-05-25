@@ -16,6 +16,7 @@ export struct DraftPreviewBubble {
   @Param previewTimeText: string = ''
   @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
     (_images: Array<string>, _imageIndex: number, _sourceIds: Array<string>): void => {}
+  @Event onContentLayoutChange: () => void = (): void => {}
   draftPreviewImageMaxHeight: number = 120
   draftPreviewImageContainerWidth: number = 180
   draftPreviewImageGap: number = 6
@@ -99,6 +100,9 @@ export struct DraftPreviewBubble {
         maxWidth: this.draftPreviewImageContainerWidth,
         maxHeight: this.draftPreviewImageMaxHeight,
         radius: 12,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handleImagePreview(attachmentIndex)
         }
@@ -116,6 +120,9 @@ export struct DraftPreviewBubble {
         maxWidth: (this.draftPreviewImageContainerWidth - this.draftPreviewImageGap) / 2,
         maxHeight: this.draftPreviewImageMaxHeight,
         radius: 12,
+        onContentLayoutChange: (): void => {
+          this.onContentLayoutChange()
+        },
         onPreview: () => {
           this.handleImagePreview(attachmentIndex)
         }

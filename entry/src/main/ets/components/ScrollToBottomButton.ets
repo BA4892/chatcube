@@ -1,6 +1,6 @@
 /**
  * 快速滚动按钮组件
- * 支持快速到顶部 / 快速到底部
+ * 支持翻页 / 跳转到顶部 / 跳转到底部
  */
 
 import {
@@ -17,12 +17,14 @@ export struct ScrollToBottomButton {
   @Param bottomAvoidHeight: number = 0
   // 固定悬浮按钮距离底部的基准偏移（vp）
   @Param fixedBottomOffset: number = 128
-  // 按钮方向：0=向下（到底部）, 1=向上（到顶部）
+  // 按钮方向：0=向下（到底部）, 1=向上（到顶部）, 保留给旧调用方
   @Param buttonDirection: number = 0
+  @Param icon: Resource = $r('sys.symbol.chevron_down')
   // 额外纵向偏移（用于多按钮错位摆放）
   @Param extraOffsetY: number = 0
   @Param placeOnLeft: boolean = false
   // 点击回调
+  @Event onClickAction: () => void = () => {}
   @Event onScrollToBottom: () => void = () => {}
   @Event onScrollToTop: () => void = () => {}
 
@@ -58,7 +60,7 @@ export struct ScrollToBottomButton {
 
   build() {
     Button({ type: ButtonType.Circle }) {
-      SymbolGlyph(this.buttonDirection === 1 ? $r('sys.symbol.arrow_up_to_line') : $r('sys.symbol.chevron_down'))
+      SymbolGlyph(this.icon)
         .fontSize(20)
         .fontColor([this.themePrimary])
     }
@@ -87,6 +89,7 @@ export struct ScrollToBottomButton {
       if (!this.isVisible) {
         return
       }
+      this.onClickAction()
       if (this.buttonDirection === 1) {
         this.onScrollToTop()
       } else {

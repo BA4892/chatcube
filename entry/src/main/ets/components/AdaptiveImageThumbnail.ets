@@ -25,16 +25,21 @@ export struct AdaptiveImageThumbnail {
   @Param fillWidth: boolean = false
   @Param clickable: boolean = true
   @Event onPreview: () => void = () => {}
+  @Event onContentLayoutChange: () => void = () => {}
 
   @Local private sourceWidth: number = 0
   @Local private sourceHeight: number = 0
   @Local private hasImageLoadError: boolean = false
+  private lastLayoutWidth: number = 0
+  private lastLayoutHeight: number = 0
 
   @Monitor('src')
   onSourceChanged(): void {
     this.sourceWidth = 0
     this.sourceHeight = 0
     this.hasImageLoadError = false
+    this.lastLayoutWidth = 0
+    this.lastLayoutHeight = 0
   }
 
   private getSafeAspectRatio(): number {
@@ -94,6 +99,28 @@ export struct AdaptiveImageThumbnail {
     this.sourceHeight = height
   }
 
+  private readAreaDimension(value: Length): number {
+    if (typeof value === 'number') {
+      return Number.isNaN(value) || value <= 0 ? 0 : value
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value)
+      return Number.isNaN(parsed) || parsed <= 0 ? 0 : parsed
+    }
+    return 0
+  }
+
+  private handleAreaChanged(area: Area): void {
+    const width = this.readAreaDimension(area.width)
+    const height = this.readAreaDimension(area.height)
+    if (Math.abs(width - this.lastLayoutWidth) < 0.5 && Math.abs(height - this.lastLayoutHeight) < 0.5) {
+      return
+    }
+    this.lastLayoutWidth = width
+    this.lastLayoutHeight = height
+    this.onContentLayoutChange()
+  }
+
   private handlePreview(): void {
     if (!this.clickable) {
       return
@@ -115,6 +142,9 @@ export struct AdaptiveImageThumbnail {
       .backgroundColor($r('app.color.divider'))
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.handleAreaChanged(newArea)
+      })
     } else {
       Column() {
         SymbolGlyph($r('sys.symbol.picture'))
@@ -127,6 +157,9 @@ export struct AdaptiveImageThumbnail {
       .backgroundColor($r('app.color.divider'))
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.handleAreaChanged(newArea)
+      })
     }
   }
 
@@ -146,6 +179,10 @@ export struct AdaptiveImageThumbnail {
       })
       .onError(() => {
         this.hasImageLoadError = true
+        this.onContentLayoutChange()
+      })
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.handleAreaChanged(newArea)
       })
       .onClick(() => {
         this.handlePreview()
@@ -168,6 +205,10 @@ export struct AdaptiveImageThumbnail {
       })
       .onError(() => {
         this.hasImageLoadError = true
+        this.onContentLayoutChange()
+      })
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.handleAreaChanged(newArea)
       })
       .onClick(() => {
         this.handlePreview()

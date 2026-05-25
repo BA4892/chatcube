@@ -34,6 +34,7 @@ import {
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { AttachmentPicker } from '../components/AttachmentPicker'
+import { ScrollToBottomButton } from '../components/ScrollToBottomButton'
 import { ScrollToBottomLoadingButton } from '../components/ScrollToBottomLoadingButton'
 import { SharePreviewSheet } from '../components/SharePreviewSheet'
 import { MessageMapSheet } from '../components/MessageMapSheet'
@@ -183,6 +184,7 @@ export struct ChatPage {
   @Local isAtBottom: boolean = false
   // 是否在列表顶部
   @Local isAtTop: boolean = false
+  @Local isScrollJumpButtonsVisible: boolean = false
   @Local currentScrollOffsetVp: number = 0
   private firstVisibleListIndex: number = 0
   private lastVisibleListIndex: number = 0
@@ -196,6 +198,11 @@ export struct ChatPage {
   private lastScrollOffset: number = 0
   private readonly inputBarShowThreshold: number = 6
   private readonly inputBarHideThreshold: number = 18
+  private scrollJumpButtonsHideTimerId: number = -1
+  private readonly scrollJumpButtonsAutoHideMs: number = 2000
+  private readonly scrollJumpButtonsMovementThresholdVp: number = 4
+  private scrollGestureStartOffsetVp: number = 0
+  private hasScrollJumpGestureMoved: boolean = false
   // 会话标题相关状态
   @Local sessionTitle: string = ''
   @Local isTitleGenerating: boolean = false
@@ -546,6 +553,7 @@ export struct ChatPage {
     this.resetDocumentParseQueue()
     // 释放TTS资源
     this.ttsService.destroy()
+    this.clearScrollJumpButtonsHideTimer()
     this.clearInitialAlignmentTimers()
     this.clearPendingToolInteractionSyncTimer()
     this.clearRuntimeStateWatchdog()
@@ -858,6 +866,10 @@ export struct ChatPage {
     this.currentScrollOffsetVp = 0
     this.isAtTop = false
     this.isAtBottom = false
+    this.isScrollJumpButtonsVisible = false
+    this.clearScrollJumpButtonsHideTimer()
+    this.scrollGestureStartOffsetVp = 0
+    this.hasScrollJumpGestureMoved = false
     this.firstVisibleListIndex = 0
     this.lastVisibleListIndex = 0
     this.maxScrollOffset = 0
@@ -2347,6 +2359,15 @@ export struct ChatPage {
           onReachEnd: (): void => {
             this.handleMessageListReachEnd()
           },
+          onScrollStart: (): void => {
+            this.handleMessageListScrollStart()
+          },
+          onScrollStop: (): void => {
+            this.handleMessageListScrollStop()
+          },
+          onContentLayoutChange: (): void => {
+            this.handleMessageListContentLayoutChanged()
+          },
           onDidScroll: (scrollOffset: number, scrollState: ScrollState): void => {
             this.handleMessageListDidScroll(scrollOffset, scrollState)
           },
@@ -2409,6 +2430,10 @@ export struct ChatPage {
             this.scrollToBottomWithAnimation()
           }
         })
+
+        if (!this.shouldShowScrollToBottomLoadingButton()) {
+          this.ScrollQuickJumpButtons()
+        }
 
         // 底部输入栏容器（非多选模式时显示）
         if (!this.isMultiSelectMode) {
@@ -3582,11 +3607,139 @@ export struct ChatPage {
       !this.isAtBottom && !this.isMultiSelectMode && this.isSending
   }
 
+  private clearScrollJumpButtonsHideTimer(): void {
+    if (this.scrollJumpButtonsHideTimerId < 0) {
+      return
+    }
+    clearTimeout(this.scrollJumpButtonsHideTimerId)
+    this.scrollJumpButtonsHideTimerId = -1
+  }
+
+  private hideScrollJumpButtons(): void {
+    this.clearScrollJumpButtonsHideTimer()
+    this.isScrollJumpButtonsVisible = false
+  }
+
+  private showScrollJumpButtonsTemporarily(): void {
+    if (!this.canShowStandardScrollButton()) {
+      this.hideScrollJumpButtons()
+      return
+    }
+    this.isScrollJumpButtonsVisible = true
+    this.clearScrollJumpButtonsHideTimer()
+    this.scrollJumpButtonsHideTimerId = setTimeout(() => {
+      this.scrollJumpButtonsHideTimerId = -1
+      this.isScrollJumpButtonsVisible = false
+    }, this.scrollJumpButtonsAutoHideMs)
+  }
+
+  @Builder
+  private ScrollQuickJumpButtons() {
+    ScrollToBottomButton({
+      isVisible: this.shouldShowScrollToTopButton(),
+      fixedBottomOffset: this.getScrollButtonBaselineVp(),
+      bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
+      placeOnLeft: this.shouldUseLeftHandLayout(),
+      icon: $r('sys.symbol.arrow_up_to_line'),
+      extraOffsetY: -144,
+      onClickAction: (): void => {
+        this.scrollToTopWithAnimation()
+      }
+    })
+
+    ScrollToBottomButton({
+      isVisible: this.shouldShowScrollPageUpButton(),
+      fixedBottomOffset: this.getScrollButtonBaselineVp(),
+      bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
+      placeOnLeft: this.shouldUseLeftHandLayout(),
+      icon: $r('sys.symbol.arrow_up'),
+      extraOffsetY: -96,
+      onClickAction: (): void => {
+        this.scrollPageUpWithAnimation()
+      }
+    })
+
+    ScrollToBottomButton({
+      isVisible: this.shouldShowScrollPageDownButton(),
+      fixedBottomOffset: this.getScrollButtonBaselineVp(),
+      bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
+      placeOnLeft: this.shouldUseLeftHandLayout(),
+      icon: $r('sys.symbol.arrow_down'),
+      extraOffsetY: -48,
+      onClickAction: (): void => {
+        this.scrollPageDownWithAnimation()
+      }
+    })
+
+    ScrollToBottomButton({
+      isVisible: this.shouldShowStandardScrollToBottomButton(),
+      fixedBottomOffset: this.getScrollButtonBaselineVp(),
+      bottomAvoidHeight: this.getFloatingOverlayBottomAvoidHeightVp(),
+      placeOnLeft: this.shouldUseLeftHandLayout(),
+      icon: $r('sys.symbol.arrow_down_to_line'),
+      onClickAction: (): void => {
+        this.scrollToBottomWithAnimation()
+      }
+    })
+  }
+
+  private canShowStandardScrollButton(): boolean {
+    return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
+      !this.isMultiSelectMode && !this.isLoading && this.getTotalListItemCount() > 2
+  }
+
+  private shouldShowScrollPageUpButton(): boolean {
+    return this.canShowStandardScrollButton() && this.isScrollJumpButtonsVisible && !this.isAtTop
+  }
+
+  private shouldShowScrollToTopButton(): boolean {
+    return this.canShowStandardScrollButton() && this.isScrollJumpButtonsVisible && !this.isAtTop
+  }
+
+  private shouldShowScrollPageDownButton(): boolean {
+    return this.canShowStandardScrollButton() && this.isScrollJumpButtonsVisible && !this.isAtBottom
+  }
+
+  private shouldShowStandardScrollToBottomButton(): boolean {
+    return this.canShowStandardScrollButton() && this.isScrollJumpButtonsVisible && !this.isAtBottom
+  }
+
+  private handleMessageListScrollStart(): void {
+    this.scrollGestureStartOffsetVp = this.readCurrentScrollOffset()
+    this.hasScrollJumpGestureMoved = false
+    this.hideScrollJumpButtons()
+    this.getScrollUiFlow().handleScrollStart()
+  }
+
+  private handleMessageListScrollStop(): void {
+    if (this.getScrollUiFlow().handleScrollStop()) {
+      this.hasScrollJumpGestureMoved = false
+      return
+    }
+    if (this.hasScrollJumpGestureMoved) {
+      this.showScrollJumpButtonsTemporarily()
+    }
+    this.hasScrollJumpGestureMoved = false
+  }
+
   private handleMessageListDidScroll(scrollOffset: number, scrollState: ScrollState): void {
-    if (this.showAttachmentPicker && (scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling)) {
+    const isActiveScroll = scrollState === ScrollState.Scroll || scrollState === ScrollState.Fling
+    if (this.showAttachmentPicker && isActiveScroll) {
       this.closeAttachmentPanel()
     }
+    if (isActiveScroll && !this.hasScrollJumpGestureMoved) {
+      const measuredOffset = this.readCurrentScrollOffset()
+      if (Math.abs(measuredOffset - this.scrollGestureStartOffsetVp) >=
+        this.scrollJumpButtonsMovementThresholdVp || Math.abs(scrollOffset) >=
+        this.scrollJumpButtonsMovementThresholdVp) {
+        this.hasScrollJumpGestureMoved = true
+      }
+    }
     this.getScrollUiFlow().handleMessageListDidScroll(scrollOffset, scrollState)
+  }
+
+  private handleMessageListContentLayoutChanged(): void {
+    this.getScrollUiFlow().handleContentLayoutChanged()
   }
 
   private handleMessageListReachStart(): void {
@@ -3766,7 +3919,23 @@ export struct ChatPage {
 
   // 滚动到底部（带动画过渡）
   private scrollToBottomWithAnimation(): void {
+    this.showScrollJumpButtonsTemporarily()
     this.getScrollUiFlow().scrollToBottomWithAnimation()
+  }
+
+  private scrollToTopWithAnimation(): void {
+    this.showScrollJumpButtonsTemporarily()
+    this.getScrollUiFlow().scrollToTopWithAnimation()
+  }
+
+  private scrollPageUpWithAnimation(): void {
+    this.showScrollJumpButtonsTemporarily()
+    this.getScrollUiFlow().scrollPageUpWithAnimation()
+  }
+
+  private scrollPageDownWithAnimation(): void {
+    this.showScrollJumpButtonsTemporarily()
+    this.getScrollUiFlow().scrollPageDownWithAnimation()
   }
 
   // 同步包装方法，用于 onSend 回调
