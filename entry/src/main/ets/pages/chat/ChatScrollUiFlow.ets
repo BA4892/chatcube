@@ -27,7 +27,6 @@ export interface ChatScrollUiFlowDependencies {
   onSetIsAtBottomState: (value: boolean) => void
   onSetInputBarVisibleState: (value: boolean) => void
   onSetCurrentScrollOffsetState: (value: number) => void
-  onSetScrollProgressState: (value: number) => void
   onAnimate: (duration: number, curve: Curve, updater: () => void) => void
 }
 
@@ -47,26 +46,6 @@ export class ChatScrollUiFlow {
       return 0
     }
     return value
-  }
-
-  private clampProgress(value: number): number {
-    if (!Number.isFinite(value)) {
-      return 0
-    }
-    if (value <= 0) {
-      return 0
-    }
-    if (value >= 1) {
-      return 1
-    }
-    return value
-  }
-
-  private setScrollProgress(value: number): void {
-    // 直接赋值, 由 Progress 组件自带的 enableSmoothEffect (默认 true) 自动平滑过渡。
-    // 原 onAnimate 150ms + Progress 内置平滑会双重动画, fling 高频时还会堆叠声明式动画;
-    // 与 setIsAtTop/setIsAtBottom 同思路, 让系统平滑接管。
-    this.deps.onSetScrollProgressState(this.clampProgress(value))
   }
 
   private setCurrentScrollOffset(value: number): void {
@@ -89,43 +68,18 @@ export class ChatScrollUiFlow {
     return Math.max(offset, maxScrollOffset)
   }
 
-  private getCurrentScrollProgress(): number {
+  private hasPassedInputBarHideRange(): boolean {
     const totalItems = this.deps.getTotalListItemCount()
     if (totalItems <= 1) {
-      return 0
+      return false
     }
     const firstVisible = this.deps.getFirstVisibleIndex()
     const lastVisible = this.deps.getLastVisibleIndex()
     const scrollableItems = totalItems - (lastVisible - firstVisible + 1)
     if (scrollableItems <= 0) {
-      return 0
+      return false
     }
-    return this.clampProgress(firstVisible / scrollableItems)
-  }
-
-  private updateScrollProgress(): void {
-    if (this.deps.getIsAtBottom()) {
-      this.setScrollProgress(1)
-      return
-    }
-    if (this.deps.getIsAtTop()) {
-      this.setScrollProgress(0)
-      return
-    }
-    const totalItems = this.deps.getTotalListItemCount()
-    if (totalItems <= 1) {
-      this.setScrollProgress(0)
-      return
-    }
-    const firstVisible = this.deps.getFirstVisibleIndex()
-    const lastVisible = this.deps.getLastVisibleIndex()
-    const visibleCount = lastVisible - firstVisible + 1
-    const scrollableItems = totalItems - visibleCount
-    if (scrollableItems <= 0) {
-      this.setScrollProgress(0)
-      return
-    }
-    this.setScrollProgress(firstVisible / scrollableItems)
+    return firstVisible / scrollableItems > 0.2
   }
 
   private captureBottomScrollBaseline(): void {
@@ -134,17 +88,6 @@ export class ChatScrollUiFlow {
     this.deps.setLastScrollOffset(currentOffset)
     if (currentOffset > this.deps.getMaxScrollOffset()) {
       this.deps.setMaxScrollOffset(currentOffset)
-    }
-    if (this.deps.getMaxScrollOffset() > 0) {
-      this.setScrollProgress(1)
-      return
-    }
-    if (this.deps.getIsAtTop()) {
-      this.setScrollProgress(0)
-      return
-    }
-    if (currentOffset > 0) {
-      this.setScrollProgress(1)
     }
   }
 
@@ -276,13 +219,12 @@ export class ChatScrollUiFlow {
         if (!this.deps.getIsAtBottom() &&
           !this.deps.getIsSending() &&
           !this.deps.getIsEditingMessage() &&
-          this.getCurrentScrollProgress() > 0.2) {
+          this.hasPassedInputBarHideRange()) {
           this.setInputBarVisible(false)
         }
       }
 
       this.deps.setLastScrollOffset(effectiveOffset)
-      this.updateScrollProgress()
     }
 
     return userScrolledAwayFromBottom
@@ -311,7 +253,6 @@ export class ChatScrollUiFlow {
     this.setCurrentScrollOffset(0)
     this.deps.setLastScrollOffset(0)
     this.setIsAtTop(true)
-    this.setScrollProgress(0)
   }
 
   handleReachEnd(): void {

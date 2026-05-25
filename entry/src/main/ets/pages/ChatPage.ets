@@ -184,7 +184,6 @@ export struct ChatPage {
   // 是否在列表顶部
   @Local isAtTop: boolean = false
   @Local currentScrollOffsetVp: number = 0
-  @Local scrollProgress: number = 0
   private firstVisibleListIndex: number = 0
   private lastVisibleListIndex: number = 0
   // 输入框显示状态（true=显示，false=隐藏）
@@ -859,7 +858,6 @@ export struct ChatPage {
     this.currentScrollOffsetVp = 0
     this.isAtTop = false
     this.isAtBottom = false
-    this.scrollProgress = 0
     this.firstVisibleListIndex = 0
     this.lastVisibleListIndex = 0
     this.maxScrollOffset = 0
@@ -1966,9 +1964,6 @@ export struct ChatPage {
         if (this.shouldSyncScrollOffsetToUi(value)) {
           this.currentScrollOffsetVp = value
         }
-      },
-      onSetScrollProgressState: (value: number): void => {
-        this.scrollProgress = value
       },
       onAnimate: (duration: number, curve: Curve, updater: () => void): void => {
         this.getUIContext().animateTo({

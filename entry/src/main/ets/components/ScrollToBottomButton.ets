@@ -19,8 +19,6 @@ export struct ScrollToBottomButton {
   @Param fixedBottomOffset: number = 128
   // 按钮方向：0=向下（到底部）, 1=向上（到顶部）
   @Param buttonDirection: number = 0
-  // 0-1 的滚动进度，仅向上按钮使用
-  @Param progress: number = -1
   // 额外纵向偏移（用于多按钮错位摆放）
   @Param extraOffsetY: number = 0
   @Param placeOnLeft: boolean = false
@@ -51,24 +49,6 @@ export struct ScrollToBottomButton {
     return this.isDark ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.12)'
   }
 
-  private get ringTrackColor(): string {
-    return '#00000000'
-  }
-
-  private resolveProgressPercent(): number {
-    if (!Number.isFinite(this.progress) || this.progress <= 0) {
-      return 0
-    }
-    if (this.progress >= 1) {
-      return 100
-    }
-    return this.progress * 100
-  }
-
-  private shouldShowProgressRing(): boolean {
-    return this.buttonDirection === 1 && this.progress >= 0
-  }
-
   private getButtonVisibleScale(): ScaleOptions {
     const pressedScale = this.scrollBtnPressed ? 0.95 : 1
     const visibleScale = this.isVisible ? 1 : 0.86
@@ -78,24 +58,9 @@ export struct ScrollToBottomButton {
 
   build() {
     Button({ type: ButtonType.Circle }) {
-      Stack({ alignContent: Alignment.Center }) {
-        if (this.shouldShowProgressRing()) {
-          Progress({ value: this.resolveProgressPercent(), total: 100, type: ProgressType.Ring })
-            .width(36)
-            .height(36)
-            .color(this.themePrimary)
-            .backgroundColor(this.ringTrackColor)
-            .style({
-              strokeWidth: 2.4,
-              shadow: false,
-              enableScanEffect: false
-            })
-        }
-
-        SymbolGlyph(this.buttonDirection === 1 ? $r('sys.symbol.arrow_up_to_line') : $r('sys.symbol.chevron_down'))
-          .fontSize(this.shouldShowProgressRing() ? 16 : 20)
-          .fontColor([this.themePrimary])
-      }
+      SymbolGlyph(this.buttonDirection === 1 ? $r('sys.symbol.arrow_up_to_line') : $r('sys.symbol.chevron_down'))
+        .fontSize(20)
+        .fontColor([this.themePrimary])
     }
     .width(40)
     .height(40)
