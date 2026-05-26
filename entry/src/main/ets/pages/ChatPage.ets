@@ -595,15 +595,13 @@ export struct ChatPage {
 
     const loadResult = await this.getLoadFlow().loadPageData(this.routeParams, this.sessionTitle)
 
-    this.webSearchAvailable = loadResult.webSearchEnabled
+    this.applyLoadedSessionData(loadResult)
+    await this.applyLoadedProviders(loadResult.providers)
     await this.syncToolAvailabilityFromPreferences()
     console.info(
       'ChatPage',
       `[loadData] 联网可用=${this.webSearchAvailable}, 联网查询=${this.webSearchConversationEnabled}, 已选工具=${this.selectedToolIds.join(',')}`
     )
-
-    this.applyLoadedSessionData(loadResult)
-    await this.applyLoadedProviders(loadResult.providers)
 
     // 历史会话: 让 List 在 spinner 后面静默对齐到底部, 完成后再撤 spinner;
     // 新会话或空会话: 直接撤 spinner
@@ -655,12 +653,11 @@ export struct ChatPage {
     this.initialPromptAutoSent = loadResult.initialPromptAutoSent
     this.sessionId = loadResult.sessionId
     this.sessionTitle = loadResult.sessionTitle
-    this.webSearchConversationEnabled =
-      loadResult.webSearchEnabled && this.availableSearchEngines.length > 0 && loadResult.webSearchConversationEnabled
-    // 联网模式: 若菜单里此刻不含 OPENAI_BUILTIN 项(provider 不满足或菜单尚未刷新), 自动回退到 external_engine。
-    this.searchMode = loadResult.searchMode === ChatSearchMode.OPENAI_BUILTIN &&
-      this.isOpenAIBuiltinSearchAvailableForCurrentProvider() ?
-      ChatSearchMode.OPENAI_BUILTIN : ChatSearchMode.EXTERNAL_ENGINE
+    this.webSearchAvailable = loadResult.webSearchEnabled
+    this.webSearchConversationEnabled = loadResult.webSearchEnabled && loadResult.webSearchConversationEnabled
+    // 这里仅回填已保存的模式, 不做 provider 可用性降级。
+    // currentProvider 要等 applyLoadedProviders() 后才准确; 真正的可用性修正交给 refreshAvailableSearchEngines()。
+    this.searchMode = loadResult.searchMode
     if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN) {
       this.activeSearchEngineId = OPENAI_BUILTIN_SEARCH_ENGINE_ID
     }
@@ -1126,6 +1123,13 @@ export struct ChatPage {
     return modelSupportsImageGenerationTool(this.currentModelId)
   }
 
+  private resolveEffectiveSearchModeForCurrentProvider(mode: ChatSearchMode): ChatSearchMode {
+    if (mode === ChatSearchMode.OPENAI_BUILTIN && !this.isOpenAIBuiltinSearchAvailableForCurrentProvider()) {
+      return ChatSearchMode.EXTERNAL_ENGINE
+    }
+    return mode
+  }
+
   private getActiveComposerBuiltinImageGenEnabled(): boolean {
     if (this.isEditingMessage) {
       return this.editingBuiltinImageGenEnabled
@@ -1264,11 +1268,8 @@ export struct ChatPage {
       this.activeSearchEngineId = OPENAI_BUILTIN_SEARCH_ENGINE_ID
       return
     }
-    // mode 是 builtin 但菜单已不含哨兵 → 自动降级
-    if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN) {
-      this.searchMode = ChatSearchMode.EXTERNAL_ENGINE
-      this.persistSearchModePreference(ChatSearchMode.EXTERNAL_ENGINE)
-    }
+    // mode 是 builtin 但菜单已不含哨兵时, 只临时显示外部引擎。
+    // 不覆盖 SEARCH_MODE, 否则用户切回支持 Responses hosted search 的模型后会丢失上次选择。
     if (this.isSearchEngineMenuOptionAvailable(storedEngine)) {
       this.activeSearchEngineId = storedEngine
       return
@@ -4062,8 +4063,10 @@ export struct ChatPage {
       const searchEnabled = this.isWebSearchReady() && this.webSearchConversationEnabled
       const selectedToolIds = [...this.selectedToolIds]
       const forcedToolIds = [...this.forcedToolIdsOnce]
-      // 联网模式: 编辑消息走 editingSearchMode, 否则走会话级 searchMode
-      const activeSearchMode: ChatSearchMode = this.isEditingMessage ? this.editingSearchMode : this.searchMode
+      // 联网模式: 编辑消息走 editingSearchMode, 否则走会话级 searchMode。
+      // SEARCH_MODE 是用户偏好,发送时再按当前 provider 收敛为实际可执行模式。
+      const preferredSearchMode: ChatSearchMode = this.isEditingMessage ? this.editingSearchMode : this.searchMode
+      const activeSearchMode: ChatSearchMode = this.resolveEffectiveSearchModeForCurrentProvider(preferredSearchMode)
       const activeBuiltinImageGen = this.getActiveComposerBuiltinImageGenEnabled() &&
         this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()
       await this.getSendFlow().executeSend(
