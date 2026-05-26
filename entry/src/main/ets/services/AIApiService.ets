@@ -495,6 +495,12 @@ interface OpenAIResponsesReasoningConfig {
   summary?: string
 }
 
+export interface OpenAIResponsesToolChoiceObject {
+  type: string
+}
+
+export type OpenAIResponsesToolChoice = string | OpenAIResponsesToolChoiceObject
+
 interface OpenAIResponsesRequestBody {
   model: string
   input: OpenAIResponsesInputItem[] | string
@@ -507,7 +513,7 @@ interface OpenAIResponsesRequestBody {
   // 请求 Responses 在流中返回额外字段,例如 'reasoning.encrypted_content'
   include?: string[]
   tools?: OpenAIResponsesTool[]
-  tool_choice?: string
+  tool_choice?: OpenAIResponsesToolChoice
   stream?: boolean
 }
 
@@ -2241,7 +2247,7 @@ export class AIApiService {
     maxTokens?: number,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
-    toolChoice?: string,
+    toolChoice?: OpenAIResponsesToolChoice,
     forceChatCompletions: boolean = false,
     builtInResponsesTools?: BuiltInResponsesToolSpec[]
   ): OpenAIRequestBody | OpenAIResponsesRequestBody | AnthropicRequestBody | GoogleRequestBody {
@@ -2586,8 +2592,14 @@ export class AIApiService {
           effectiveFunctionTools,
           builtInResponsesTools
         )
-        if (toolChoice !== undefined && toolChoice !== '') {
-          responsesBody.tool_choice = toolChoice
+        if (toolChoice !== undefined) {
+          if (typeof toolChoice === 'string') {
+            if (toolChoice !== '') {
+              responsesBody.tool_choice = toolChoice
+            }
+          } else {
+            responsesBody.tool_choice = toolChoice
+          }
         }
       }
       return responsesBody
@@ -2790,7 +2802,7 @@ export class AIApiService {
     // 添加 Function Calling 工具定义
     if (tools !== undefined && tools.length > 0) {
       requestBody.tools = this.buildOpenAIChatTools(config, tools)
-      if (toolChoice !== undefined && toolChoice !== '') {
+      if (typeof toolChoice === 'string' && toolChoice !== '') {
         requestBody.tool_choice = toolChoice
       }
     }
@@ -3512,7 +3524,7 @@ export class AIApiService {
     onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
     tools?: ToolDefinition[],
-    toolChoice?: string,
+    toolChoice?: OpenAIResponsesToolChoice,
     onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
     builtInResponsesTools?: BuiltInResponsesToolSpec[],
     onSearchReferences?: (references: SearchReference[]) => void,

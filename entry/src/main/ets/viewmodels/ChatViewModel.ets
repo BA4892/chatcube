@@ -10,7 +10,8 @@ import {
   ToolCallDelta,
   BuiltInResponsesToolSpec,
   HostedResponsesToolEvent,
-  HostedResponsesToolEventKind
+  HostedResponsesToolEventKind,
+  OpenAIResponsesToolChoice
 } from '../services/AIApiService'
 import { getAppStateManager, AppStateManager } from './AppStateManager'
 import { getAITaskService, AITaskService } from '../services/AITaskService'
@@ -2039,7 +2040,8 @@ ${limitedSearchContext}
     customHeadersJson?: string,
     openaiTransport?: OpenAITransport,
     // OpenAI Responses 内置工具 (web_search / image_generation), 与 function tools 可并存
-    builtInResponsesTools?: BuiltInResponsesToolSpec[]
+    builtInResponsesTools?: BuiltInResponsesToolSpec[],
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
@@ -2230,7 +2232,8 @@ ${limitedSearchContext}
       localFirstChunkThrottle,
       localContentThrottle,
       localReasoningThrottle,
-      builtInResponsesTools
+      builtInResponsesTools,
+      builtInResponsesToolChoice
     )
   }
 
@@ -2785,7 +2788,8 @@ ${limitedSearchContext}
     localFirstChunkThrottle: ThrottleUtil,
     localContentThrottle: ThrottleUtil,
     localReasoningThrottle: ThrottleUtil,
-    builtInResponsesTools?: BuiltInResponsesToolSpec[]
+    builtInResponsesTools?: BuiltInResponsesToolSpec[],
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
   ): Promise<void> {
     let toolStepIndex = initialToolStepIndex
     const pendingImageSaves: Promise<void>[] = []
@@ -3024,7 +3028,7 @@ ${limitedSearchContext}
           },
           reasoningLevel,
           toolsEnabledInThisRound ? tools : undefined,
-          undefined,
+          builtInResponsesToolChoice,
           (toolCallDeltas: ToolCallDelta[]) => {
             if (isCancelledFn() || !toolsEnabledInThisRound || toolCallDeltas.length <= 0) {
               return

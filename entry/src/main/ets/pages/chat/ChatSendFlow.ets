@@ -15,7 +15,8 @@ import { ToolRegistry } from '../../services/ToolRegistry'
 import { WebSearchService } from '../../services/WebSearchService'
 import {
   BuiltInResponsesToolKind,
-  BuiltInResponsesToolSpec
+  BuiltInResponsesToolSpec,
+  OpenAIResponsesToolChoice
 } from '../../services/AIApiService'
 import { appendUniqueToolId } from './ChatToolIdHelper'
 import { syncChatMessageFromSource } from './ChatMessageActionHelper'
@@ -47,17 +48,20 @@ class ChatExecutionPlan {
   learnToolsOnSuccess: boolean
   // OpenAI Responses 内置工具 (web_search / image_generation), 仅在 transport=responses 时下发
   builtInResponsesTools: BuiltInResponsesToolSpec[]
+  builtInResponsesToolChoice?: OpenAIResponsesToolChoice
 
   constructor(
     kind: ChatExecutionPlanKind,
     enabledToolIds: string[] = [],
     learnToolsOnSuccess: boolean = false,
-    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = [],
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
   ) {
     this.kind = kind
     this.enabledToolIds = enabledToolIds
     this.learnToolsOnSuccess = learnToolsOnSuccess
     this.builtInResponsesTools = builtInResponsesTools
+    this.builtInResponsesToolChoice = builtInResponsesToolChoice
   }
 }
 
@@ -196,7 +200,8 @@ export class ChatSendFlow {
         attachmentsToSend,
         plan.enabledToolIds,
         plan.learnToolsOnSuccess,
-        plan.builtInResponsesTools
+        plan.builtInResponsesTools,
+        plan.builtInResponsesToolChoice
       )
       return
     }
@@ -323,6 +328,7 @@ export class ChatSendFlow {
     //   openai_builtin: 不注入本地 search_web/scrape_web function tool, 改为 hosted web_search
     //   external_engine (默认): 走原有 function tool 路径
     const builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+    let builtInResponsesToolChoice: OpenAIResponsesToolChoice | undefined = undefined
     const hostedEligible = this.isOpenAIResponsesHostedToolEligible(currentProvider)
     const useBuiltinSearch = searchEnabled &&
       searchMode === ChatSearchMode.OPENAI_BUILTIN &&
@@ -347,26 +353,56 @@ export class ChatSendFlow {
         appendUniqueToolId(enabledToolIds, SCRAPE_WEB_TOOL_ID)
       }
     }
+    // 纯生图意图要强制 image_generation tool call, 避免模型只返回一段提示词。
+    // 如果同轮还启用了 hosted 搜索或本地 function tools, 暂时保留 auto;
+    // 单次 Responses 请求无法表达"先搜索再生图"的强顺序, 这个场景应升级为两段式编排。
+    if (builtinImageGenEnabled && hostedEligible && !useBuiltinSearch && enabledToolIds.length === 0) {
+      builtInResponsesToolChoice = { type: BuiltInResponsesToolKind.IMAGE_GENERATION }
+    }
 
     if (enabledToolIds.length === 0 && builtInResponsesTools.length === 0) {
       return new ChatExecutionPlan(ChatExecutionPlanKind.PLAIN_DIRECT)
     }
     // 仅 hosted 工具时, 不必要求模型 supportsTools (hosted 不走 function calling)
     if (builtInResponsesTools.length > 0 && enabledToolIds.length === 0) {
-      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, false, builtInResponsesTools)
+      return new ChatExecutionPlan(
+        ChatExecutionPlanKind.TOOLS,
+        enabledToolIds,
+        false,
+        builtInResponsesTools,
+        builtInResponsesToolChoice
+      )
     }
 
     if (this.isCurrentModelSupportsTools(currentProvider, currentModelId)) {
-      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, false, builtInResponsesTools)
+      return new ChatExecutionPlan(
+        ChatExecutionPlanKind.TOOLS,
+        enabledToolIds,
+        false,
+        builtInResponsesTools,
+        builtInResponsesToolChoice
+      )
     }
 
     if (this.shouldProbeToolsForCurrentModel(currentProvider)) {
       console.info('ChatSendFlow',
         `[Function Calling] 当前模型未标记 supportsTools, 先尝试 tools 请求: modelId=${currentModelId}`)
-      return new ChatExecutionPlan(ChatExecutionPlanKind.TOOLS, enabledToolIds, true, builtInResponsesTools)
+      return new ChatExecutionPlan(
+        ChatExecutionPlanKind.TOOLS,
+        enabledToolIds,
+        true,
+        builtInResponsesTools,
+        builtInResponsesToolChoice
+      )
     }
 
-    return new ChatExecutionPlan(ChatExecutionPlanKind.UNSUPPORTED_TOOLS, enabledToolIds, false, builtInResponsesTools)
+    return new ChatExecutionPlan(
+      ChatExecutionPlanKind.UNSUPPORTED_TOOLS,
+      enabledToolIds,
+      false,
+      builtInResponsesTools,
+      builtInResponsesToolChoice
+    )
   }
 
   private includesAny(text: string, keywords: string[]): boolean {
@@ -541,6 +577,15 @@ export class ChatSendFlow {
     await this.deps.chatViewModel.deleteMessagesFromIndex(messageIds)
   }
 
+  private hasBuiltInImageGenerationTool(builtInResponsesTools: BuiltInResponsesToolSpec[]): boolean {
+    for (let i = 0; i < builtInResponsesTools.length; i++) {
+      if (builtInResponsesTools[i].kind === BuiltInResponsesToolKind.IMAGE_GENERATION) {
+        return true
+      }
+    }
+    return false
+  }
+
   private async fallbackToPlainMessageAfterToolFailure(
     taskId: string,
     senderSessionId: string,
@@ -633,7 +678,8 @@ export class ChatSendFlow {
     attachmentsToSend: MessageAttachment[] = [],
     enabledToolIds: string[] = [],
     learnToolsOnSuccess: boolean = false,
-    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = [],
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
   ): Promise<void> {
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
@@ -692,7 +738,7 @@ export class ChatSendFlow {
           this.handleTaskCompleted(taskId, senderSessionId)
         },
         async (error: string): Promise<void> => {
-          if (this.isToolCapabilityError(error)) {
+          if (this.isToolCapabilityError(error) && !this.hasBuiltInImageGenerationTool(builtInResponsesTools)) {
             fallbackStarted = true
             await this.fallbackToPlainMessageAfterToolFailure(
               taskId,
@@ -716,7 +762,8 @@ export class ChatSendFlow {
         currentProvider.apiPath || undefined,
         currentProvider.customHeadersJson || undefined,
         currentProvider.openaiTransport,
-        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined
+        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined,
+        builtInResponsesToolChoice
       )
       if (completedSuccessfully && learnToolsOnSuccess && !fallbackStarted) {
         await this.deps.onConfirmModelSupportsTools(currentProvider.id, modelId)
