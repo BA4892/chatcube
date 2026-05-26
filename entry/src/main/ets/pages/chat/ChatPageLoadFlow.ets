@@ -14,6 +14,7 @@ export class ChatPageLoadResult {
   webSearchConversationEnabled: boolean = false
   // 联网模式: external_engine (默认) | openai_builtin
   searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
+  builtinImageGenEnabled: boolean = false
   reasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   providers: ModelProvider[] = []
   pendingInitialPrompt: string = ''
@@ -67,6 +68,10 @@ export class ChatPageLoadFlow {
     )
     result.searchMode = rawSearchMode === ChatSearchMode.OPENAI_BUILTIN ?
       ChatSearchMode.OPENAI_BUILTIN : ChatSearchMode.EXTERNAL_ENGINE
+    result.builtinImageGenEnabled = await this.deps.preferencesService.getBoolean(
+      PreferenceKeys.CHAT_BUILTIN_IMAGE_GEN_ENABLED,
+      false
+    )
     result.reasoningLevel = normalizeStoredChatReasoningLevel(await this.deps.preferencesService.getString(
       PreferenceKeys.CHAT_REASONING_LEVEL,
       ReasoningLevel.OFF

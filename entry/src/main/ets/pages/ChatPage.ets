@@ -25,7 +25,6 @@ import {
   OPENAI_BUILTIN_SEARCH_ENGINE_ID,
   ReasoningLevel,
   ModelRole,
-  ToolCall,
   ToolConfig,
   ToolApprovalPolicy,
   ToolPermissionLevel,
@@ -108,7 +107,7 @@ import { applyModelDraft } from '../utils/ModelDraftUtils'
 import { ToolPreviewEntry, buildToolArgumentsPreview } from '../utils/ToolPayloadSummaryUtils'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
-import { getSearchToolIds, isSearchToolFunctionName, isSearchToolId } from '../utils/SearchToolIdentityUtils'
+import { getSearchToolIds, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
 import { savePreviewImageToAlbum } from '../utils/ImagePreviewSaveUtil'
 import { DocumentParsePolicy, DocumentParseResult, WebDocumentParserService } from '../services/DocumentParseService'
@@ -125,11 +124,6 @@ class ProviderModelSelection {
     this.provider = provider
     this.model = model
   }
-}
-
-class EditedMessageToolContext {
-  webSearchEnabled: boolean = false
-  selectedToolIds: string[] = []
 }
 
 const HDS_NAV_DESTINATION_MINI_TITLE_BAR_HEIGHT: number = 56
@@ -233,11 +227,8 @@ export struct ChatPage {
   // 联网搜索模式: external_engine(默认) / openai_builtin
   // 与外部 SEARCH_ENGINE 解耦, openai_builtin 走 Responses hosted web_search hosted tool。
   @Local searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
-  // 编辑消息时的临时 mode 覆盖, 不持久化, 退出编辑后失效。
-  @Local editingSearchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE
-  // OpenAI Responses 内置生图开关 (会话级, 不持久化, 切换 provider 自动复位)
+  // OpenAI Responses 内置生图偏好。运行时仍按当前 provider/model 能力收敛, 不支持时不展示也不下发。
   @Local builtinImageGenEnabled: boolean = false
-  @Local editingBuiltinImageGenEnabled: boolean = false
   // 联网菜单内可选的引擎列表(Bing 永远在内, 其它引擎填了 API Key 才出现)
   // 当 currentProvider 满足 OpenAI Responses 条件时, 末尾追加 OPENAI_BUILTIN_SEARCH_ENGINE_ID 哨兵项
   @Local availableSearchEngines: SearchEngineMenuOption[] = []
@@ -342,9 +333,6 @@ export struct ChatPage {
   @Local editingOriginalContent: string = '' // 原始内容（用于取消编辑）
   @Local editingOriginalAttachments: MessageAttachment[] = [] // 原始附件
   @Local editingMessageIsUser: boolean = true // 是否为用户消息（决定是否显示"保存并发送"）
-  @Local editingWebSearchEnabled: boolean = false
-  @Local editingSelectedToolIds: string[] = []
-  @Local editingReasoningLevel: ReasoningLevel = ReasoningLevel.OFF
   @Local messageListSyncVersion: number = 0
   @Local messageListSyncMessageId: string = ''
   private scroller: Scroller = new Scroller()
@@ -661,7 +649,7 @@ export struct ChatPage {
     if (this.searchMode === ChatSearchMode.OPENAI_BUILTIN) {
       this.activeSearchEngineId = OPENAI_BUILTIN_SEARCH_ENGINE_ID
     }
-    this.editingSearchMode = this.searchMode
+    this.builtinImageGenEnabled = loadResult.builtinImageGenEnabled
     this.reasoningLevel = loadResult.reasoningLevel
     // initialDraft(来自推荐提示词点击)优先于持久化 draftText, 仅 prefill 不自动发送
     this.inputText = loadResult.pendingInitialDraft !== '' ? loadResult.pendingInitialDraft : loadResult.draftText
@@ -1041,9 +1029,6 @@ export struct ChatPage {
         model
       )
     }
-    if (this.isEditingMessage) {
-      this.editingReasoningLevel = this.reasoningLevel
-    }
     this.persistReasoningPreference(this.reasoningLevel)
   }
 
@@ -1131,9 +1116,6 @@ export struct ChatPage {
   }
 
   private getActiveComposerBuiltinImageGenEnabled(): boolean {
-    if (this.isEditingMessage) {
-      return this.editingBuiltinImageGenEnabled
-    }
     return this.builtinImageGenEnabled
   }
 
@@ -1141,11 +1123,15 @@ export struct ChatPage {
     if (!this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()) {
       return
     }
-    if (this.isEditingMessage) {
-      this.editingBuiltinImageGenEnabled = !this.editingBuiltinImageGenEnabled
-      return
-    }
-    this.builtinImageGenEnabled = !this.builtinImageGenEnabled
+    const enabled = !this.builtinImageGenEnabled
+    this.builtinImageGenEnabled = enabled
+    this.persistBuiltinImageGenPreference(enabled)
+  }
+
+  private persistBuiltinImageGenPreference(enabled: boolean): void {
+    this.preferencesService.setBoolean(PreferenceKeys.CHAT_BUILTIN_IMAGE_GEN_ENABLED, enabled).catch((error: Object) => {
+      console.error('ChatPage', `Failed to persist built-in image generation: ${JSON.stringify(error)}`)
+    })
   }
 
   // 切换搜索模式持久化 (external_engine / openai_builtin)。
@@ -1466,81 +1452,25 @@ export struct ChatPage {
     return pickerToolIds
   }
 
-  private isWebSearchFunctionName(functionName: string): boolean {
-    return isSearchToolFunctionName(functionName)
-  }
-
-  private isWebSearchToolCall(toolCall: ToolCall): boolean {
-    if (isSearchToolId(toolCall.toolId)) {
-      return true
-    }
-    return this.isWebSearchFunctionName(toolCall.functionName)
-  }
-
-  private resolveEditedMessageToolContext(messageIndex: number): EditedMessageToolContext {
-    const selectedToolIds: string[] = []
-    let webSearchEnabled = false
-    for (let i = messageIndex + 1; i < this.messages.length; i++) {
-      const followupMessage = this.messages[i]
-      if (followupMessage.role === MessageRole.USER) {
-        break
-      }
-      if (followupMessage.searchQuery.trim() !== '') {
-        webSearchEnabled = true
-      }
-      for (let j = 0; j < followupMessage.toolCalls.length; j++) {
-        const toolCall = followupMessage.toolCalls[j]
-        if (this.isWebSearchToolCall(toolCall)) {
-          webSearchEnabled = true
-          continue
-        }
-        const resolvedToolId = toolCall.toolId.trim() !== '' ?
-          toolCall.toolId.trim() :
-          (this.toolRegistry.getToolIdByFunctionName(toolCall.functionName.trim()) || '')
-        if (resolvedToolId !== '' && !selectedToolIds.includes(resolvedToolId)) {
-          selectedToolIds.push(resolvedToolId)
-        }
-      }
-    }
-    const context = new EditedMessageToolContext()
-    context.webSearchEnabled = this.isWebSearchReady() && webSearchEnabled
-    context.selectedToolIds = this.normalizeSelectedToolIdsForPicker(selectedToolIds)
-    return context
-  }
-
   private getActiveComposerWebSearchEnabled(): boolean {
-    if (this.isEditingMessage) {
-      return this.editingWebSearchEnabled
-    }
     return this.webSearchConversationEnabled
   }
 
   private getActiveComposerSelectedToolIds(): string[] {
-    if (this.isEditingMessage) {
-      return this.editingSelectedToolIds
-    }
     return this.selectedToolIds
   }
 
   private getActiveComposerReasoningLevel(): ReasoningLevel {
-    return this.isEditingMessage ? this.editingReasoningLevel : this.reasoningLevel
+    return this.reasoningLevel
   }
 
   private updateActiveComposerSelectedToolIds(toolIds: string[]): Promise<void> {
     const normalizedToolIds = this.normalizeSelectedToolIdsForPicker(toolIds)
-    if (this.isEditingMessage) {
-      this.editingSelectedToolIds = [...normalizedToolIds]
-      return Promise.resolve()
-    }
     return this.setSelectedToolIds(normalizedToolIds)
   }
 
   private updateActiveComposerReasoningLevel(value: ReasoningLevel): void {
     const normalizedLevel = this.normalizeReasoningLevelForCurrentModel(value)
-    if (this.isEditingMessage) {
-      this.editingReasoningLevel = normalizedLevel
-      return
-    }
     this.reasoningLevel = normalizedLevel
     this.persistReasoningPreference(normalizedLevel)
   }
@@ -1567,27 +1497,15 @@ export struct ChatPage {
       this.activeSearchEngineId = engineId
       if (engineId === OPENAI_BUILTIN_SEARCH_ENGINE_ID) {
         // hosted 搜索: 持久化 mode, 不要写 SEARCH_ENGINE 避免污染下次外部引擎切换
-        if (this.isEditingMessage) {
-          this.editingSearchMode = ChatSearchMode.OPENAI_BUILTIN
-        } else {
-          this.searchMode = ChatSearchMode.OPENAI_BUILTIN
-          this.persistSearchModePreference(ChatSearchMode.OPENAI_BUILTIN)
-        }
+        this.searchMode = ChatSearchMode.OPENAI_BUILTIN
+        this.persistSearchModePreference(ChatSearchMode.OPENAI_BUILTIN)
       } else {
-        if (this.isEditingMessage) {
-          this.editingSearchMode = ChatSearchMode.EXTERNAL_ENGINE
-        } else {
-          this.searchMode = ChatSearchMode.EXTERNAL_ENGINE
-          this.persistSearchModePreference(ChatSearchMode.EXTERNAL_ENGINE)
-        }
+        this.searchMode = ChatSearchMode.EXTERNAL_ENGINE
+        this.persistSearchModePreference(ChatSearchMode.EXTERNAL_ENGINE)
         this.persistSearchEnginePreference(engineId)
       }
     }
     const enableSearch = engineId !== ''
-    if (this.isEditingMessage) {
-      this.editingWebSearchEnabled = this.isWebSearchReady() && enableSearch
-      return
-    }
     this.setWebSearchConversationEnabled(enableSearch).catch((error: Object) => {
       console.error('ChatPage', `Failed to update chat search setting: ${JSON.stringify(error)}`)
       this.showError(pickLocalizedText('联网查询开关保存失败', 'Failed to save web search toggle'))
@@ -1813,9 +1731,6 @@ export struct ChatPage {
         this.editingMessageId = ''
         this.editingOriginalContent = ''
         this.editingOriginalAttachments = []
-        this.editingWebSearchEnabled = false
-        this.editingSelectedToolIds = []
-        this.editingReasoningLevel = ReasoningLevel.OFF
       },
       onApplySavedDraft: (
         content: string,
@@ -2063,11 +1978,7 @@ export struct ChatPage {
     // 模型/服务商变更后, 联网菜单里的 "OpenAI 内置搜索" 项可能要出现或消失, 触发一次刷新。
     // 内部还会按 searchMode/storedEngine 决定 activeSearchEngineId 的最终值, 失效模式自动降级到 external_engine。
     await this.refreshAvailableSearchEngines()
-    // 内置生图开关跟当前 provider 强绑定: 不支持时强制关闭, 避免用户在切换模型后误发 hosted 工具请求。
-    if (!this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()) {
-      this.builtinImageGenEnabled = false
-      this.editingBuiltinImageGenEnabled = false
-    }
+    // 内置生图偏好不跟模型切换互相覆盖; 不支持时不展示,发送层仍会按能力过滤。
   }
 
   // 验证当前模型是否有效，如果无效则自动选择第一个可用模型
@@ -4063,10 +3974,8 @@ export struct ChatPage {
       const searchEnabled = this.isWebSearchReady() && this.webSearchConversationEnabled
       const selectedToolIds = [...this.selectedToolIds]
       const forcedToolIds = [...this.forcedToolIdsOnce]
-      // 联网模式: 编辑消息走 editingSearchMode, 否则走会话级 searchMode。
       // SEARCH_MODE 是用户偏好,发送时再按当前 provider 收敛为实际可执行模式。
-      const preferredSearchMode: ChatSearchMode = this.isEditingMessage ? this.editingSearchMode : this.searchMode
-      const activeSearchMode: ChatSearchMode = this.resolveEffectiveSearchModeForCurrentProvider(preferredSearchMode)
+      const activeSearchMode: ChatSearchMode = this.resolveEffectiveSearchModeForCurrentProvider(this.searchMode)
       const activeBuiltinImageGen = this.getActiveComposerBuiltinImageGenEnabled() &&
         this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()
       await this.getSendFlow().executeSend(
@@ -4426,12 +4335,6 @@ export struct ChatPage {
     this.pendingAttachments = [...message.attachments]
     this.preparePendingDocumentAttachments()
     const messageIndex = findMessageIndexById(this.messages, message.id)
-    const toolContext = messageIndex >= 0 ?
-      this.resolveEditedMessageToolContext(messageIndex) :
-      new EditedMessageToolContext()
-    this.editingWebSearchEnabled = toolContext.webSearchEnabled
-    this.editingSelectedToolIds = [...toolContext.selectedToolIds]
-    this.editingReasoningLevel = this.reasoningLevel
     this.isEditingMessage = true
     this.getScrollUiFlow().setInputBarVisible(true)
     this.autoFocusInput = true
@@ -4463,9 +4366,6 @@ export struct ChatPage {
     this.editingMessageId = ''
     this.editingOriginalContent = ''
     this.editingOriginalAttachments = []
-    this.editingWebSearchEnabled = false
-    this.editingSelectedToolIds = []
-    this.editingReasoningLevel = ReasoningLevel.OFF
     // 允许下次进入编辑时 ChatInputBar @Monitor('autoFocus') 重新触发
     this.autoFocusInput = false
     // 收键盘 + clearFocus + stopInputSession, 避免 textarea 残留焦点引发键盘异常弹起
@@ -4482,9 +4382,9 @@ export struct ChatPage {
       this.editingMessageId,
       this.inputText,
       this.pendingAttachments,
-      this.editingWebSearchEnabled,
-      this.editingSelectedToolIds,
-      this.editingReasoningLevel
+      this.getActiveComposerWebSearchEnabled(),
+      this.getActiveComposerSelectedToolIds(),
+      this.getActiveComposerReasoningLevel()
     )
   }
 
