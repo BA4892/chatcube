@@ -525,6 +525,18 @@ export class ChatViewModel {
     aiMessage.parts = aiMessage.parts.concat([part])
   }
 
+  private insertPartBeforeActiveOutputOrAppend(aiMessage: ChatMessage, part: MessagePart): void {
+    const activeOutputIndex = this.getTrailingActiveOutputIndex(aiMessage)
+    if (activeOutputIndex >= 0) {
+      const nextParts = aiMessage.parts.slice()
+      nextParts.splice(activeOutputIndex, 0, part)
+      aiMessage.parts = nextParts
+      return
+    }
+    this.finishTrailingReasoningPart(aiMessage)
+    aiMessage.parts = aiMessage.parts.concat([part])
+  }
+
   private getTrailingActiveReasoningIndex(aiMessage: ChatMessage): number {
     if (aiMessage.parts.length === 0) {
       return -1
@@ -535,6 +547,19 @@ export class ChatViewModel {
       return lastIndex
     }
     return -1
+  }
+
+  private getTrailingActiveOutputIndex(aiMessage: ChatMessage): number {
+    const activeReasoningIndex = this.getTrailingActiveReasoningIndex(aiMessage)
+    if (activeReasoningIndex >= 0) {
+      return activeReasoningIndex
+    }
+    if (!aiMessage.isGenerating || aiMessage.parts.length === 0) {
+      return -1
+    }
+    const lastIndex = aiMessage.parts.length - 1
+    const last = aiMessage.parts[lastIndex]
+    return last.kind === MessagePartKind.TEXT ? lastIndex : -1
   }
 
   private mergeToolFunctionNameFragment(previousName: string, incomingName: string): string {
@@ -612,6 +637,22 @@ export class ChatViewModel {
         this.syncToolPartFromToolCall(part, toolCall)
         return
       }
+    }
+  }
+
+  private markToolPartRunningByCall(aiMessage: ChatMessage, toolCall: ToolCall): void {
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const part = aiMessage.parts[i]
+      if (part.kind !== MessagePartKind.TOOL) {
+        continue
+      }
+      if (part.toolCallId !== toolCall.id) {
+        continue
+      }
+      if (part.toolStatus === ToolPartStatus.PENDING) {
+        part.toolStatus = ToolPartStatus.RUNNING
+      }
+      return
     }
   }
 
@@ -2384,7 +2425,123 @@ ${limitedSearchContext}
     )
     attachment.base64Data = ''
     aiMessage.addAttachment(attachment)
+    this.upsertGeneratedImagePart(aiMessage, attachment, result.itemId, result.outputIndex)
     onAIMessageUpdated(aiMessage)
+  }
+
+  private upsertGeneratedImagePart(
+    aiMessage: ChatMessage,
+    attachment: MessageAttachment,
+    itemId: string,
+    outputIndex: number
+  ): boolean {
+    if (attachment.filePath === '') {
+      return false
+    }
+
+    const source = attachment.filePath
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const existing = aiMessage.parts[i]
+      if (existing.kind === MessagePartKind.IMAGE && this.isSameGeneratedImagePart(existing, source)) {
+        if (existing.mediaMime !== attachment.mimeType) {
+          existing.mediaMime = attachment.mimeType
+        }
+        if (existing.mediaName !== attachment.name) {
+          existing.mediaName = attachment.name
+        }
+        return false
+      }
+    }
+
+    if (aiMessage.parts.length === 0) {
+      this.ensurePartsBackfill(aiMessage)
+    }
+
+    const part = new MessagePart(MessagePartKind.IMAGE)
+    part.mediaUrl = source
+    part.mediaMime = attachment.mimeType
+    part.mediaName = attachment.name
+    const toolPartIndex = this.findHostedImageGenerationToolPartIndex(aiMessage, itemId, outputIndex)
+    if (toolPartIndex >= 0) {
+      const nextParts = aiMessage.parts.slice()
+      const insertIndex = this.getGeneratedImageInsertionIndexAfterTool(nextParts, toolPartIndex)
+      nextParts.splice(insertIndex, 0, part)
+      aiMessage.parts = nextParts
+      return true
+    }
+
+    this.insertPartBeforeActiveOutputOrAppend(aiMessage, part)
+    return true
+  }
+
+  private isSameGeneratedImagePart(part: MessagePart, filePath: string): boolean {
+    if (part.mediaUrl === filePath) {
+      return true
+    }
+    return part.mediaUrl === 'file://' + filePath
+  }
+
+  private buildHostedImageGenerationToolPartId(itemId: string, outputIndex: number): string {
+    if (itemId !== '') {
+      return `hig_${itemId}`
+    }
+    if (outputIndex >= 0) {
+      return `hig_idx:${outputIndex}`
+    }
+    return ''
+  }
+
+  private findHostedImageGenerationToolPartIndex(
+    aiMessage: ChatMessage,
+    itemId: string,
+    outputIndex: number
+  ): number {
+    const preferredPartId = this.buildHostedImageGenerationToolPartId(itemId, outputIndex)
+    if (preferredPartId !== '') {
+      for (let i = 0; i < aiMessage.parts.length; i++) {
+        const candidate = aiMessage.parts[i]
+        if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === preferredPartId) {
+          return i
+        }
+      }
+    }
+
+    let latestToolIndex = -1
+    for (let i = aiMessage.parts.length - 1; i >= 0; i--) {
+      const candidate = aiMessage.parts[i]
+      if (!this.isHostedImageGenerationToolPart(candidate)) {
+        continue
+      }
+      if (latestToolIndex < 0) {
+        latestToolIndex = i
+      }
+      if (!this.hasGeneratedImageImmediatelyAfterTool(aiMessage.parts, i)) {
+        return i
+      }
+    }
+    return latestToolIndex
+  }
+
+  private isHostedImageGenerationToolPart(part: MessagePart): boolean {
+    if (part.kind !== MessagePartKind.TOOL) {
+      return false
+    }
+    return part.toolCallId.startsWith('hig_') ||
+      part.toolName === 'image_generation' ||
+      part.toolSourceLabel === 'OpenAI Image Generation'
+  }
+
+  private hasGeneratedImageImmediatelyAfterTool(parts: MessagePart[], toolIndex: number): boolean {
+    const nextIndex = toolIndex + 1
+    return nextIndex < parts.length && parts[nextIndex].kind === MessagePartKind.IMAGE
+  }
+
+  private getGeneratedImageInsertionIndexAfterTool(parts: MessagePart[], toolIndex: number): number {
+    let insertIndex = toolIndex + 1
+    while (insertIndex < parts.length && parts[insertIndex].kind === MessagePartKind.IMAGE) {
+      insertIndex++
+    }
+    return insertIndex
   }
 
   // OpenAI Responses 内置搜索引用累积:
@@ -2455,7 +2612,7 @@ ${limitedSearchContext}
       // 改为只追加到 searchReferences 让顶部引用卡片可见, parts 不动 → reasoning 自然合并。
       const url = event.url.trim()
       const query = event.query.trim()
-      const isOpenPage = query === '' && url !== ''
+      const isOpenPage = event.actionType === 'open_page' || (query === '' && url !== '')
       if (isOpenPage || this.isOpenPageRecorded(aiMessage.id, key)) {
         if (isOpenPage) {
           this.rememberOpenPageItem(aiMessage.id, key)
@@ -2485,7 +2642,9 @@ ${limitedSearchContext}
         needUpdate = true
       }
       // 每次 web_search_call 落一个独立 TOOL part, 状态置 RUNNING
-      if (this.upsertHostedWebSearchPart(aiMessage, key, event.query, event.url, ToolPartStatus.RUNNING)) {
+      if (this.upsertHostedWebSearchPart(
+        aiMessage, key, event.query, event.url, event.actionType, event.queries, ToolPartStatus.RUNNING
+      )) {
         needUpdate = true
       }
       if (needUpdate) {
@@ -2497,7 +2656,7 @@ ${limitedSearchContext}
       // COMPLETED 阶段也按 open_page 识别一次, 兜底 STARTED 里 url 漏掉的情况 (有些版本 action 只在 done 上挂)
       const url = event.url.trim()
       const query = event.query.trim()
-      const isOpenPageNow = query === '' && url !== ''
+      const isOpenPageNow = event.actionType === 'open_page' || (query === '' && url !== '')
       if (isOpenPageNow || this.isOpenPageRecorded(aiMessage.id, key)) {
         if (isOpenPageNow) {
           this.rememberOpenPageItem(aiMessage.id, key)
@@ -2511,7 +2670,7 @@ ${limitedSearchContext}
       }
       // done 阶段补一次 query/url, 兜底 added 阶段没有挂载 action 的情况; 同时把状态置 SUCCEEDED
       const partChanged = this.upsertHostedWebSearchPart(
-        aiMessage, key, event.query, event.url, ToolPartStatus.SUCCEEDED
+        aiMessage, key, event.query, event.url, event.actionType, event.queries, ToolPartStatus.SUCCEEDED
       )
       const inflight = this.inflightHostedSearchCalls.get(aiMessage.id)
       if (inflight !== undefined) {
@@ -2592,11 +2751,14 @@ ${limitedSearchContext}
     itemKey: string,
     query: string,
     url: string,
+    actionType: string,
+    queries: string[],
     status: string
   ): boolean {
     const partId = `hws_${itemKey}`
     const trimmedQuery = query.trim()
     const trimmedUrl = url.trim()
+    const trimmedActionType = actionType.trim()
 
     let part: MessagePart | null = null
     for (let i = 0; i < aiMessage.parts.length; i++) {
@@ -2613,9 +2775,8 @@ ${limitedSearchContext}
       part.toolCallId = partId
       // 'web_search' 已经被 isSearchWebFunctionName 识别为搜索类工具, 复用 timeline 已有搜索 step 渲染
       part.toolName = 'web_search'
-      part.toolDisplayName = trimmedQuery !== '' ? trimmedQuery :
-        (trimmedUrl !== '' ? trimmedUrl : 'OpenAI Web Search')
-      part.toolArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl)
+      part.toolDisplayName = this.buildHostedWebSearchDisplayName(trimmedQuery, trimmedUrl)
+      part.toolArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl, trimmedActionType, queries)
       part.toolSourceType = ToolSourceType.BUILTIN
       part.toolSourceLabel = 'OpenAI Web Search'
       part.toolPermissionLevel = ToolPermissionLevel.READ
@@ -2626,14 +2787,20 @@ ${limitedSearchContext}
       changed = true
     } else {
       // 已有 part: 增量补 query / url / 完成状态; 不允许把更精确的 query 退回到默认占位文案
-      const nextDisplayName = trimmedQuery !== '' ? trimmedQuery :
-        (trimmedUrl !== '' ? trimmedUrl : part.toolDisplayName)
+      const nextDisplayName = trimmedQuery !== '' || trimmedUrl !== '' ?
+        this.buildHostedWebSearchDisplayName(trimmedQuery, trimmedUrl) : part.toolDisplayName
       if (nextDisplayName !== part.toolDisplayName) {
         part.toolDisplayName = nextDisplayName
         changed = true
       }
       if (trimmedQuery !== '' || trimmedUrl !== '') {
-        const nextArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl)
+        const nextArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl, trimmedActionType, queries)
+        if (nextArguments !== part.toolArguments) {
+          part.toolArguments = nextArguments
+          changed = true
+        }
+      } else if (trimmedActionType !== '' || queries.length > 0) {
+        const nextArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl, trimmedActionType, queries)
         if (nextArguments !== part.toolArguments) {
           part.toolArguments = nextArguments
           changed = true
@@ -2645,6 +2812,17 @@ ${limitedSearchContext}
       }
     }
     return changed
+  }
+
+  private buildHostedWebSearchDisplayName(query: string, url: string): string {
+    if (query !== '') {
+      const lineBreak = query.indexOf('\n')
+      return lineBreak >= 0 ? query.substring(0, lineBreak).trim() : query
+    }
+    if (url !== '') {
+      return url
+    }
+    return 'OpenAI Web Search'
   }
 
   // open_page itemId 跨事件阶段记忆: STARTED 阶段判定后入集合, SEARCHING/COMPLETED 阶段查集合走快路径。
@@ -2675,7 +2853,7 @@ ${limitedSearchContext}
   }
 
   // 每个 hosted image_generation_call 占一个独立 TOOL part, key=hig_<itemId>。
-  // - 首次出现: 在 parts 末尾追加 (会先封口前序 reasoning), status=RUNNING
+  // - 首次出现: 插到当前活跃 reasoning/text 之前, status=RUNNING, 避免正文流式块把工具行夹在中间
   // - 后续 partial / completed: 仅更新 toolStatus 与 partial 序号; 不重建 part
   // 关键作用: 把 aiMessage.parts 撑非空, 顶掉 MessageBubble 的 Bubble Dots 等待动画。
   // 返回 true 表示有改动, 调用方据此决定是否触发 UI 刷新。
@@ -2698,7 +2876,6 @@ ${limitedSearchContext}
 
     let changed = false
     if (part === null) {
-      this.finishTrailingReasoningPart(aiMessage)
       part = new MessagePart(MessagePartKind.TOOL)
       part.toolCallId = partId
       part.toolName = 'image_generation'
@@ -2708,7 +2885,7 @@ ${limitedSearchContext}
       part.toolSourceLabel = 'OpenAI Image Generation'
       part.toolPermissionLevel = ToolPermissionLevel.READ
       part.toolStatus = status
-      aiMessage.parts = aiMessage.parts.concat([part])
+      this.insertPartBeforeActiveOutputOrAppend(aiMessage, part)
       changed = true
     } else {
       const nextArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
@@ -2724,19 +2901,27 @@ ${limitedSearchContext}
     return changed
   }
 
-  // 构造 hosted web_search part 的 toolArguments JSON, 让 MessageBubble.extractToolStepSearchQuery
-  // 能从 query 字段读出关键词显示在 step 标题。url 也带上, 方便后续展示 open_page 动作。
-  private buildHostedWebSearchArguments(query: string, url: string): string {
-    if (query === '' && url === '') {
+  // 构造 hosted web_search part 的 toolArguments JSON, 让 MessageBubble 展示本次 OpenAI action/request。
+  private buildHostedWebSearchArguments(query: string, url: string, actionType: string, queries: string[]): string {
+    if (query === '' && url === '' && actionType === '' && queries.length === 0) {
       return '{}'
     }
     interface HostedSearchArgs {
+      tool?: string
+      action?: string
       query?: string
+      queries?: string[]
       url?: string
     }
-    const payload: HostedSearchArgs = {}
+    const payload: HostedSearchArgs = { tool: 'web_search' }
+    if (actionType !== '') {
+      payload.action = actionType
+    }
     if (query !== '') {
       payload.query = query
+    }
+    if (queries.length > 0) {
+      payload.queries = queries.slice()
     }
     if (url !== '') {
       payload.url = url
@@ -3251,6 +3436,7 @@ ${limitedSearchContext}
         if (this.isWebSearchFunction(toolCalls[i].functionName)) {
           aiMessage.searchSource = 'tool'
           aiMessage.isSearching = true
+          this.markToolPartRunningByCall(aiMessage, toolCalls[i])
           try {
             const searchRequestText = this.extractSearchToolRequestText(toolCalls[i])
             aiMessage.searchQuery = searchRequestText
@@ -3490,6 +3676,7 @@ ${limitedSearchContext}
     }
 
     aiMessage.addAttachment(attachment)
+    this.upsertGeneratedImagePart(aiMessage, attachment, '', -1)
     onAIMessageUpdated(aiMessage)
   }
 

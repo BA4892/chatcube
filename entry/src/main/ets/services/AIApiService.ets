@@ -365,10 +365,10 @@ class StreamLineAccumulator {
     }
     try {
       const result = sink.complete(this.imageItemId, this.imageOutputIndex)
-      callbacks.onFile(result)
       if (this.onHostedImageCompleted !== undefined) {
         this.onHostedImageCompleted(this.imageItemId, this.imageOutputIndex)
       }
+      callbacks.onFile(result)
       this.resetImageLineState()
       return true
     } catch (error) {
@@ -860,11 +860,12 @@ interface OpenAIResponsesContentPart {
 }
 
 // web_search_call item 上的 action 字段, OpenAI 会在 output_item.added/done 携带:
-//   { type: 'search', query: '...' }  或  { type: 'open_page', url: '...' }
+//   { type: 'search', query: '...' } / { type: 'search', queries: [...] } / { type: 'open_page', url: '...' }
 // 用来给用户展示"这一轮在搜什么 / 在读什么"。
 interface OpenAIResponsesItemAction {
   type?: string
   query?: string
+  queries?: string[]
   url?: string
 }
 
@@ -1316,10 +1317,12 @@ export class HostedResponsesToolEvent {
   outputIndex: number
   // image_generation_partial 渐进序号, 其它事件为 -1
   partialIndex: number
-  // web_search_call 携带: 当次搜索关键词 (action.type === 'search') 或读取的页面 url (action.type === 'open_page')
+  // web_search_call 携带: 当次 action 类型、搜索关键词 / queries 或读取的页面 url。
   // 其它事件为 ''. 上层可用于在搜索卡片实时展示"在搜什么 / 在读什么".
   query: string
   url: string
+  actionType: string
+  queries: string[]
 
   constructor(
     kind: HostedResponsesToolEventKind,
@@ -1327,7 +1330,9 @@ export class HostedResponsesToolEvent {
     outputIndex: number = -1,
     partialIndex: number = -1,
     query: string = '',
-    url: string = ''
+    url: string = '',
+    actionType: string = '',
+    queries: string[] = []
   ) {
     this.kind = kind
     this.itemId = itemId
@@ -1335,6 +1340,8 @@ export class HostedResponsesToolEvent {
     this.partialIndex = partialIndex
     this.query = query
     this.url = url
+    this.actionType = actionType
+    this.queries = queries
   }
 }
 
@@ -1521,13 +1528,6 @@ export class AIApiService {
       }
     }
     const outputIndex = this.findJsonNumberValueBefore(jsonStr, 'output_index', resultStart)
-    if (onImageData !== undefined) {
-      try {
-        onImageData(base64Data, this.currentResponsesHostedImageMimeType, false)
-      } catch (error) {
-        console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(error)}`)
-      }
-    }
     if (onHostedToolEvent !== undefined) {
       try {
         onHostedToolEvent(new HostedResponsesToolEvent(
@@ -1537,6 +1537,13 @@ export class AIApiService {
         ))
       } catch (error) {
         console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(error)}`)
+      }
+    }
+    if (onImageData !== undefined) {
+      try {
+        onImageData(base64Data, this.currentResponsesHostedImageMimeType, false)
+      } catch (error) {
+        console.error('AIApiService', `Error in onImageData callback: ${JSON.stringify(error)}`)
       }
     }
     return true
@@ -1581,8 +1588,8 @@ export class AIApiService {
       this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
       return true
     }
-    this.emitResponsesImageData(base64Data, onImageData)
     this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+    this.emitResponsesImageData(base64Data, onImageData)
     return true
   }
 
@@ -4086,6 +4093,13 @@ export class AIApiService {
         if (result.content !== '') {
           onData(result.content)
         }
+        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+          try {
+            onHostedToolEvent(result.hostedToolEvent)
+          } catch (e) {
+            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
+          }
+        }
         if (result.imageData && result.imageMimeType && onImageData) {
           try {
             onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
@@ -4098,13 +4112,6 @@ export class AIApiService {
             onSearchReferences(result.searchReferences)
           } catch (e) {
             console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
-          }
-        }
-        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
-          try {
-            onHostedToolEvent(result.hostedToolEvent)
-          } catch (e) {
-            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
           }
         }
         if (result.reasoningItem !== undefined) {
@@ -4131,6 +4138,13 @@ export class AIApiService {
     if (result.content !== '') {
       onData(result.content)
     }
+    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+      try {
+        onHostedToolEvent(result.hostedToolEvent)
+      } catch (e) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
+      }
+    }
     if (result.imageData && result.imageMimeType && onImageData) {
       try {
         onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
@@ -4143,13 +4157,6 @@ export class AIApiService {
         onSearchReferences(result.searchReferences)
       } catch (e) {
         console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
-      }
-    }
-    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
-      try {
-        onHostedToolEvent(result.hostedToolEvent)
-      } catch (e) {
-        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
       }
     }
     if (result.reasoningItem !== undefined) {
@@ -4226,6 +4233,45 @@ export class AIApiService {
     result.content = contentParts.join('')
     result.reasoningContent = reasoningParts.join('')
     return result
+  }
+
+  private getOpenAIResponsesActionType(action?: OpenAIResponsesItemAction): string {
+    if (action === undefined || action.type === undefined) {
+      return ''
+    }
+    return action.type.trim()
+  }
+
+  private getOpenAIResponsesActionQueries(action?: OpenAIResponsesItemAction): string[] {
+    if (action === undefined || action.queries === undefined || !Array.isArray(action.queries)) {
+      return []
+    }
+    const queries: string[] = []
+    const rawQueries = action.queries as string[]
+    for (let i = 0; i < rawQueries.length; i++) {
+      const item = rawQueries[i]
+      if (typeof item === 'string' && item.trim() !== '') {
+        queries.push(item.trim())
+      }
+    }
+    return queries
+  }
+
+  private getOpenAIResponsesActionQuery(action?: OpenAIResponsesItemAction): string {
+    if (action === undefined) {
+      return ''
+    }
+    if (action.query !== undefined && action.query.trim() !== '') {
+      return action.query.trim()
+    }
+    return this.getOpenAIResponsesActionQueries(action).join('\n')
+  }
+
+  private getOpenAIResponsesActionUrl(action?: OpenAIResponsesItemAction): string {
+    if (action === undefined || action.url === undefined) {
+      return ''
+    }
+    return action.url.trim()
   }
 
   private parseStreamChunk(apiStyle: ApiStyle, useOpenAIResponses: boolean, json: object): StreamChunkResult {
@@ -4310,15 +4356,19 @@ export class AIApiService {
           event.item !== undefined && event.item.type === 'web_search_call') {
           // added 时 item.action 一般已经携带 query/url, 是最早能拿到关键词的位置
           const action = event.item.action
-          const actionQuery: string = action !== undefined && action.query !== undefined ? action.query : ''
-          const actionUrl: string = action !== undefined && action.url !== undefined ? action.url : ''
+          const actionQuery = this.getOpenAIResponsesActionQuery(action)
+          const actionUrl = this.getOpenAIResponsesActionUrl(action)
+          const actionType = this.getOpenAIResponsesActionType(action)
+          const actionQueries = this.getOpenAIResponsesActionQueries(action)
           result.hostedToolEvent = new HostedResponsesToolEvent(
             HostedResponsesToolEventKind.WEB_SEARCH_STARTED,
             event.item.id !== undefined ? event.item.id : '',
             event.output_index !== undefined ? event.output_index : -1,
             -1,
             actionQuery,
-            actionUrl
+            actionUrl,
+            actionType,
+            actionQueries
           )
         } else if (event.type === 'response.web_search_call.in_progress') {
           result.hostedToolEvent = new HostedResponsesToolEvent(
@@ -4338,8 +4388,10 @@ export class AIApiService {
           // done 时 action 一定完整, 兜底再取一次 (有些版本只在 done 上挂 action)
           const doneItem = event.item
           const doneAction = doneItem !== undefined ? doneItem.action : undefined
-          const doneQuery: string = doneAction !== undefined && doneAction.query !== undefined ? doneAction.query : ''
-          const doneUrl: string = doneAction !== undefined && doneAction.url !== undefined ? doneAction.url : ''
+          const doneQuery = this.getOpenAIResponsesActionQuery(doneAction)
+          const doneUrl = this.getOpenAIResponsesActionUrl(doneAction)
+          const doneActionType = this.getOpenAIResponsesActionType(doneAction)
+          const doneQueries = this.getOpenAIResponsesActionQueries(doneAction)
           result.hostedToolEvent = new HostedResponsesToolEvent(
             HostedResponsesToolEventKind.WEB_SEARCH_COMPLETED,
             event.item !== undefined && event.item.id !== undefined ? event.item.id :
@@ -4347,7 +4399,9 @@ export class AIApiService {
             event.output_index !== undefined ? event.output_index : -1,
             -1,
             doneQuery,
-            doneUrl
+            doneUrl,
+            doneActionType,
+            doneQueries
           )
         } else if (event.type === 'response.output_text.annotation.added' &&
           event.annotation !== undefined && event.annotation.type === 'url_citation' &&
@@ -4684,6 +4738,13 @@ export class AIApiService {
         if (result.reasoningContent !== '' && onReasoningData) {
           onReasoningData(result.reasoningContent)
         }
+        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+          try {
+            onHostedToolEvent(result.hostedToolEvent)
+          } catch (e) {
+            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
+          }
+        }
         if (result.imageData && result.imageMimeType && onImageData) {
           try {
             onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
@@ -4696,13 +4757,6 @@ export class AIApiService {
             onSearchReferences(result.searchReferences)
           } catch (e) {
             console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
-          }
-        }
-        if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
-          try {
-            onHostedToolEvent(result.hostedToolEvent)
-          } catch (e) {
-            console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
           }
         }
         if (result.reasoningItem !== undefined) {
@@ -4722,6 +4776,13 @@ export class AIApiService {
     if (result.reasoningContent !== '' && onReasoningData) {
       onReasoningData(result.reasoningContent)
     }
+    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
+      try {
+        onHostedToolEvent(result.hostedToolEvent)
+      } catch (e) {
+        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
+      }
+    }
     if (result.imageData && result.imageMimeType && onImageData) {
       try {
         onImageData(result.imageData, result.imageMimeType, result.imageIsPartial === true)
@@ -4734,13 +4795,6 @@ export class AIApiService {
         onSearchReferences(result.searchReferences)
       } catch (e) {
         console.error('AIApiService', `Error in onSearchReferences callback: ${JSON.stringify(e)}`)
-      }
-    }
-    if (result.hostedToolEvent !== undefined && onHostedToolEvent) {
-      try {
-        onHostedToolEvent(result.hostedToolEvent)
-      } catch (e) {
-        console.error('AIApiService', `Error in onHostedToolEvent callback: ${JSON.stringify(e)}`)
       }
     }
     if (result.reasoningItem !== undefined) {

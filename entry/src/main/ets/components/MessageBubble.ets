@@ -76,6 +76,11 @@ interface ImageAttachmentEntry {
   originalIndex: number
 }
 
+interface ImagePartPreviewEntry {
+  src: string
+  previewId: string
+}
+
 interface ToolSearchResultItemPayload {
   title?: string
   url?: string
@@ -89,10 +94,20 @@ interface ToolSearchResultPayload {
 }
 
 interface ToolSearchArgumentPayload {
+  action?: string
+  type?: string
   query?: string
+  queries?: string[]
   q?: string
   keyword?: string
   keywords?: string
+  url?: string
+  tool?: string
+}
+
+interface HostedWebSearchDetailItem {
+  label: string
+  value: string
 }
 
 interface AskUserTimelineQuestion {
@@ -128,6 +143,8 @@ export struct MessageBubble {
   @Local reasoningElapsedMs: number = 0         // 流式中已思考毫秒数,驱动 UI 刷新
   @Local reasoningAutoPreview: boolean = false  // 流式中自动进入的预览态,用户切换后置 false
   @Local reasoningShimmerAlpha: number = 1.0    // shimmer 呼吸动画透明度
+  @Local searchStepPulseScale: number = 1.0
+  @Local searchStepPulseOpacity: number = 1.0
   // timeline 模式下: 每条 reasoning step 自己的展开/折叠状态用 key 列表跟踪;
   // - 包含 `${createdAt}` 表示用户手动展开
   // - 包含 `!${createdAt}` 表示用户手动折叠 (用于覆盖 active reasoning 的默认展开行为)
@@ -193,6 +210,7 @@ export struct MessageBubble {
   private reasoningFinalMs: number = 0
   private reasoningTimerId: number = -1
   private reasoningShimmerTimerId: number = -1
+  private searchStepPulseTimerId: number = -1
   private reasoningScroller: Scroller = new Scroller()
   private get speakingMessageId(): string {
     return getAppUiState().speakingMessageId
@@ -348,11 +366,13 @@ export struct MessageBubble {
 
     this.isReasoningExpanded = false
     this.syncReasoningRuntime()
+    this.syncSearchStepPulseRuntime()
   }
 
   aboutToDisappear(): void {
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
+    this.stopSearchStepPulse()
   }
 
   // 消息状态变化回调（优化跳动点动画性能）
@@ -361,6 +381,7 @@ export struct MessageBubble {
     this.syncMessageScopedState()
     this.syncDerivedRenderCaches()
     this.syncReasoningRuntime()
+    this.syncSearchStepPulseRuntime()
   }
 
   @Monitor('contentRenderSignature')
@@ -368,6 +389,7 @@ export struct MessageBubble {
     this.syncMessageScopedState()
     this.syncDerivedRenderCaches()
     this.syncReasoningRuntime()
+    this.syncSearchStepPulseRuntime()
     this.syncMarkdownRuntimeOptions()
   }
 
@@ -412,10 +434,13 @@ export struct MessageBubble {
     this.reasoningStartAt = 0
     this.reasoningFinalMs = 0
     this.reasoningShimmerAlpha = 1.0
+    this.searchStepPulseScale = 1.0
+    this.searchStepPulseOpacity = 1.0
     this.expandedReasoningKeys = []
     this.expandedToolStepKeys = []
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
+    this.stopSearchStepPulse()
     this.translatedText = ''
     this.isTranslating = false
     this.showTranslation = false
@@ -482,6 +507,54 @@ export struct MessageBubble {
     this.reasoningShimmerAlpha = 1.0
   }
 
+  private startSearchStepPulse(): void {
+    if (this.searchStepPulseTimerId !== -1) {
+      return
+    }
+    let high = false
+    this.searchStepPulseScale = 1.0
+    this.searchStepPulseOpacity = 1.0
+    this.searchStepPulseTimerId = setInterval(() => {
+      high = !high
+      this.getUIContext().animateTo({ duration: 760, curve: Curve.EaseInOut }, () => {
+        this.searchStepPulseScale = high ? 1.08 : 0.92
+        this.searchStepPulseOpacity = high ? 1.0 : 0.52
+      })
+    }, 760)
+  }
+
+  private stopSearchStepPulse(): void {
+    if (this.searchStepPulseTimerId !== -1) {
+      clearInterval(this.searchStepPulseTimerId)
+      this.searchStepPulseTimerId = -1
+    }
+    this.searchStepPulseScale = 1.0
+    this.searchStepPulseOpacity = 1.0
+  }
+
+  private isSearchToolStepInProgress(part: MessagePart): boolean {
+    return isSearchWebFunctionName(part.toolName) &&
+      (part.toolStatus === ToolPartStatus.PENDING || part.toolStatus === ToolPartStatus.RUNNING)
+  }
+
+  private hasSearchToolStepInProgress(): boolean {
+    for (let i = 0; i < this.message.parts.length; i++) {
+      const part = this.message.parts[i]
+      if (part.kind === MessagePartKind.TOOL && this.isSearchToolStepInProgress(part)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private syncSearchStepPulseRuntime(): void {
+    if (this.hasSearchToolStepInProgress()) {
+      this.startSearchStepPulse()
+      return
+    }
+    this.stopSearchStepPulse()
+  }
+
   // 根据消息当前状态驱动 reasoning 计时器/shimmer/自动预览的开关
   private syncReasoningRuntime(): void {
     const isGenerating = this.message.isGenerating
@@ -542,6 +615,7 @@ export struct MessageBubble {
       this.message.id,
       this.message.role,
       this.message.timestamp.toString(),
+      this.contentRenderSignature,
       this.message.modelId,
       this.message.modelName,
       fingerprintLongString(this.message.content),
@@ -579,7 +653,7 @@ export struct MessageBubble {
     this.cachedHasPreviewSegments = !this.message.isGenerating && this.hasPreviewableCodeBlocks(this.message.content)
     this.cachedContentSegments = this.cachedHasPreviewSegments ? this.splitContentToSegments(this.message.content) : []
     this.cachedPreviewImageEntries = this.buildImageAttachmentEntries(this.previewAttachments)
-    this.cachedMessageImageEntries = this.buildImageAttachmentEntries(this.message.attachments)
+    this.cachedMessageImageEntries = this.buildImageAttachmentEntries(this.message.attachments, true)
     this.cachedMessageFileAttachments = this.getFileAttachments(this.message.attachments)
     this.cachedPreviewImageGridRows = this.buildImageGridRows(this.cachedPreviewImageEntries.length)
     this.cachedMessageImageGridRows = this.buildImageGridRows(this.cachedMessageImageEntries.length)
@@ -1234,6 +1308,11 @@ export struct MessageBubble {
     return this.cachedHasDisplayAttachments
   }
 
+  private hasRenderableMessageAttachments(): boolean {
+    this.ensureDerivedRenderCaches()
+    return this.cachedMessageImageEntries.length > 0 || this.cachedMessageFileAttachments.length > 0
+  }
+
   // 获取附件图片数据源（优先 file://，其次 base64）
   private getAttachmentImageSource(attachment: MessageAttachment): string {
     if (attachment.filePath !== '') {
@@ -1255,11 +1334,70 @@ export struct MessageBubble {
     return `img_attachment_${originalIndex}`
   }
 
+  private getImagePartSource(part: MessagePart): string {
+    if (part.mediaUrl === '') {
+      return ''
+    }
+    if (part.mediaUrl.startsWith('file://') ||
+      part.mediaUrl.startsWith('data:') ||
+      part.mediaUrl.startsWith('http://') ||
+      part.mediaUrl.startsWith('https://')) {
+      return part.mediaUrl
+    }
+    return 'file://' + part.mediaUrl
+  }
+
+  private getImagePartPreviewId(part: MessagePart, index: number): string {
+    if (part.mediaUrl !== '') {
+      return 'part_img_' + part.mediaUrl
+    }
+    return `part_img_${index}`
+  }
+
+  private buildImagePartPreviewEntries(): ImagePartPreviewEntry[] {
+    const entries: ImagePartPreviewEntry[] = []
+    for (let i = 0; i < this.message.parts.length; i++) {
+      const part = this.message.parts[i]
+      if (part.kind !== MessagePartKind.IMAGE) {
+        continue
+      }
+      const src = this.getImagePartSource(part)
+      if (src === '') {
+        continue
+      }
+      entries.push({
+        src: src,
+        previewId: this.getImagePartPreviewId(part, i)
+      })
+    }
+    return entries
+  }
+
+  private isAttachmentRepresentedByImagePart(attachment: MessageAttachment): boolean {
+    const attachmentSource = this.getAttachmentImageSource(attachment)
+    if (attachmentSource === '') {
+      return false
+    }
+    for (let i = 0; i < this.message.parts.length; i++) {
+      const part = this.message.parts[i]
+      if (part.kind === MessagePartKind.IMAGE && this.getImagePartSource(part) === attachmentSource) {
+        return true
+      }
+    }
+    return false
+  }
+
   // 提取图片附件并保留原始索引（用于正确映射预览索引）
-  private buildImageAttachmentEntries(attachments: MessageAttachment[]): ImageAttachmentEntry[] {
+  private buildImageAttachmentEntries(
+    attachments: MessageAttachment[],
+    omitPartImages: boolean = false
+  ): ImageAttachmentEntry[] {
     const imageEntries: ImageAttachmentEntry[] = []
     for (let i = 0; i < attachments.length; i++) {
       if (attachments[i].type === AttachmentType.IMAGE) {
+        if (omitPartImages && this.isAttachmentRepresentedByImagePart(attachments[i])) {
+          continue
+        }
         imageEntries.push({
           attachment: attachments[i],
           originalIndex: i
@@ -1778,6 +1916,29 @@ export struct MessageBubble {
     this.openAttachmentImagePreview(imageEntries, clickedIndex)
   }
 
+  private handleImagePartPreview(clickedPart: MessagePart): void {
+    const clickedSource = this.getImagePartSource(clickedPart)
+    if (clickedSource === '') {
+      return
+    }
+
+    const entries = this.buildImagePartPreviewEntries()
+    const imagePaths: Array<string> = []
+    const imageSourceIds: Array<string> = []
+    let imageIndex = 0
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].src === clickedSource) {
+        imageIndex = imagePaths.length
+      }
+      imagePaths.push(entries[i].src)
+      imageSourceIds.push(entries[i].previewId)
+    }
+
+    if (imagePaths.length > 0) {
+      this.onImageClick(imagePaths, imageIndex, imageSourceIds)
+    }
+  }
+
   private openAttachmentImagePreview(imageEntries: ImageAttachmentEntry[], clickedIndex: number): void {
     const imagePaths: Array<string> = []
     const imageSourceIds: Array<string> = []
@@ -1931,7 +2092,7 @@ export struct MessageBubble {
             }
 
             // ========== 附件区域（AI 生成的图片） ==========
-            if (this.message.hasAttachments()) {
+            if (this.hasRenderableMessageAttachments()) {
               this.AssistantAttachments()
             }
 
@@ -2294,10 +2455,11 @@ export struct MessageBubble {
   // ===== tool step 点击行为 =====
   // 优先级:
   //  1. 抓取类 (scrape_web 等) → 直接 onOpenLink 打开 URL, 不弹中间 sheet
-  //  2. 搜索类 (search_web 等) 且成功 → 弹 sheet 列本次引用
-  //  3. 老消息: 仅当整条消息只有一个成功搜索 step 时,才允许降级用聚合 message.searchReferences
-  //  4. 其它工具但 toolArguments 能解析出 url → 直接 onOpenLink
-  //  5. 其它 → 不可点击
+  //  2. OpenAI hosted web_search → 展开查看本次 action/request 和可归属引用
+  //  3. 搜索类 (search_web 等) 且成功 → 弹 sheet 列本次引用
+  //  4. 老消息: 仅当整条消息只有一个成功搜索 step 时,才允许降级用聚合 message.searchReferences
+  //  5. 其它工具但 toolArguments 能解析出 url → 直接 onOpenLink
+  //  6. 其它 → 不可点击
   private isToolStepClickable(part: MessagePart): boolean {
     if (isAskUserFunctionName(part.toolName)) {
       return false
@@ -2307,6 +2469,9 @@ export struct MessageBubble {
       return this.extractToolStepUrl(part) !== '' || this.firstRefUrl(part) !== ''
     }
     if (isSearchWebFunctionName(part.toolName)) {
+      if (this.isHostedOpenAIWebSearchStep(part)) {
+        return this.hasHostedWebSearchDetails(part) || this.resolveToolStepSearchReferences(part).length > 0
+      }
       if (!this.isSuccessfulToolStep(part)) {
         return false
       }
@@ -2317,6 +2482,16 @@ export struct MessageBubble {
 
   private isSuccessfulToolStep(part: MessagePart): boolean {
     return part.toolStatus === ToolPartStatus.SUCCEEDED && !part.toolIsError
+  }
+
+  private isHostedOpenAIWebSearchStep(part: MessagePart): boolean {
+    return isSearchWebFunctionName(part.toolName) &&
+      (part.toolCallId.startsWith('hws_') || part.toolSourceLabel === 'OpenAI Web Search')
+  }
+
+  private hasHostedWebSearchDetails(part: MessagePart): boolean {
+    return this.isHostedOpenAIWebSearchStep(part) && part.toolArguments.trim() !== '' &&
+      part.toolArguments.trim() !== '{}'
   }
 
   private getToolStepKey(part: MessagePart): string {
@@ -2567,6 +2742,79 @@ export struct MessageBubble {
     }
   }
 
+  private buildToolStatusLabel(part: MessagePart): string {
+    if (part.toolStatus === ToolPartStatus.RUNNING) {
+      return 'running'
+    }
+    if (part.toolStatus === ToolPartStatus.SUCCEEDED) {
+      return 'completed'
+    }
+    if (part.toolStatus === ToolPartStatus.FAILED) {
+      return 'failed'
+    }
+    if (part.toolStatus === ToolPartStatus.DENIED) {
+      return 'denied'
+    }
+    return part.toolStatus
+  }
+
+  private readStringField(record: Record<string, Object>, key: string): string {
+    const value = record[key]
+    if (typeof value === 'string') {
+      return value.trim()
+    }
+    return ''
+  }
+
+  private readStringArrayField(record: Record<string, Object>, key: string): string[] {
+    const value = record[key]
+    if (!Array.isArray(value)) {
+      return []
+    }
+    const result: string[] = []
+    const list = value as string[]
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i]
+      if (typeof item === 'string' && item.trim() !== '') {
+        result.push(item.trim())
+      }
+    }
+    return result
+  }
+
+  private buildHostedWebSearchDetailItems(part: MessagePart): HostedWebSearchDetailItem[] {
+    const items: HostedWebSearchDetailItem[] = []
+    items.push({ label: 'status', value: this.buildToolStatusLabel(part) })
+    const raw = part.toolArguments.trim()
+    if (raw === '' || raw === '{}') {
+      return items
+    }
+    try {
+      const parsed = JSON.parse(raw) as Record<string, Object>
+      const action = this.readStringField(parsed, 'action')
+      if (action !== '') {
+        items.push({ label: 'action', value: action })
+      }
+      const queries = this.readStringArrayField(parsed, 'queries')
+      if (queries.length > 0) {
+        items.push({ label: 'queries', value: queries.join('\n') })
+      } else {
+        const query = this.readStringField(parsed, 'query')
+        if (query !== '') {
+          items.push({ label: 'query', value: query })
+        }
+      }
+      const url = this.readStringField(parsed, 'url')
+      if (url !== '') {
+        items.push({ label: 'url', value: url })
+      }
+      return items
+    } catch (_e) {
+      items.push({ label: 'arguments', value: raw })
+      return items
+    }
+  }
+
   private resolveToolStepSearchReferences(part: MessagePart): SearchReference[] {
     if (!isSearchWebFunctionName(part.toolName) || !this.isSuccessfulToolStep(part)) {
       return []
@@ -2597,6 +2845,18 @@ export struct MessageBubble {
       const candidate = args.query ?? args.q ?? args.keyword ?? args.keywords
       if (typeof candidate === 'string' && candidate.trim() !== '') {
         return candidate.trim()
+      }
+      if (Array.isArray(args.queries) && args.queries.length > 0) {
+        const queries: string[] = []
+        for (let i = 0; i < args.queries.length; i++) {
+          const query = args.queries[i]
+          if (typeof query === 'string' && query.trim() !== '') {
+            queries.push(query.trim())
+          }
+        }
+        if (queries.length > 0) {
+          return queries.join('\n')
+        }
       }
     } catch (_e) {
     }
@@ -2668,19 +2928,41 @@ export struct MessageBubble {
 	    .width('100%')
 	  }
 
-	  @Builder
-	  PartsContentBlock(block: MessagePartBlock, blockIndex: number) {
-	    Column() {
-	      ForEach(block.parts, (part: MessagePart, index: number) => {
-	        if (part.kind === MessagePartKind.TEXT) {
-	          this.PartTextContent(part, blockIndex, index)
-	        }
-	      }, (part: MessagePart, index: number) => {
-	        return part.kind + '_' + blockIndex.toString() + '_' + index.toString()
-	      })
+		  @Builder
+		  PartsContentBlock(block: MessagePartBlock, blockIndex: number) {
+		    Column() {
+		      ForEach(block.parts, (part: MessagePart, index: number) => {
+		        if (part.kind === MessagePartKind.TEXT) {
+		          this.PartTextContent(part, blockIndex, index)
+		        } else if (part.kind === MessagePartKind.IMAGE) {
+		          this.PartImageContent(part, blockIndex, index)
+		        }
+		      }, (part: MessagePart, index: number) => {
+		        return part.kind + '_' + blockIndex.toString() + '_' + index.toString()
+		      })
 	    }
 	    .width('100%')
 	    .margin({ bottom: 8 })
+	  }
+
+	  @Builder
+	  PartImageContent(part: MessagePart, blockIndex: number, partIndex: number) {
+	    if (this.getImagePartSource(part) !== '') {
+	      AdaptiveImageThumbnail({
+	        src: this.getImagePartSource(part),
+	        previewId: this.getImagePartPreviewId(part, blockIndex * 1000 + partIndex),
+	        maxWidth: this.compactImageContainerWidth,
+	        maxHeight: this.compactImageMaxHeight,
+	        radius: 8,
+	        onContentLayoutChange: (): void => {
+	          this.onContentLayoutChange()
+	        },
+	        onPreview: () => {
+	          this.handleImagePartPreview(part)
+	        }
+	      })
+	        .margin({ bottom: 6 })
+	    }
 	  }
 
 	  // 注意: 必须接收整个 MessagePart 对象 (而非 part.text 字符串), 内部直接访问 part.text。
@@ -2862,6 +3144,8 @@ export struct MessageBubble {
           SymbolGlyph($r('sys.symbol.AI_deep_thinking'))
             .fontSize(13)
             .fontColor([$r('app.color.text_secondary')])
+        } else if (this.isSearchToolStepInProgress(step)) {
+          this.SearchToolStepPulseIcon()
         } else {
           SymbolGlyph(resolveToolSymbol(step.toolName))
             .fontSize(13)
@@ -2925,6 +3209,82 @@ export struct MessageBubble {
     .alignItems(HorizontalAlign.Start)
   }
 
+  @Builder
+  SearchToolStepPulseIcon() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width(18)
+        .height(18)
+        .borderRadius(9)
+        .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '38' : '29'))
+        .opacity(this.searchStepPulseOpacity)
+        .scale({
+          x: this.searchStepPulseScale,
+          y: this.searchStepPulseScale,
+          centerX: '50%',
+          centerY: '50%'
+        })
+
+      SymbolGlyph($r('sys.symbol.international_insurance'))
+        .fontSize(12)
+        .fontColor([this.themePrimary])
+    }
+    .width(20)
+    .height(20)
+  }
+
+  @Builder
+  ToolStepStatusIndicator(step: MessagePart) {
+    if (step.toolStatus === ToolPartStatus.SUCCEEDED) {
+      SymbolGlyph($r('sys.symbol.checkmark_circle'))
+        .fontSize(13)
+        .fontColor([$r('app.color.status_success')])
+    } else if (step.toolStatus === ToolPartStatus.FAILED || step.toolStatus === ToolPartStatus.DENIED) {
+      SymbolGlyph($r('sys.symbol.xmark_circle'))
+        .fontSize(13)
+        .fontColor([$r('app.color.status_error')])
+    } else if (step.toolStatus === ToolPartStatus.PENDING) {
+      Text('待确认')
+        .fontSize(10)
+        .fontColor(Color.White)
+        .backgroundColor(this.themePrimary)
+        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        .borderRadius(6)
+    } else if (step.toolStatus === ToolPartStatus.RUNNING) {
+      Column()
+        .width(8)
+        .height(8)
+        .borderRadius(4)
+        .backgroundColor(this.themePrimary)
+    }
+  }
+
+  @Builder
+  HostedWebSearchRequestDetails(step: MessagePart) {
+    Column({ space: 6 }) {
+      ForEach(this.buildHostedWebSearchDetailItems(step), (item: HostedWebSearchDetailItem, index: number) => {
+        Row({ space: 8 }) {
+          Text(item.label)
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .width(54)
+          Text(item.value)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .layoutWeight(1)
+            .maxLines(item.label === 'queries' ? 5 : 2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (item: HostedWebSearchDetailItem, index: number) => `${item.label}_${index}_${item.value.length}`)
+    }
+    .width('100%')
+    .padding(10)
+    .borderRadius(10)
+    .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '14' : '0D'))
+  }
+
   // tool step 内容: 状态徽标在左, 标题中间(允许换行), 右侧 chevron 暗示可点
   @Builder
   ToolStepContent(step: MessagePart) {
@@ -2934,20 +3294,8 @@ export struct MessageBubble {
       // 搜索类: 深度思考同款折叠/展开, 在下方直接展示搜索结果
       Column() {
         Row({ space: 6 }) {
-          if (step.toolStatus === 'succeeded') {
-            SymbolGlyph($r('sys.symbol.checkmark_circle'))
-              .fontSize(13)
-              .fontColor([$r('app.color.status_success')])
-          } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
-            SymbolGlyph($r('sys.symbol.xmark_circle'))
-              .fontSize(13)
-              .fontColor([$r('app.color.status_error')])
-          } else if (step.toolStatus === 'running') {
-            Column()
-              .width(8)
-              .height(8)
-              .borderRadius(4)
-              .backgroundColor(this.themePrimary)
+          if (!this.isSearchToolStepInProgress(step)) {
+            this.ToolStepStatusIndicator(step)
           }
 
           Text(this.buildToolStepTitle(step))
@@ -2969,6 +3317,9 @@ export struct MessageBubble {
 
         if (this.isToolStepExpanded(step)) {
           Column({ space: 6 }) {
+            if (this.isHostedOpenAIWebSearchStep(step)) {
+              this.HostedWebSearchRequestDetails(step)
+            }
             ForEach(this.resolveToolStepSearchReferences(step), (ref: SearchReference, index: number) => {
               Column({ space: 4 }) {
                 Row({ space: 6 }) {
@@ -3024,50 +3375,30 @@ export struct MessageBubble {
       .width('100%')
       .alignItems(HorizontalAlign.Start)
     } else {
-    Row({ space: 6 }) {
-      if (step.toolStatus === 'succeeded') {
-        SymbolGlyph($r('sys.symbo' +
-          'l.checkmark_circle'))
-          .fontSize(13)
-          .fontColor([$r('app.color.status_success')])
-      } else if (step.toolStatus === 'failed' || step.toolStatus === 'denied') {
-        SymbolGlyph($r('sys.symbol.xmark_circle'))
-          .fontSize(13)
-          .fontColor([$r('app.color.status_error')])
-      } else if (step.toolStatus === 'pending') {
-        Text('待确认')
-          .fontSize(10)
-          .fontColor(Color.White)
-          .backgroundColor(this.themePrimary)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .borderRadius(6)
-      } else if (step.toolStatus === 'running') {
-        Column()
-          .width(8)
-          .height(8)
-          .borderRadius(4)
-          .backgroundColor(this.themePrimary)
-      }
+      Row({ space: 6 }) {
+        if (!this.isSearchToolStepInProgress(step)) {
+          this.ToolStepStatusIndicator(step)
+        }
 
-      Text(this.buildToolStepTitle(step))
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
+        Text(this.buildToolStepTitle(step))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
 
-      if (this.isToolStepClickable(step)) {
-        SymbolGlyph($r('sys.symbol.chevron_down'))
-          .fontSize(12)
-          .fontColor([$r('app.color.text_tertiary')])
-          .rotate({ angle: -90 })
+        if (this.isToolStepClickable(step)) {
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(12)
+            .fontColor([$r('app.color.text_tertiary')])
+            .rotate({ angle: -90 })
+        }
       }
-    }
-    .width('100%')
-    .onClick(() => {
-      if (this.isToolStepClickable(step)) {
-        this.handleToolStepClick(step)
-      }
-    })
+      .width('100%')
+      .onClick(() => {
+        if (this.isToolStepClickable(step)) {
+          this.handleToolStepClick(step)
+        }
+      })
     }
   }
 
