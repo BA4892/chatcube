@@ -190,6 +190,10 @@ export class ChatScrollUiFlow {
       return false
     }
     const preloadIndex = bottomAnchorIndex - ChatScrollUiFlow.BOTTOM_EDGE_PRELOAD_ITEM_COUNT
+    // 用户已经能看到列表末尾附近时不再先跳到预加载位置, 避免视觉上"先被甩到上方再滚下来"
+    if (this.deps.getLastVisibleIndex() >= preloadIndex) {
+      return false
+    }
     try {
       this.deps.scroller.scrollToIndex(preloadIndex, false, ScrollAlign.START)
       return true
@@ -207,7 +211,7 @@ export class ChatScrollUiFlow {
   private scrollBottomEdgeFromPreloadPosition(): void {
     this.pendingBottomEdgePreloadActive = false
     if (!this.scrollNearBottomEdgeForPreload()) {
-      this.scrollBottomEdge()
+      this.scrollBottomEdgeWithAnimation()
       return
     }
     this.pendingBottomEdgePreloadActive = true
