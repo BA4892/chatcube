@@ -94,6 +94,7 @@ const DOCUMENT_FILE_TYPES: AttachmentFileTypeDefinition[] = [
     ['.xlsx'],
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   ),
+  new AttachmentFileTypeDefinition(['.ofd'], 'application/ofd'),
   new AttachmentFileTypeDefinition(['.txt'], 'text/plain', PLAIN_TEXT_EXTRACTOR_ID),
   new AttachmentFileTypeDefinition(['.md', '.markdown', '.mdx'], 'text/markdown', PLAIN_TEXT_EXTRACTOR_ID),
   new AttachmentFileTypeDefinition(['.csv'], 'text/csv', PLAIN_TEXT_EXTRACTOR_ID),

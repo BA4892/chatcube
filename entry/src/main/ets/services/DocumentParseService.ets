@@ -11,6 +11,7 @@ export class DocumentParseLimits {
   static readonly DOCX_HARD_BYTES: number = 25 * 1024 * 1024
   static readonly EXCEL_HARD_BYTES: number = 20 * 1024 * 1024
   static readonly PDF_HARD_BYTES: number = 30 * 1024 * 1024
+  static readonly OFD_HARD_BYTES: number = 30 * 1024 * 1024
   static readonly MAX_EXTRACTED_CHARS: number = 120000
 }
 
@@ -53,10 +54,13 @@ export class DocumentParsePolicy {
       ext === '.xls' ||
       ext === '.docx' ||
       ext === '.pdf' ||
+      ext === '.ofd' ||
       mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
       mime === 'application/vnd.ms-excel' ||
       mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      mime === 'application/pdf'
+      mime === 'application/pdf' ||
+      mime === 'application/ofd' ||
+      mime === 'application/vnd.ofd'
   }
 
   static getHardLimitBytes(attachment: MessageAttachment): number {
@@ -72,6 +76,9 @@ export class DocumentParsePolicy {
     }
     if (ext === '.pdf' || mime === 'application/pdf') {
       return DocumentParseLimits.PDF_HARD_BYTES
+    }
+    if (ext === '.ofd' || mime === 'application/ofd' || mime === 'application/vnd.ofd') {
+      return DocumentParseLimits.OFD_HARD_BYTES
     }
     return 0
   }

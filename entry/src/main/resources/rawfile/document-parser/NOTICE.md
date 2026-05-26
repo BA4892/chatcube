@@ -9,5 +9,8 @@ parser sandbox.
   Upstream project: https://github.com/mwilliamson/mammoth.js. License: BSD-2-Clause.
 - `pdf.min.js` and `pdf.worker.min.js`: Mozilla PDF.js, version `3.11.174`.
   Upstream project: https://github.com/mozilla/pdfjs-dist. License: Apache-2.0.
+- `jszip.min.js`: JSZip, version `3.10.1`.
+  Upstream project: https://github.com/Stuk/jszip. License: MIT or GPL-3.0.
+  Bundled pako dependency is MIT licensed.
 
 Keep this file updated when replacing any bundled parser dependency.
