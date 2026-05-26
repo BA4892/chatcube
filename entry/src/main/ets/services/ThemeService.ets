@@ -41,6 +41,9 @@ const PREF_KEY_COLOR_THEME = AppStorageKeys.COLOR_THEME
 
 // 已废弃的旧主题 ID，需在升级时迁移到默认主题。
 const DEPRECATED_THEME_IDS: string[] = ['yuanbao', 'sunset', 'berry']
+const RENAMED_THEME_MAP: Record<string, ColorTheme> = {
+  'graphite_blue': ColorTheme.OBSIDIAN
+}
 
 function isDeprecatedTheme(value: string): boolean {
   for (let i = 0; i < DEPRECATED_THEME_IDS.length; i++) {
@@ -49,6 +52,10 @@ function isDeprecatedTheme(value: string): boolean {
     }
   }
   return false
+}
+
+function getRenamedTheme(value: string): ColorTheme | null {
+  return RENAMED_THEME_MAP[value] ?? null
 }
 
 // 主题服务 - 单例模式
@@ -87,7 +94,12 @@ export class ThemeService {
     const savedTheme = await getPreferencesService().getString(PREF_KEY_COLOR_THEME, ColorTheme.DEFAULT)
 
     // 旧版本主题（yuanbao/sunset/berry）已下线，迁移到默认主题并写回偏好
-    if (isDeprecatedTheme(savedTheme)) {
+    const renamedTheme = getRenamedTheme(savedTheme)
+    if (renamedTheme !== null) {
+      console.info('ThemeService', `Migrating renamed theme '${savedTheme}' to '${renamedTheme}'`)
+      this.currentTheme = renamedTheme
+      await getPreferencesService().setString(PREF_KEY_COLOR_THEME, renamedTheme)
+    } else if (isDeprecatedTheme(savedTheme)) {
       console.info('ThemeService', `Migrating deprecated theme '${savedTheme}' to default`)
       this.currentTheme = ColorTheme.DEFAULT
       await getPreferencesService().setString(PREF_KEY_COLOR_THEME, ColorTheme.DEFAULT)
@@ -153,7 +165,12 @@ export class ThemeService {
   async reloadTheme(): Promise<void> {
     const savedTheme = await getPreferencesService().getString(PREF_KEY_COLOR_THEME, ColorTheme.DEFAULT)
 
-    if (isDeprecatedTheme(savedTheme)) {
+    const renamedTheme = getRenamedTheme(savedTheme)
+    if (renamedTheme !== null) {
+      console.info('ThemeService', `Reload migrated renamed theme '${savedTheme}' to '${renamedTheme}'`)
+      this.currentTheme = renamedTheme
+      await getPreferencesService().setString(PREF_KEY_COLOR_THEME, renamedTheme)
+    } else if (isDeprecatedTheme(savedTheme)) {
       console.info('ThemeService', `Reload migrated deprecated theme '${savedTheme}' to default`)
       this.currentTheme = ColorTheme.DEFAULT
       await getPreferencesService().setString(PREF_KEY_COLOR_THEME, ColorTheme.DEFAULT)

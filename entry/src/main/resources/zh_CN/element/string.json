@@ -1001,6 +1001,22 @@
       "value": "极简纯净"
     },
     {
+      "name": "theme_color_classic_blue",
+      "value": "经典复刻"
+    },
+    {
+      "name": "theme_color_classic_blue_desc",
+      "value": "鸿蒙主色"
+    },
+    {
+      "name": "theme_color_obsidian",
+      "value": "曜石灰"
+    },
+    {
+      "name": "theme_color_obsidian_desc",
+      "value": "纯黑灰阶"
+    },
+    {
       "name": "screenshot_banner_title",
       "value": "检测到新图片"
     },

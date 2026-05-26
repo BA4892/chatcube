@@ -393,6 +393,10 @@ export class SettingsManager {
       return $r('app.string.theme_color_mint')
     } else if (theme === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion')
+    } else if (theme === ColorTheme.CLASSIC_BLUE) {
+      return $r('app.string.theme_color_classic_blue')
+    } else if (theme === ColorTheme.OBSIDIAN) {
+      return $r('app.string.theme_color_obsidian')
     } else {
       return $r('app.string.theme_color_default')
     }

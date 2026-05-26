@@ -98,7 +98,7 @@
     },
     {
       "name": "markdown_link_bg",
-      "value": "#D8E2EE"
+      "value": "#00000000"
     },
     {
       "name": "markdown_code_bg",

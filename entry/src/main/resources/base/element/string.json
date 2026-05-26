@@ -1001,6 +1001,22 @@
       "value": "Clean minimalist"
     },
     {
+      "name": "theme_color_classic_blue",
+      "value": "Classic Revival"
+    },
+    {
+      "name": "theme_color_classic_blue_desc",
+      "value": "HarmonyOS blue"
+    },
+    {
+      "name": "theme_color_obsidian",
+      "value": "Obsidian"
+    },
+    {
+      "name": "theme_color_obsidian_desc",
+      "value": "Pure grayscale"
+    },
+    {
       "name": "screenshot_banner_title",
       "value": "New screenshot detected"
     },

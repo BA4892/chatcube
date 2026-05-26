@@ -82,6 +82,36 @@ export struct ThemeAppearanceSettingsView {
   private get themeTextPrimary(): string {
     return getAppUiState().themeTextPrimary
   }
+  private get themeTextSecondary(): string {
+    return getAppUiState().themeTextSecondary
+  }
+  private get themeTextTertiary(): string {
+    return getAppUiState().themeTextTertiary
+  }
+  private get themeMarkdownText(): string {
+    return getAppUiState().themeMarkdownText
+  }
+  private get themeMarkdownLink(): string {
+    return getAppUiState().themeMarkdownLink
+  }
+  private get themeMarkdownCodeBg(): string {
+    return getAppUiState().themeMarkdownCodeBg
+  }
+  private get themeMarkdownCodeText(): string {
+    return getAppUiState().themeMarkdownCodeText
+  }
+  private get themeMarkdownQuoteBg(): string {
+    return getAppUiState().themeMarkdownQuoteBg
+  }
+  private get themeMarkdownTableHeaderBg(): string {
+    return getAppUiState().themeMarkdownTableHeaderBg
+  }
+  private get themeMarkdownTableAltBg(): string {
+    return getAppUiState().themeMarkdownTableAltBg
+  }
+  private get themeMarkdownTableBorder(): string {
+    return getAppUiState().themeMarkdownTableBorder
+  }
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
   }
@@ -183,6 +213,12 @@ export struct ThemeAppearanceSettingsView {
     if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion')
     }
+    if (themeId === ColorTheme.CLASSIC_BLUE) {
+      return $r('app.string.theme_color_classic_blue')
+    }
+    if (themeId === ColorTheme.OBSIDIAN) {
+      return $r('app.string.theme_color_obsidian')
+    }
     return $r('app.string.theme_color_default')
   }
 
@@ -201,6 +237,12 @@ export struct ThemeAppearanceSettingsView {
     }
     if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion_desc')
+    }
+    if (themeId === ColorTheme.CLASSIC_BLUE) {
+      return $r('app.string.theme_color_classic_blue_desc')
+    }
+    if (themeId === ColorTheme.OBSIDIAN) {
+      return $r('app.string.theme_color_obsidian_desc')
     }
     return $r('app.string.theme_color_default_desc')
   }
@@ -667,6 +709,207 @@ export struct ThemeAppearanceSettingsView {
   }
 
   @Builder
+  private PreviewHeaderDot(color: string) {
+    Column()
+      .width(8)
+      .height(8)
+      .borderRadius(4)
+      .backgroundColor(color)
+  }
+
+  @Builder
+  private PreviewWindowHeader() {
+    Row({ space: 8 }) {
+      this.PreviewHeaderDot(this.themePrimary)
+      this.PreviewHeaderDot(this.themeTextTertiary)
+      this.PreviewHeaderDot(this.themeDivider)
+
+      Blank()
+
+      Text('Aa')
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.themePrimary)
+        .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+        .backgroundColor(this.themePrimaryLight)
+        .borderRadius(10)
+    }
+    .width('100%')
+    .height(24)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private PreviewControlStrip() {
+    Row({ space: 8 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+          .fontSize(14)
+          .fontColor([this.themePrimary])
+
+        Text('Focus')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.themePrimary)
+      }
+      .height(30)
+      .padding({ left: 10, right: 10 })
+      .backgroundColor(this.themePrimaryLight)
+      .borderRadius(15)
+
+      Column()
+        .layoutWeight(1)
+        .height(30)
+        .borderRadius(15)
+        .backgroundColor(this.themeAiBubble)
+        .border({ width: 1, color: this.themeDivider })
+
+      Text('Send')
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .height(30)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor(this.themePrimary)
+        .borderRadius(15)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private PreviewTableCell(text: string, backgroundColor: string, isHeader: boolean = false) {
+    Text(text)
+      .fontSize(10)
+      .fontWeight(isHeader ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(isHeader ? this.themeTextPrimary : this.themeTextSecondary)
+      .height(24)
+      .layoutWeight(1)
+      .padding({ left: 8, right: 8 })
+      .backgroundColor(backgroundColor)
+      .textAlign(TextAlign.Start)
+  }
+
+  @Builder
+  private MarkdownStylePreview() {
+    Column({ space: 8 }) {
+      Text() {
+        Span('Markdown ')
+          .fontColor(this.themeMarkdownText)
+        Span('example.com')
+          .fontColor(this.themeMarkdownLink)
+        Span(' code')
+          .fontColor(this.themeMarkdownText)
+      }
+      .fontSize(12)
+      .lineHeight(18)
+      .width('100%')
+
+      Row({ space: 8 }) {
+        Text('inline_code')
+          .fontSize(11)
+          .fontFamily('monospace')
+          .fontColor(this.themeMarkdownCodeText)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .backgroundColor(this.themeMarkdownCodeBg)
+          .borderRadius(6)
+
+        Column()
+          .layoutWeight(1)
+          .height(1)
+          .backgroundColor(this.themeDivider)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Column()
+          .width(3)
+          .height(28)
+          .borderRadius(2)
+          .backgroundColor(this.themeMarkdownLink)
+
+        Text('Quote preview')
+          .fontSize(11)
+          .fontColor(this.themeTextSecondary)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+      .backgroundColor(this.themeMarkdownQuoteBg)
+      .borderRadius(10)
+
+      Column() {
+        Row() {
+          this.PreviewTableCell('Key', this.themeMarkdownTableHeaderBg, true)
+          this.PreviewTableCell('Value', this.themeMarkdownTableHeaderBg, true)
+        }
+        .width('100%')
+
+        Divider().color(this.themeMarkdownTableBorder)
+
+        Row() {
+          this.PreviewTableCell('Theme', this.themeAiBubble)
+          this.PreviewTableCell('Live', this.themeMarkdownTableAltBg)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .borderRadius(10)
+      .clip(true)
+      .border({ width: 1, color: this.themeMarkdownTableBorder })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private AppSurfacePreview() {
+    Column({ space: 12 }) {
+      this.PreviewWindowHeader()
+
+      Column({ space: 12 }) {
+        Row({ space: 10 }) {
+          Column()
+            .width(34)
+            .height(34)
+            .borderRadius(17)
+            .backgroundColor(this.themePrimary)
+
+          Column({ space: 6 }) {
+            Column()
+              .width('64%')
+              .height(7)
+              .borderRadius(4)
+              .backgroundColor(this.themeTextPrimary)
+
+            Column()
+              .width('86%')
+              .height(6)
+              .borderRadius(3)
+              .backgroundColor(this.themeTextTertiary)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+
+        this.MarkdownStylePreview()
+        this.PreviewControlStrip()
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(this.themeSurface)
+      .borderRadius(18)
+      .border({ width: 1, color: this.themeDivider })
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.themeBackground)
+    .borderRadius(20)
+    .border({ width: 1, color: this.themeDivider })
+  }
+
+  @Builder
   private DualBubblePreview() {
     Column({ space: 12 }) {
       Row() {
@@ -711,7 +954,8 @@ export struct ThemeAppearanceSettingsView {
       this.SectionHeader($r('app.string.appearance_live_preview_title'),
         $r('app.string.appearance_live_preview_desc'))
 
-      Column({ space: 10 }) {
+      Column({ space: 12 }) {
+        this.AppSurfacePreview()
         this.DualBubblePreview()
         this.MiniHdsTabs()
       }

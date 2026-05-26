@@ -130,6 +130,10 @@ export struct ThemeColorPicker {
       return $r('app.string.theme_color_mint')
     } else if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion')
+    } else if (themeId === ColorTheme.CLASSIC_BLUE) {
+      return $r('app.string.theme_color_classic_blue')
+    } else if (themeId === ColorTheme.OBSIDIAN) {
+      return $r('app.string.theme_color_obsidian')
     } else {
       return $r('app.string.theme_color_default')
     }
@@ -148,6 +152,10 @@ export struct ThemeColorPicker {
       return $r('app.string.theme_color_mint_desc')
     } else if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion_desc')
+    } else if (themeId === ColorTheme.CLASSIC_BLUE) {
+      return $r('app.string.theme_color_classic_blue_desc')
+    } else if (themeId === ColorTheme.OBSIDIAN) {
+      return $r('app.string.theme_color_obsidian_desc')
     } else {
       return $r('app.string.theme_color_default_desc')
     }

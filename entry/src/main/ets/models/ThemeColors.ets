@@ -5,7 +5,9 @@ export enum ColorTheme {
   CHATGPT = 'chatgpt',      // 清爽蓝
   VIOLET = 'violet',        // 雾紫
   MINT = 'mint',            // 松雾绿
-  NOTION = 'notion'         // Notion 极简
+  NOTION = 'notion',        // Notion 极简
+  CLASSIC_BLUE = 'classic_blue', // 经典复刻
+  OBSIDIAN = 'obsidian'     // 曜石灰
 }
 
 // 主题颜色配置接口
@@ -73,7 +75,7 @@ const DEFAULT_THEME: ThemeInfo = {
     markdownTitle: '#24211C',
     markdownText: '#3D3830',
     markdownLink: '#4E6F9E',
-    markdownLinkBg: '#D8E2EE',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#F3EFE8',
     markdownCodeText: '#8F5E45',
     markdownQuoteBg: '#F3EFE8',
@@ -97,7 +99,7 @@ const DEFAULT_THEME: ThemeInfo = {
     markdownTitle: '#F3EFE6',
     markdownText: '#E7E0D4',
     markdownLink: '#9CBFE8',
-    markdownLinkBg: '#273646',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#24221E',
     markdownCodeText: '#D7C4A9',
     markdownQuoteBg: '#24221E',
@@ -129,7 +131,7 @@ const CLAUDE_THEME: ThemeInfo = {
     markdownTitle: '#26211C',
     markdownText: '#3F372F',
     markdownLink: '#A65F3B',
-    markdownLinkBg: '#F1E8E0',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#F3EDE5',
     markdownCodeText: '#8F5E45',
     markdownQuoteBg: '#F3EDE5',
@@ -153,7 +155,7 @@ const CLAUDE_THEME: ThemeInfo = {
     markdownTitle: '#F3EFE6',
     markdownText: '#E7E0D4',
     markdownLink: '#D48B68',
-    markdownLinkBg: '#3A2C25',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#24221E',
     markdownCodeText: '#E0AA8A',
     markdownQuoteBg: '#24221E',
@@ -185,7 +187,7 @@ const CHATGPT_THEME: ThemeInfo = {
     markdownTitle: '#1F252B',
     markdownText: '#34404A',
     markdownLink: '#416FAD',
-    markdownLinkBg: '#E4EDF6',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#EDF3F7',
     markdownCodeText: '#47627F',
     markdownQuoteBg: '#EDF3F7',
@@ -209,7 +211,7 @@ const CHATGPT_THEME: ThemeInfo = {
     markdownTitle: '#EEF4FA',
     markdownText: '#DDE6EE',
     markdownLink: '#9CBFE5',
-    markdownLinkBg: '#24374A',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#1B242C',
     markdownCodeText: '#C2CEDA',
     markdownQuoteBg: '#1B242C',
@@ -241,7 +243,7 @@ const VIOLET_THEME: ThemeInfo = {
     markdownTitle: '#27232C',
     markdownText: '#3F3948',
     markdownLink: '#71658F',
-    markdownLinkBg: '#ECE8F2',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#F1EDF5',
     markdownCodeText: '#6E5D86',
     markdownQuoteBg: '#F1EDF5',
@@ -265,7 +267,7 @@ const VIOLET_THEME: ThemeInfo = {
     markdownTitle: '#F1ECF7',
     markdownText: '#E3DBEC',
     markdownLink: '#BEAFDA',
-    markdownLinkBg: '#342D42',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#25222B',
     markdownCodeText: '#D0C1E5',
     markdownQuoteBg: '#25222B',
@@ -297,7 +299,7 @@ const MINT_THEME: ThemeInfo = {
     markdownTitle: '#202820',
     markdownText: '#354238',
     markdownLink: '#4D8069',
-    markdownLinkBg: '#E5EFE9',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#EEF4EF',
     markdownCodeText: '#4D705E',
     markdownQuoteBg: '#EEF4EF',
@@ -321,7 +323,7 @@ const MINT_THEME: ThemeInfo = {
     markdownTitle: '#EEF5EE',
     markdownText: '#DDE8DE',
     markdownLink: '#91BAA3',
-    markdownLinkBg: '#25372D',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#202722',
     markdownCodeText: '#B9D1C2',
     markdownQuoteBg: '#202722',
@@ -332,19 +334,19 @@ const MINT_THEME: ThemeInfo = {
   }
 }
 
-// Notion 极简主题：纯白/深灰底，蓝色强调；浅色 surface/aiBubble 用 Notion 标志性的米白做"块"层次。
+// Notion 极简主题：纯白/深灰底，主界面保持黑白灰，链接保留小面积蓝色识别。
 const NOTION_THEME: ThemeInfo = {
   id: ColorTheme.NOTION,
   nameKey: 'theme_color_notion',
   descriptionKey: 'theme_color_notion_desc',
-  previewColors: ['#FFFFFF', '#E3E8EF', '#2E7AC2', '#1F6AB3'],
+  previewColors: ['#FFFFFF', '#F7F6F3', '#787774', '#37352F'],
   light: {
-    primary: '#2E7AC2',
-    primaryLight: '#E3E8EF',
+    primary: '#37352F',
+    primaryLight: '#F1F1EF',
     background: '#FFFFFF',
     surface: '#FBFBFA',
     divider: '#E3E5E8',
-    userBubble: '#1F6AB3',
+    userBubble: '#37352F',
     userBubbleText: '#FFFFFF',
     aiBubble: '#F7F6F3',
     textPrimary: '#37352F',
@@ -353,7 +355,7 @@ const NOTION_THEME: ThemeInfo = {
     markdownTitle: '#37352F',
     markdownText: '#37352F',
     markdownLink: '#2E7AC2',
-    markdownLinkBg: '#E3E8EF',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#F7F6F3',
     markdownCodeText: '#EB5757',
     markdownQuoteBg: '#F7F6F3',
@@ -363,12 +365,12 @@ const NOTION_THEME: ThemeInfo = {
     markdownTableBorder: '#E3E5E8'
   },
   dark: {
-    primary: '#5B9DD9',
-    primaryLight: '#2C3E50',
+    primary: '#6F6E69',
+    primaryLight: '#2F2F2F',
     background: '#191919',
     surface: '#202020',
     divider: '#373737',
-    userBubble: '#3D6A99',
+    userBubble: '#3A3A3A',
     userBubbleText: '#FFFFFF',
     aiBubble: '#202020',
     textPrimary: '#FFFFFF',
@@ -376,8 +378,8 @@ const NOTION_THEME: ThemeInfo = {
     textTertiary: '#6F6E69',
     markdownTitle: '#FFFFFF',
     markdownText: '#E3E2E0',
-    markdownLink: '#71A7D9',
-    markdownLinkBg: '#2C3E50',
+    markdownLink: '#9DBAD7',
+    markdownLinkBg: '#00000000',
     markdownCodeBg: '#2F2F2F',
     markdownCodeText: '#FF6B6B',
     markdownQuoteBg: '#2F2F2F',
@@ -388,6 +390,118 @@ const NOTION_THEME: ThemeInfo = {
   }
 }
 
+// 经典复刻主题：纯白/纯黑底盘，复刻早期默认鸿蒙主色和蓝灰气泡。
+const CLASSIC_BLUE_THEME: ThemeInfo = {
+  id: ColorTheme.CLASSIC_BLUE,
+  nameKey: 'theme_color_classic_blue',
+  descriptionKey: 'theme_color_classic_blue_desc',
+  previewColors: ['#FFFFFF', '#E8EEF2', '#4E6F9E', '#5A7597'],
+  light: {
+    primary: '#4E6F9E',
+    primaryLight: '#E8EEF2',
+    background: '#FFFFFF',
+    surface: '#FFFFFF',
+    divider: '#E5E7EB',
+    userBubble: '#5A7597',
+    userBubbleText: '#FFFFFF',
+    aiBubble: '#FFFFFF',
+    textPrimary: '#111827',
+    textSecondary: '#4B5563',
+    textTertiary: '#8B95A1',
+    markdownTitle: '#111827',
+    markdownText: '#2F3A46',
+    markdownLink: '#4E6F9E',
+    markdownLinkBg: '#00000000',
+    markdownCodeBg: '#F3F4F6',
+    markdownCodeText: '#6D4F3F',
+    markdownQuoteBg: '#F7F8FA',
+    markdownTableBg: '#FFFFFF',
+    markdownTableHeaderBg: '#F3F4F6',
+    markdownTableAltBg: '#FAFAFB',
+    markdownTableBorder: '#E5E7EB'
+  },
+  dark: {
+    primary: '#7FA2CC',
+    primaryLight: '#1D2B3A',
+    background: '#000000',
+    surface: '#101010',
+    divider: '#2A2A2A',
+    userBubble: '#4F6886',
+    userBubbleText: '#F7FAFD',
+    aiBubble: '#101010',
+    textPrimary: '#F5F5F5',
+    textSecondary: '#C2C7D0',
+    textTertiary: '#858B94',
+    markdownTitle: '#F5F5F5',
+    markdownText: '#E5E7EB',
+    markdownLink: '#9CBFE8',
+    markdownLinkBg: '#00000000',
+    markdownCodeBg: '#181818',
+    markdownCodeText: '#D7C4A9',
+    markdownQuoteBg: '#181818',
+    markdownTableBg: '#101010',
+    markdownTableHeaderBg: '#181818',
+    markdownTableAltBg: '#141414',
+    markdownTableBorder: '#2A2A2A'
+  }
+}
+
+// 曜石灰主题：纯黑白灰阶，给需要纯净深浅色对照的用户一个非蓝色选项。
+const OBSIDIAN_THEME: ThemeInfo = {
+  id: ColorTheme.OBSIDIAN,
+  nameKey: 'theme_color_obsidian',
+  descriptionKey: 'theme_color_obsidian_desc',
+  previewColors: ['#F7F7F7', '#ECEDEF', '#52525B', '#3F3F46'],
+  light: {
+    primary: '#3F3F46',
+    primaryLight: '#ECEDEF',
+    background: '#F7F7F7',
+    surface: '#FFFFFF',
+    divider: '#E4E4E7',
+    userBubble: '#3F3F46',
+    userBubbleText: '#FFFFFF',
+    aiBubble: '#FFFFFF',
+    textPrimary: '#18181B',
+    textSecondary: '#52525B',
+    textTertiary: '#8A8A93',
+    markdownTitle: '#18181B',
+    markdownText: '#3F3F46',
+    markdownLink: '#52525B',
+    markdownLinkBg: '#00000000',
+    markdownCodeBg: '#F0F0F2',
+    markdownCodeText: '#3F3F46',
+    markdownQuoteBg: '#F0F0F2',
+    markdownTableBg: '#FFFFFF',
+    markdownTableHeaderBg: '#F0F0F2',
+    markdownTableAltBg: '#FAFAFA',
+    markdownTableBorder: '#E4E4E7'
+  },
+  dark: {
+    primary: '#71717A',
+    primaryLight: '#27272A',
+    background: '#000000',
+    surface: '#111111',
+    divider: '#2A2A2A',
+    userBubble: '#3F3F46',
+    userBubbleText: '#FFFFFF',
+    aiBubble: '#111111',
+    textPrimary: '#F4F4F5',
+    textSecondary: '#C4C4CC',
+    textTertiary: '#8A8A93',
+    markdownTitle: '#F4F4F5',
+    markdownText: '#E4E4E7',
+    markdownLink: '#C4C4CC',
+    markdownLinkBg: '#00000000',
+    markdownCodeBg: '#18181B',
+    markdownCodeText: '#D4D4D8',
+    markdownQuoteBg: '#18181B',
+    markdownTableBg: '#111111',
+    markdownTableHeaderBg: '#18181B',
+    markdownTableAltBg: '#151515',
+    markdownTableBorder: '#2A2A2A'
+  }
+}
+
 // 精简后的可选主题列表
 export const ALL_THEMES: ThemeInfo[] = [
   DEFAULT_THEME,
@@ -395,7 +509,9 @@ export const ALL_THEMES: ThemeInfo[] = [
   CHATGPT_THEME,
   MINT_THEME,
   VIOLET_THEME,
-  NOTION_THEME
+  NOTION_THEME,
+  CLASSIC_BLUE_THEME,
+  OBSIDIAN_THEME
 ]
 
 // 根据主题 ID 获取主题信息

@@ -90,7 +90,7 @@
     },
     {
       "name": "markdown_link_bg",
-      "value": "#273646"
+      "value": "#00000000"
     },
     {
       "name": "markdown_code_bg",

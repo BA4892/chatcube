@@ -49,7 +49,7 @@ export class AppUiState {
   @Trace themeMarkdownTitle: string = '#24211C'
   @Trace themeMarkdownText: string = '#3D3830'
   @Trace themeMarkdownLink: string = '#4E6F9E'
-  @Trace themeMarkdownLinkBg: string = '#D8E2EE'
+  @Trace themeMarkdownLinkBg: string = '#00000000'
   @Trace themeMarkdownCodeBg: string = '#F3EFE8'
   @Trace themeMarkdownCodeText: string = '#8F5E45'
   @Trace themeMarkdownQuoteBg: string = '#F3EFE8'
