@@ -109,6 +109,14 @@ interface ImageDownloadResult {
   mimeType: string
 }
 
+const OPENAI_RESPONSES_PART_SOURCE = 'openai_responses'
+const OPENAI_RESPONSES_WEB_SEARCH_LABEL = 'OpenAI Web Search'
+const OPENAI_RESPONSES_IMAGE_GENERATION_LABEL = 'OpenAI Image Generation'
+const OPENAI_RESPONSES_WEB_SEARCH_PREFIX = 'hws'
+const OPENAI_RESPONSES_IMAGE_GENERATION_PREFIX = 'hig'
+const OPENAI_RESPONSES_TOOL_SEQUENCE_OFFSET = 0
+const OPENAI_RESPONSES_IMAGE_SEQUENCE_OFFSET = 1
+
 // 聊天状态管理
 export class ChatViewModel {
   private databaseService: DatabaseService
@@ -513,18 +521,6 @@ export class ChatViewModel {
     aiMessage.parts = aiMessage.parts.concat([part])
   }
 
-  private insertPartBeforeActiveReasoningOrAppend(aiMessage: ChatMessage, part: MessagePart): void {
-    const activeReasoningIndex = this.getTrailingActiveReasoningIndex(aiMessage)
-    if (activeReasoningIndex >= 0) {
-      const nextParts = aiMessage.parts.slice()
-      nextParts.splice(activeReasoningIndex, 0, part)
-      aiMessage.parts = nextParts
-      return
-    }
-    this.finishTrailingReasoningPart(aiMessage)
-    aiMessage.parts = aiMessage.parts.concat([part])
-  }
-
   private insertPartBeforeActiveOutputOrAppend(aiMessage: ChatMessage, part: MessagePart): void {
     const activeOutputIndex = this.getTrailingActiveOutputIndex(aiMessage)
     if (activeOutputIndex >= 0) {
@@ -560,6 +556,172 @@ export class ChatViewModel {
     const lastIndex = aiMessage.parts.length - 1
     const last = aiMessage.parts[lastIndex]
     return last.kind === MessagePartKind.TEXT ? lastIndex : -1
+  }
+
+  private buildOpenAIResponsesItemKey(itemId: string, outputIndex: number): string {
+    if (itemId !== '') {
+      return itemId
+    }
+    if (outputIndex >= 0) {
+      return 'idx:' + outputIndex.toString()
+    }
+    return 'anonymous'
+  }
+
+  private buildOpenAIResponsesHostedPartId(prefix: string, itemKey: string): string {
+    return prefix + '_' + itemKey
+  }
+
+  private nextOpenAIResponsesFallbackSequence(aiMessage: ChatMessage): number {
+    let maxSequence = -10
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const part = aiMessage.parts[i]
+      if (part.sourceType === OPENAI_RESPONSES_PART_SOURCE && part.sourceSequence > maxSequence) {
+        maxSequence = part.sourceSequence
+      }
+    }
+    return maxSequence + 10
+  }
+
+  private buildOpenAIResponsesSourceSequence(
+    outputIndex: number,
+    sequenceOffset: number,
+    fallbackSequence: number
+  ): number {
+    if (outputIndex >= 0) {
+      return outputIndex * 10 + sequenceOffset
+    }
+    return fallbackSequence + sequenceOffset
+  }
+
+  private syncOpenAIResponsesPartSource(
+    part: MessagePart,
+    itemKey: string,
+    outputIndex: number,
+    contentIndex: number,
+    sequence: number
+  ): boolean {
+    let changed = false
+    if (part.sourceType !== OPENAI_RESPONSES_PART_SOURCE) {
+      part.sourceType = OPENAI_RESPONSES_PART_SOURCE
+      changed = true
+    }
+    if (part.sourceItemId !== itemKey) {
+      part.sourceItemId = itemKey
+      changed = true
+    }
+    if (part.sourceOutputIndex !== outputIndex) {
+      part.sourceOutputIndex = outputIndex
+      changed = true
+    }
+    if (part.sourceContentIndex !== contentIndex) {
+      part.sourceContentIndex = contentIndex
+      changed = true
+    }
+    if (part.sourceSequence !== sequence) {
+      part.sourceSequence = sequence
+      changed = true
+    }
+    return changed
+  }
+
+  private insertOpenAIResponsesTimelinePart(aiMessage: ChatMessage, part: MessagePart): void {
+    const insertIndex = this.findOpenAIResponsesTimelineInsertIndex(aiMessage.parts, part)
+    if (insertIndex >= 0) {
+      const nextParts = aiMessage.parts.slice()
+      nextParts.splice(insertIndex, 0, part)
+      aiMessage.parts = nextParts
+      return
+    }
+    this.insertPartBeforeActiveOutputOrAppend(aiMessage, part)
+  }
+
+  private repositionOpenAIResponsesTimelinePart(aiMessage: ChatMessage, part: MessagePart): void {
+    let currentIndex = -1
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      if (aiMessage.parts[i] === part) {
+        currentIndex = i
+        break
+      }
+    }
+    if (currentIndex < 0) {
+      return
+    }
+    const nextParts = aiMessage.parts.slice()
+    nextParts.splice(currentIndex, 1)
+    const insertIndex = this.findOpenAIResponsesTimelineInsertIndex(nextParts, part)
+    if (insertIndex < 0 || insertIndex === currentIndex) {
+      return
+    }
+    nextParts.splice(insertIndex, 0, part)
+    aiMessage.parts = nextParts
+  }
+
+  private findOpenAIResponsesTimelineInsertIndex(parts: MessagePart[], incoming: MessagePart): number {
+    if (incoming.sourceType !== OPENAI_RESPONSES_PART_SOURCE || incoming.sourceSequence < 0) {
+      return -1
+    }
+    for (let i = 0; i < parts.length; i++) {
+      const existing = parts[i]
+      if (existing.sourceType !== OPENAI_RESPONSES_PART_SOURCE || existing.sourceSequence < 0) {
+        continue
+      }
+      if (existing.sourceSequence > incoming.sourceSequence) {
+        return i
+      }
+      if (existing.sourceSequence === incoming.sourceSequence &&
+        existing.kind === MessagePartKind.IMAGE &&
+        incoming.kind === MessagePartKind.TOOL) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private findOpenAIResponsesHostedToolPartIndex(
+    aiMessage: ChatMessage,
+    partId: string,
+    itemKey: string,
+    outputIndex: number,
+    sourceLabel: string
+  ): number {
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const part = aiMessage.parts[i]
+      if (part.kind === MessagePartKind.TOOL && part.toolCallId === partId) {
+        return i
+      }
+    }
+    for (let i = 0; i < aiMessage.parts.length; i++) {
+      const part = aiMessage.parts[i]
+      if (part.kind !== MessagePartKind.TOOL) {
+        continue
+      }
+      if (part.sourceType !== OPENAI_RESPONSES_PART_SOURCE) {
+        continue
+      }
+      if (part.sourceItemId === itemKey && part.toolSourceLabel === sourceLabel) {
+        return i
+      }
+      if (outputIndex >= 0 && part.sourceOutputIndex === outputIndex && part.toolSourceLabel === sourceLabel) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private syncOpenAIResponsesImagePartSourceFromTool(part: MessagePart, toolPart: MessagePart): boolean {
+    if (toolPart.sourceType !== OPENAI_RESPONSES_PART_SOURCE) {
+      return false
+    }
+    const sequence = toolPart.sourceSequence >= 0 ?
+      toolPart.sourceSequence + OPENAI_RESPONSES_IMAGE_SEQUENCE_OFFSET : OPENAI_RESPONSES_IMAGE_SEQUENCE_OFFSET
+    return this.syncOpenAIResponsesPartSource(
+      part,
+      toolPart.sourceItemId,
+      toolPart.sourceOutputIndex,
+      -1,
+      sequence
+    )
   }
 
   private mergeToolFunctionNameFragment(previousName: string, incomingName: string): string {
@@ -2440,29 +2602,38 @@ ${limitedSearchContext}
     }
 
     const source = attachment.filePath
+    if (aiMessage.parts.length === 0) {
+      this.ensurePartsBackfill(aiMessage)
+    }
+    const itemKey = this.buildOpenAIResponsesItemKey(itemId, outputIndex)
+    const toolPartIndex = this.findHostedImageGenerationToolPartIndex(aiMessage, itemKey, outputIndex)
     for (let i = 0; i < aiMessage.parts.length; i++) {
       const existing = aiMessage.parts[i]
       if (existing.kind === MessagePartKind.IMAGE && this.isSameGeneratedImagePart(existing, source)) {
+        let changed = false
         if (existing.mediaMime !== attachment.mimeType) {
           existing.mediaMime = attachment.mimeType
+          changed = true
         }
         if (existing.mediaName !== attachment.name) {
           existing.mediaName = attachment.name
+          changed = true
         }
-        return false
+        if (toolPartIndex >= 0) {
+          if (this.syncOpenAIResponsesImagePartSourceFromTool(existing, aiMessage.parts[toolPartIndex])) {
+            changed = true
+          }
+        }
+        return changed
       }
-    }
-
-    if (aiMessage.parts.length === 0) {
-      this.ensurePartsBackfill(aiMessage)
     }
 
     const part = new MessagePart(MessagePartKind.IMAGE)
     part.mediaUrl = source
     part.mediaMime = attachment.mimeType
     part.mediaName = attachment.name
-    const toolPartIndex = this.findHostedImageGenerationToolPartIndex(aiMessage, itemId, outputIndex)
     if (toolPartIndex >= 0) {
+      this.syncOpenAIResponsesImagePartSourceFromTool(part, aiMessage.parts[toolPartIndex])
       const nextParts = aiMessage.parts.slice()
       const insertIndex = this.getGeneratedImageInsertionIndexAfterTool(nextParts, toolPartIndex)
       nextParts.splice(insertIndex, 0, part)
@@ -2470,8 +2641,7 @@ ${limitedSearchContext}
       return true
     }
 
-    this.insertPartBeforeActiveOutputOrAppend(aiMessage, part)
-    return true
+    return false
   }
 
   private isSameGeneratedImagePart(part: MessagePart, filePath: string): boolean {
@@ -2481,29 +2651,24 @@ ${limitedSearchContext}
     return part.mediaUrl === 'file://' + filePath
   }
 
-  private buildHostedImageGenerationToolPartId(itemId: string, outputIndex: number): string {
-    if (itemId !== '') {
-      return `hig_${itemId}`
-    }
-    if (outputIndex >= 0) {
-      return `hig_idx:${outputIndex}`
-    }
-    return ''
-  }
-
   private findHostedImageGenerationToolPartIndex(
     aiMessage: ChatMessage,
-    itemId: string,
+    itemKey: string,
     outputIndex: number
   ): number {
-    const preferredPartId = this.buildHostedImageGenerationToolPartId(itemId, outputIndex)
-    if (preferredPartId !== '') {
-      for (let i = 0; i < aiMessage.parts.length; i++) {
-        const candidate = aiMessage.parts[i]
-        if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === preferredPartId) {
-          return i
-        }
-      }
+    const preferredPartId = this.buildOpenAIResponsesHostedPartId(
+      OPENAI_RESPONSES_IMAGE_GENERATION_PREFIX,
+      itemKey
+    )
+    const exactIndex = this.findOpenAIResponsesHostedToolPartIndex(
+      aiMessage,
+      preferredPartId,
+      itemKey,
+      outputIndex,
+      OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
+    )
+    if (exactIndex >= 0) {
+      return exactIndex
     }
 
     let latestToolIndex = -1
@@ -2526,9 +2691,12 @@ ${limitedSearchContext}
     if (part.kind !== MessagePartKind.TOOL) {
       return false
     }
-    return part.toolCallId.startsWith('hig_') ||
-      part.toolName === 'image_generation' ||
-      part.toolSourceLabel === 'OpenAI Image Generation'
+    if (part.sourceType === OPENAI_RESPONSES_PART_SOURCE &&
+      part.toolSourceLabel === OPENAI_RESPONSES_IMAGE_GENERATION_LABEL) {
+      return true
+    }
+    return part.toolCallId.startsWith(OPENAI_RESPONSES_IMAGE_GENERATION_PREFIX + '_') ||
+      part.toolSourceLabel === OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
   }
 
   private hasGeneratedImageImmediatelyAfterTool(parts: MessagePart[], toolIndex: number): boolean {
@@ -2605,8 +2773,7 @@ ${limitedSearchContext}
     if (kind === HostedResponsesToolEventKind.WEB_SEARCH_STARTED ||
       kind === HostedResponsesToolEventKind.WEB_SEARCH_SEARCHING) {
       // itemId 可能为空 (旧版兜底), 用 outputIndex 拼接保持唯一; 若都缺则单次性 fallback
-      const key = event.itemId !== '' ? event.itemId :
-        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      const key = this.buildOpenAIResponsesItemKey(event.itemId, event.outputIndex)
       // open_page action 识别: action.type='open_page' 时 SSE 给的是 url 不是 query。
       // 这种调用在用户感知里更像 reasoning 段内的参考 URL, 单独 timeline 行会把 reasoning 切断,
       // 改为只追加到 searchReferences 让顶部引用卡片可见, parts 不动 → reasoning 自然合并。
@@ -2637,13 +2804,14 @@ ${limitedSearchContext}
           aiMessage.searchSource = 'openai_builtin'
         }
         if (aiMessage.searchEngine === '') {
-          aiMessage.searchEngine = 'OpenAI Web Search'
+          aiMessage.searchEngine = OPENAI_RESPONSES_WEB_SEARCH_LABEL
         }
         needUpdate = true
       }
       // 每次 web_search_call 落一个独立 TOOL part, 状态置 RUNNING
       if (this.upsertHostedWebSearchPart(
-        aiMessage, key, event.query, event.url, event.actionType, event.queries, ToolPartStatus.RUNNING
+        aiMessage, key, event.outputIndex, event.query, event.url, event.actionType, event.queries,
+        ToolPartStatus.RUNNING
       )) {
         needUpdate = true
       }
@@ -2651,8 +2819,7 @@ ${limitedSearchContext}
         onAIMessageUpdated(aiMessage)
       }
     } else if (kind === HostedResponsesToolEventKind.WEB_SEARCH_COMPLETED) {
-      const key = event.itemId !== '' ? event.itemId :
-        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      const key = this.buildOpenAIResponsesItemKey(event.itemId, event.outputIndex)
       // COMPLETED 阶段也按 open_page 识别一次, 兜底 STARTED 里 url 漏掉的情况 (有些版本 action 只在 done 上挂)
       const url = event.url.trim()
       const query = event.query.trim()
@@ -2670,7 +2837,8 @@ ${limitedSearchContext}
       }
       // done 阶段补一次 query/url, 兜底 added 阶段没有挂载 action 的情况; 同时把状态置 SUCCEEDED
       const partChanged = this.upsertHostedWebSearchPart(
-        aiMessage, key, event.query, event.url, event.actionType, event.queries, ToolPartStatus.SUCCEEDED
+        aiMessage, key, event.outputIndex, event.query, event.url, event.actionType, event.queries,
+        ToolPartStatus.SUCCEEDED
       )
       const inflight = this.inflightHostedSearchCalls.get(aiMessage.id)
       if (inflight !== undefined) {
@@ -2699,15 +2867,20 @@ ${limitedSearchContext}
       // 同时把 parts 撑非空, 把 MessageBubble TypingIndicator (Bubble Dots) 自然顶掉; 否则模型在该轮里若
       // 不出 reasoning/text, parts 会一直空, Bubble Dots 会从生图开始一直转到 stream completed (复盘
       // 2026-05-23 gpt-5.5 生图后 5 秒空转就是这条路径)。
-      const key = event.itemId !== '' ? event.itemId :
-        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
+      const key = this.buildOpenAIResponsesItemKey(event.itemId, event.outputIndex)
       let inflight = this.inflightHostedImageGenCalls.get(aiMessage.id)
       if (inflight === undefined) {
         inflight = new Set<string>()
         this.inflightHostedImageGenCalls.set(aiMessage.id, inflight)
       }
       inflight.add(key)
-      const changed = this.upsertHostedImageGenPart(aiMessage, key, ToolPartStatus.RUNNING, event.partialIndex)
+      const changed = this.upsertHostedImageGenPart(
+        aiMessage,
+        key,
+        event.outputIndex,
+        ToolPartStatus.RUNNING,
+        event.partialIndex
+      )
       console.info('ChatViewModel',
         `[ResponsesHostedTool] ${kind} item=${event.itemId} output=${event.outputIndex} ` +
         `partial=${event.partialIndex} inflight=${inflight.size} partChanged=${changed}`)
@@ -2718,9 +2891,14 @@ ${limitedSearchContext}
       // 生图 COMPLETED: 把 TOOL part 置 SUCCEEDED, 清掉 inflight 记录。
       // 注意: 这里不动 aiMessage.isGenerating, 让 finalizeAIMessage 在 stream completed 时统一收;
       // 但 parts 已经非空, Bubble Dots 不会再出现, 哪怕后续服务端继续 echo 几 MB base64 也不影响 UX。
-      const key = event.itemId !== '' ? event.itemId :
-        (event.outputIndex >= 0 ? `idx:${event.outputIndex}` : 'anonymous')
-      const partChanged = this.upsertHostedImageGenPart(aiMessage, key, ToolPartStatus.SUCCEEDED, -1)
+      const key = this.buildOpenAIResponsesItemKey(event.itemId, event.outputIndex)
+      const partChanged = this.upsertHostedImageGenPart(
+        aiMessage,
+        key,
+        event.outputIndex,
+        ToolPartStatus.SUCCEEDED,
+        -1
+      )
       const inflight = this.inflightHostedImageGenCalls.get(aiMessage.id)
       let inflightSize = -1
       if (inflight !== undefined) {
@@ -2743,54 +2921,87 @@ ${limitedSearchContext}
   }
 
   // 每次 hosted web_search_call 占用一个独立的 TOOL part, key=hws_<itemId>。
-  // - 首次出现: 在 parts 末尾追加 (会先封口前序 reasoning), 不复用任何已有 part
+  // - 首次出现: 插到当前活跃 reasoning/text 之前, 不复用任何已有 part
   // - 后续事件: 仅在 part 上覆盖 query/url/status, 不影响其它 part
   // 返回 true 表示真的有改动, 调用方可据此决定是否触发 UI 刷新。
   private upsertHostedWebSearchPart(
     aiMessage: ChatMessage,
     itemKey: string,
+    outputIndex: number,
     query: string,
     url: string,
     actionType: string,
     queries: string[],
     status: string
   ): boolean {
-    const partId = `hws_${itemKey}`
+    const partId = this.buildOpenAIResponsesHostedPartId(OPENAI_RESPONSES_WEB_SEARCH_PREFIX, itemKey)
     const trimmedQuery = query.trim()
     const trimmedUrl = url.trim()
     const trimmedActionType = actionType.trim()
 
     let part: MessagePart | null = null
-    for (let i = 0; i < aiMessage.parts.length; i++) {
-      const candidate = aiMessage.parts[i]
-      if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === partId) {
-        part = candidate
-        break
-      }
+    const partIndex = this.findOpenAIResponsesHostedToolPartIndex(
+      aiMessage,
+      partId,
+      itemKey,
+      outputIndex,
+      OPENAI_RESPONSES_WEB_SEARCH_LABEL
+    )
+    if (partIndex >= 0) {
+      part = aiMessage.parts[partIndex]
     }
 
     let changed = false
+    const fallbackSequence = part !== null && part.sourceSequence >= 0 ?
+      part.sourceSequence : this.nextOpenAIResponsesFallbackSequence(aiMessage)
+    const sourceSequence = this.buildOpenAIResponsesSourceSequence(
+      outputIndex,
+      OPENAI_RESPONSES_TOOL_SEQUENCE_OFFSET,
+      fallbackSequence
+    )
     if (part === null) {
       part = new MessagePart(MessagePartKind.TOOL)
       part.toolCallId = partId
       // 'web_search' 已经被 isSearchWebFunctionName 识别为搜索类工具, 复用 timeline 已有搜索 step 渲染
       part.toolName = 'web_search'
-      part.toolDisplayName = this.buildHostedWebSearchDisplayName(trimmedQuery, trimmedUrl)
+      part.toolDisplayName = OPENAI_RESPONSES_WEB_SEARCH_LABEL
       part.toolArguments = this.buildHostedWebSearchArguments(trimmedQuery, trimmedUrl, trimmedActionType, queries)
       part.toolSourceType = ToolSourceType.BUILTIN
-      part.toolSourceLabel = 'OpenAI Web Search'
+      part.toolSourceLabel = OPENAI_RESPONSES_WEB_SEARCH_LABEL
       part.toolPermissionLevel = ToolPermissionLevel.READ
       part.toolStatus = status
+      this.syncOpenAIResponsesPartSource(part, itemKey, outputIndex, -1, sourceSequence)
       // 注意: hosted url_citation 没有 search_call_id 归属, 这里不写 toolSearchReferences,
       // 让 message.searchReferences 聚合卡片兜底展示全部引用。
-      this.insertPartBeforeActiveReasoningOrAppend(aiMessage, part)
+      this.insertOpenAIResponsesTimelinePart(aiMessage, part)
       changed = true
     } else {
-      // 已有 part: 增量补 query / url / 完成状态; 不允许把更精确的 query 退回到默认占位文案
-      const nextDisplayName = trimmedQuery !== '' || trimmedUrl !== '' ?
-        this.buildHostedWebSearchDisplayName(trimmedQuery, trimmedUrl) : part.toolDisplayName
-      if (nextDisplayName !== part.toolDisplayName) {
-        part.toolDisplayName = nextDisplayName
+      if (this.syncOpenAIResponsesPartSource(part, itemKey, outputIndex, -1, sourceSequence)) {
+        changed = true
+      }
+      if (part.toolCallId !== partId) {
+        part.toolCallId = partId
+        changed = true
+      }
+      if (part.toolName !== 'web_search') {
+        part.toolName = 'web_search'
+        changed = true
+      }
+      // 已有 part: 标题保持工具名, query / url / action 只写入 arguments, 供展开态查看。
+      if (part.toolDisplayName !== OPENAI_RESPONSES_WEB_SEARCH_LABEL) {
+        part.toolDisplayName = OPENAI_RESPONSES_WEB_SEARCH_LABEL
+        changed = true
+      }
+      if (part.toolSourceType !== ToolSourceType.BUILTIN) {
+        part.toolSourceType = ToolSourceType.BUILTIN
+        changed = true
+      }
+      if (part.toolSourceLabel !== OPENAI_RESPONSES_WEB_SEARCH_LABEL) {
+        part.toolSourceLabel = OPENAI_RESPONSES_WEB_SEARCH_LABEL
+        changed = true
+      }
+      if (part.toolPermissionLevel !== ToolPermissionLevel.READ) {
+        part.toolPermissionLevel = ToolPermissionLevel.READ
         changed = true
       }
       if (trimmedQuery !== '' || trimmedUrl !== '') {
@@ -2810,19 +3021,11 @@ ${limitedSearchContext}
         part.toolStatus = status
         changed = true
       }
+      if (changed) {
+        this.repositionOpenAIResponsesTimelinePart(aiMessage, part)
+      }
     }
     return changed
-  }
-
-  private buildHostedWebSearchDisplayName(query: string, url: string): string {
-    if (query !== '') {
-      const lineBreak = query.indexOf('\n')
-      return lineBreak >= 0 ? query.substring(0, lineBreak).trim() : query
-    }
-    if (url !== '') {
-      return url
-    }
-    return 'OpenAI Web Search'
   }
 
   // open_page itemId 跨事件阶段记忆: STARTED 阶段判定后入集合, SEARCHING/COMPLETED 阶段查集合走快路径。
@@ -2860,35 +3063,74 @@ ${limitedSearchContext}
   private upsertHostedImageGenPart(
     aiMessage: ChatMessage,
     itemKey: string,
+    outputIndex: number,
     status: string,
     partialIndex: number
   ): boolean {
-    const partId = `hig_${itemKey}`
+    const partId = this.buildOpenAIResponsesHostedPartId(OPENAI_RESPONSES_IMAGE_GENERATION_PREFIX, itemKey)
 
     let part: MessagePart | null = null
-    for (let i = 0; i < aiMessage.parts.length; i++) {
-      const candidate = aiMessage.parts[i]
-      if (candidate.kind === MessagePartKind.TOOL && candidate.toolCallId === partId) {
-        part = candidate
-        break
-      }
+    const partIndex = this.findOpenAIResponsesHostedToolPartIndex(
+      aiMessage,
+      partId,
+      itemKey,
+      outputIndex,
+      OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
+    )
+    if (partIndex >= 0) {
+      part = aiMessage.parts[partIndex]
     }
 
     let changed = false
+    const fallbackSequence = part !== null && part.sourceSequence >= 0 ?
+      part.sourceSequence : this.nextOpenAIResponsesFallbackSequence(aiMessage)
+    const sourceSequence = this.buildOpenAIResponsesSourceSequence(
+      outputIndex,
+      OPENAI_RESPONSES_TOOL_SEQUENCE_OFFSET,
+      fallbackSequence
+    )
+    const nextArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
     if (part === null) {
       part = new MessagePart(MessagePartKind.TOOL)
       part.toolCallId = partId
       part.toolName = 'image_generation'
-      part.toolDisplayName = 'OpenAI Image Generation'
-      part.toolArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
+      part.toolDisplayName = OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
+      part.toolArguments = nextArguments
       part.toolSourceType = ToolSourceType.BUILTIN
-      part.toolSourceLabel = 'OpenAI Image Generation'
+      part.toolSourceLabel = OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
       part.toolPermissionLevel = ToolPermissionLevel.READ
       part.toolStatus = status
-      this.insertPartBeforeActiveOutputOrAppend(aiMessage, part)
+      this.syncOpenAIResponsesPartSource(part, itemKey, outputIndex, -1, sourceSequence)
+      this.insertOpenAIResponsesTimelinePart(aiMessage, part)
       changed = true
     } else {
-      const nextArguments = partialIndex >= 0 ? `{"partial":${partialIndex}}` : '{}'
+      if (this.syncOpenAIResponsesPartSource(part, itemKey, outputIndex, -1, sourceSequence)) {
+        changed = true
+      }
+      if (part.toolCallId !== partId) {
+        part.toolCallId = partId
+        changed = true
+      }
+      if (part.toolName !== 'image_generation') {
+        part.toolName = 'image_generation'
+        changed = true
+      }
+      if (part.toolDisplayName !== OPENAI_RESPONSES_IMAGE_GENERATION_LABEL) {
+        part.toolDisplayName = OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
+        changed = true
+      }
+      if (part.toolSourceType !== ToolSourceType.BUILTIN) {
+        part.toolSourceType = ToolSourceType.BUILTIN
+        changed = true
+      }
+      if (part.toolSourceLabel !== OPENAI_RESPONSES_IMAGE_GENERATION_LABEL) {
+        part.toolSourceLabel = OPENAI_RESPONSES_IMAGE_GENERATION_LABEL
+        changed = true
+      }
+      if (part.toolPermissionLevel !== ToolPermissionLevel.READ) {
+        part.toolPermissionLevel = ToolPermissionLevel.READ
+        changed = true
+      }
       if (nextArguments !== part.toolArguments) {
         part.toolArguments = nextArguments
         changed = true
@@ -2896,6 +3138,9 @@ ${limitedSearchContext}
       if (part.toolStatus !== status) {
         part.toolStatus = status
         changed = true
+      }
+      if (changed) {
+        this.repositionOpenAIResponsesTimelinePart(aiMessage, part)
       }
     }
     return changed

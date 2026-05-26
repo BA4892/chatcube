@@ -103,6 +103,11 @@ function buildToolResultListSignature(toolResults: ToolResult[]): string {
 function buildMessagePartSignature(part: MessagePart): string {
   return [
     encodeValue(part.kind),
+    encodeValue(part.sourceType),
+    encodeValue(part.sourceItemId),
+    encodeNumber(part.sourceOutputIndex),
+    encodeNumber(part.sourceContentIndex),
+    encodeNumber(part.sourceSequence),
     encodeValue(fingerprintLongString(part.text)),
     encodeNumber(part.reasoningCreatedAt),
     encodeNumber(part.reasoningFinishedAt),

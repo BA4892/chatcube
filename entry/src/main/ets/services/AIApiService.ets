@@ -92,6 +92,7 @@ class StreamLineAccumulator {
   private imageOutputIndex: number = -1
   private imageBase64Chunk: string = ''
   private imageEscapePending: boolean = false
+  private protocolCompleted: boolean = false
 
   constructor(
     dropOpenAIResponsesLargeLines: boolean,
@@ -177,10 +178,12 @@ class StreamLineAccumulator {
 
       if (newlineIndex >= 0) {
         if (this.segments.length === 0) {
+          this.markProtocolCompletedIfNeeded(segment)
           lines.push(segment)
         } else {
           const line = this.mergeSegments()
           this.clearPending()
+          this.markProtocolCompletedIfNeeded(line)
           lines.push(line)
         }
         start = newlineIndex + 1
@@ -210,7 +213,12 @@ class StreamLineAccumulator {
     }
     const line = this.mergeSegments()
     this.clearPending()
+    this.markProtocolCompletedIfNeeded(line)
     return line
+  }
+
+  hasProtocolCompleted(): boolean {
+    return this.protocolCompleted
   }
 
   abortActiveImageFile(): void {
@@ -404,7 +412,12 @@ class StreamLineAccumulator {
       return false
     }
     const prefixLength = Math.min(segment.length, STREAM_DROP_PREFIX_MAX_LEN)
-    return this.isOpenAIResponsesLargeEventPrefix(segment.subarray(0, prefixLength))
+    const prefixBytes = segment.subarray(0, prefixLength)
+    if (this.isOpenAIResponsesCompletedEventPrefix(prefixBytes)) {
+      this.protocolCompleted = true
+      return true
+    }
+    return this.isOpenAIResponsesLargeEventPrefix(prefixBytes)
   }
 
   private shouldDropPendingLine(): boolean {
@@ -414,6 +427,10 @@ class StreamLineAccumulator {
     const prefixBytes = this.getPendingPrefixBytes(STREAM_DROP_PREFIX_MAX_LEN)
     if (prefixBytes.length === 0) {
       return false
+    }
+    if (this.isOpenAIResponsesCompletedEventPrefix(prefixBytes)) {
+      this.protocolCompleted = true
+      return true
     }
     return this.isOpenAIResponsesLargeEventPrefix(prefixBytes)
   }
@@ -427,6 +444,27 @@ class StreamLineAccumulator {
       prefix.includes('"type": "response.completed"') ||
       prefix.includes('"type":"response.image_generation_call.partial_image"') ||
       prefix.includes('"type": "response.image_generation_call.partial_image"')
+  }
+
+  private isOpenAIResponsesCompletedEventPrefix(prefixBytes: Uint8Array): boolean {
+    const prefix = this.bytesToAsciiString(prefixBytes).trimStart()
+    if (!prefix.startsWith('data:')) {
+      return false
+    }
+    return prefix.includes('"type":"response.completed"') ||
+      prefix.includes('"type": "response.completed"')
+  }
+
+  private markProtocolCompletedIfNeeded(line: Uint8Array): void {
+    const prefixLength = Math.min(line.length, STREAM_DROP_PREFIX_MAX_LEN)
+    const prefix = this.bytesToAsciiString(line.subarray(0, prefixLength)).trim()
+    if (prefix === 'data: [DONE]' || prefix === 'data:[DONE]' || prefix === '[DONE]') {
+      this.protocolCompleted = true
+      return
+    }
+    if (this.isOpenAIResponsesCompletedEventPrefix(line.subarray(0, prefixLength))) {
+      this.protocolCompleted = true
+    }
   }
 
   private isLikelyResponsesImageDonePrefix(prefixBytes: Uint8Array): boolean {
@@ -3783,6 +3821,13 @@ export class AIApiService {
     return undefined
   }
 
+  private isIgnorableTailStreamError(error: string): boolean {
+    const lower = error.toLowerCase()
+    return lower.includes('stream read error') ||
+      lower.includes('read error') ||
+      error.includes('接收数据失败')
+  }
+
   // 流式发送聊天请求
   streamChatRequest(
     config: AIApiConfig,
@@ -3874,6 +3919,16 @@ export class AIApiService {
         onComplete()
       },
       (error) => {
+        if (lineAccumulator.hasProtocolCompleted() && this.isIgnorableTailStreamError(error)) {
+          console.warn('AIApiService', `Ignoring tail stream error after protocol completion: ${error}`)
+          const remainingLine = lineAccumulator.flush()
+          if (remainingLine !== null) {
+            this.handleStreamLineBytes(config.apiStyle, useOpenAIResponses, remainingLine,
+              onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
+          }
+          onComplete()
+          return
+        }
         lineAccumulator.abortActiveImageFile()
         console.error('AIApiService', `Stream error: ${error}`)
         onError(error)
@@ -3975,6 +4030,17 @@ export class AIApiService {
         onComplete(accumulatedToolCalls)
       },
       (error) => {
+        if (lineAccumulator.hasProtocolCompleted() && this.isIgnorableTailStreamError(error)) {
+          console.warn('AIApiService', `Ignoring tail stream error after protocol completion: ${error}`)
+          const remainingLine = lineAccumulator.flush()
+          if (remainingLine !== null) {
+            this.handleStreamLineWithToolsBytes(config.apiStyle, useOpenAIResponses, remainingLine,
+              onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
+          }
+          const accumulatedToolCalls = this.getAccumulatedToolCalls()
+          onComplete(accumulatedToolCalls)
+          return
+        }
         lineAccumulator.abortActiveImageFile()
         console.error('AIApiService', `Stream error: ${error}`)
         onError(error)

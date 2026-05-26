@@ -48,6 +48,13 @@ export enum ToolPartStatus {
 export class MessagePart {
   @Trace kind: MessagePartKind = MessagePartKind.TEXT
 
+  // 协议来源与顺序元信息。默认空值表示历史/普通 provider part。
+  @Trace sourceType: string = ''
+  @Trace sourceItemId: string = ''
+  @Trace sourceOutputIndex: number = -1
+  @Trace sourceContentIndex: number = -1
+  @Trace sourceSequence: number = -1
+
   // text / reasoning 公用
   @Trace text: string = ''
 
@@ -98,6 +105,11 @@ export class MessagePart {
 // JSON 持久化结构(用于数据库和导入导出)
 export interface MessagePartJson {
   kind: string
+  sourceType?: string
+  sourceItemId?: string
+  sourceOutputIndex?: number
+  sourceContentIndex?: number
+  sourceSequence?: number
   text?: string
   reasoningCreatedAt?: number
   reasoningFinishedAt?: number
@@ -120,6 +132,21 @@ export interface MessagePartJson {
 
 export function messagePartToJson(part: MessagePart): MessagePartJson {
   const json: MessagePartJson = { kind: part.kind }
+  if (part.sourceType !== '') {
+    json.sourceType = part.sourceType
+  }
+  if (part.sourceItemId !== '') {
+    json.sourceItemId = part.sourceItemId
+  }
+  if (part.sourceOutputIndex >= 0) {
+    json.sourceOutputIndex = part.sourceOutputIndex
+  }
+  if (part.sourceContentIndex >= 0) {
+    json.sourceContentIndex = part.sourceContentIndex
+  }
+  if (part.sourceSequence >= 0) {
+    json.sourceSequence = part.sourceSequence
+  }
   if (part.text !== '') {
     json.text = part.text
   }
@@ -206,6 +233,11 @@ export function messagePartFromJson(json: MessagePartJson): MessagePart {
       kind = MessagePartKind.TEXT
   }
   const part = new MessagePart(kind)
+  part.sourceType = json.sourceType ?? ''
+  part.sourceItemId = json.sourceItemId ?? ''
+  part.sourceOutputIndex = json.sourceOutputIndex ?? -1
+  part.sourceContentIndex = json.sourceContentIndex ?? -1
+  part.sourceSequence = json.sourceSequence ?? -1
   part.text = json.text ?? ''
   part.reasoningCreatedAt = json.reasoningCreatedAt ?? 0
   part.reasoningFinishedAt = json.reasoningFinishedAt ?? 0

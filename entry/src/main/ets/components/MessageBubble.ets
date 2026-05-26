@@ -2347,35 +2347,68 @@ export struct MessageBubble {
     return this.message.parts.length > 0
   }
 
-	  private getOrderedMessagePartBlocks(): MessagePartBlock[] {
+  private getOrderedMessagePartBlocks(): MessagePartBlock[] {
     if (this.message.role === MessageRole.ASSISTANT) {
       ensureMessageParts(this.message)
     }
-	    return groupMessageParts(this.message.parts)
-	  }
+    return groupMessageParts(this.message.parts)
+  }
 
-	  private getRenderableThinkingSteps(parts: MessagePart[]): MessagePart[] {
-	    const steps: MessagePart[] = []
-	    for (let i = 0; i < parts.length; i++) {
-	      const p = parts[i]
-	      // 过滤空 reasoning: 流式期间偶尔会 push 内容为空的 reasoning part(边界重置),
-	      // 折叠视图里显示两条 "思考中" 且没有正文会特别奇怪, 直接剔除
-	      if (p.kind === MessagePartKind.REASONING) {
-	        if (p.text.length > 0) {
-	          steps.push(p)
-	        }
-	        continue
-	      }
-	      if (p.kind === MessagePartKind.TOOL) {
-	        steps.push(p)
-	      }
-	    }
-	    return steps
-	  }
+  private buildPartBlockKey(block: MessagePartBlock, index: number): string {
+    const firstPartKey = block.parts.length > 0 ? this.buildPartIdentityKey(block.parts[0], 0) : 'empty'
+    const lastIndex = block.parts.length - 1
+    const lastPartKey = lastIndex >= 0 ? this.buildPartIdentityKey(block.parts[lastIndex], lastIndex) : 'empty'
+    return block.kind + '_' + index.toString() + '_' + block.parts.length.toString() + '_' +
+      firstPartKey + '_' + lastPartKey
+  }
 
-	  private getThinkingSteps(): MessagePart[] {
-	    return this.getRenderableThinkingSteps(this.message.parts)
-	  }
+  private buildPartIdentityKey(part: MessagePart, index: number): string {
+    const sourceKey = this.buildPartSourceIdentityKey(part)
+    if (sourceKey !== '') {
+      return part.kind + '_' + sourceKey
+    }
+    if (part.kind === MessagePartKind.TOOL) {
+      return 'tool_' + (part.toolCallId !== '' ? part.toolCallId : part.toolName + '_' + index.toString())
+    }
+    if (part.kind === MessagePartKind.REASONING) {
+      return 'reasoning_' + part.reasoningCreatedAt.toString() + '_' + index.toString()
+    }
+    if (part.kind === MessagePartKind.IMAGE) {
+      return 'image_' + fingerprintLongString(part.mediaUrl + '|' + part.mediaName)
+    }
+    return part.kind + '_' + index.toString()
+  }
+
+  private buildPartSourceIdentityKey(part: MessagePart): string {
+    if (part.sourceType === '') {
+      return ''
+    }
+    return part.sourceType + '_' + part.sourceItemId + '_' + part.sourceOutputIndex.toString() + '_' +
+      part.sourceContentIndex.toString() + '_' + part.sourceSequence.toString()
+  }
+
+  private getRenderableThinkingSteps(parts: MessagePart[]): MessagePart[] {
+    const steps: MessagePart[] = []
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]
+      // 过滤空 reasoning: 流式期间偶尔会 push 内容为空的 reasoning part(边界重置),
+      // 折叠视图里显示两条 "思考中" 且没有正文会特别奇怪, 直接剔除
+      if (p.kind === MessagePartKind.REASONING) {
+        if (p.text.length > 0) {
+          steps.push(p)
+        }
+        continue
+      }
+      if (p.kind === MessagePartKind.TOOL) {
+        steps.push(p)
+      }
+    }
+    return steps
+  }
+
+  private getThinkingSteps(): MessagePart[] {
+    return this.getRenderableThinkingSteps(this.message.parts)
+  }
 
   // 判定某个 reasoning part 是否处于 "仍在思考中": 消息还在生成 + 该 part 是 parts 里最后一个 reasoning
   // 且其后没有任何 reasoning/tool/text part (即确实是当前正在输出的那段 reasoning)
@@ -2908,25 +2941,23 @@ export struct MessageBubble {
     }
   }
 
-	  @Builder
-	  OrderedPartsTimeline() {
-	    Column() {
-	      ForEach(this.getOrderedMessagePartBlocks(), (block: MessagePartBlock, index: number) => {
-	        if (block.kind === MessagePartBlockKind.THINKING) {
-	          this.PartsTimelineBlock(this.getRenderableThinkingSteps(block.parts))
-	        } else {
-	          this.PartsContentBlock(block, index)
-	        }
-	      }, (block: MessagePartBlock, index: number) => {
-	        // 必须把 block.parts.length 拼进 key, 否则 push 新 part (新 reasoning / 新 tool) 时,
-	        // blocks 数组结构通常仍是 [THINKING] 或 [THINKING, CONTENT], index 不变, 老 key 'thinking_0' 不变,
-	        // ForEach 会复用旧 PartsTimelineBlock 不重新调用, 内部 steps 静止 → 第一轮 reasoning 完成后 UI 卡死。
-	        // V2 在 ForEach itemArray 引用变化但 key 不变时不会重建子组件, 必须 key 变化触发重建。
-	        return block.kind + '_' + index.toString() + '_' + block.parts.length.toString()
-	      })
-	    }
-	    .width('100%')
-	  }
+  @Builder
+  OrderedPartsTimeline() {
+    Column() {
+      ForEach(this.getOrderedMessagePartBlocks(), (block: MessagePartBlock, index: number) => {
+        if (block.kind === MessagePartBlockKind.THINKING) {
+          this.PartsTimelineBlock(this.getRenderableThinkingSteps(block.parts))
+        } else {
+          this.PartsContentBlock(block, index)
+        }
+      }, (block: MessagePartBlock, index: number) => {
+        // key 必须包含 block 内首尾 part 的稳定身份。OpenAI hosted 生图完成时会在正文前插入 IMAGE part,
+        // 仅用 kind/index/length 会让新 IMAGE block 复用旧 TEXT block, live 态表现为正文被复制。
+        return this.buildPartBlockKey(block, index)
+      })
+    }
+    .width('100%')
+  }
 
 		  @Builder
 		  PartsContentBlock(block: MessagePartBlock, blockIndex: number) {
@@ -3590,6 +3621,9 @@ export struct MessageBubble {
   }
 
   private buildToolStepTitle(part: MessagePart): string {
+    if (this.isHostedOpenAIWebSearchStep(part)) {
+      return 'OpenAI Web Search'
+    }
     if (part.toolDisplayName.trim() !== '' && part.toolDisplayName !== part.toolName) {
       return part.toolDisplayName
     }
