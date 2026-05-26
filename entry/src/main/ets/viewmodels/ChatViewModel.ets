@@ -513,6 +513,30 @@ export class ChatViewModel {
     aiMessage.parts = aiMessage.parts.concat([part])
   }
 
+  private insertPartBeforeActiveReasoningOrAppend(aiMessage: ChatMessage, part: MessagePart): void {
+    const activeReasoningIndex = this.getTrailingActiveReasoningIndex(aiMessage)
+    if (activeReasoningIndex >= 0) {
+      const nextParts = aiMessage.parts.slice()
+      nextParts.splice(activeReasoningIndex, 0, part)
+      aiMessage.parts = nextParts
+      return
+    }
+    this.finishTrailingReasoningPart(aiMessage)
+    aiMessage.parts = aiMessage.parts.concat([part])
+  }
+
+  private getTrailingActiveReasoningIndex(aiMessage: ChatMessage): number {
+    if (aiMessage.parts.length === 0) {
+      return -1
+    }
+    const lastIndex = aiMessage.parts.length - 1
+    const last = aiMessage.parts[lastIndex]
+    if (last.kind === MessagePartKind.REASONING && last.reasoningFinishedAt === 0) {
+      return lastIndex
+    }
+    return -1
+  }
+
   private mergeToolFunctionNameFragment(previousName: string, incomingName: string): string {
     const prev = previousName.trim()
     const next = incomingName.trim()
@@ -2585,7 +2609,6 @@ ${limitedSearchContext}
 
     let changed = false
     if (part === null) {
-      this.finishTrailingReasoningPart(aiMessage)
       part = new MessagePart(MessagePartKind.TOOL)
       part.toolCallId = partId
       // 'web_search' 已经被 isSearchWebFunctionName 识别为搜索类工具, 复用 timeline 已有搜索 step 渲染
@@ -2599,7 +2622,7 @@ ${limitedSearchContext}
       part.toolStatus = status
       // 注意: hosted url_citation 没有 search_call_id 归属, 这里不写 toolSearchReferences,
       // 让 message.searchReferences 聚合卡片兜底展示全部引用。
-      aiMessage.parts = aiMessage.parts.concat([part])
+      this.insertPartBeforeActiveReasoningOrAppend(aiMessage, part)
       changed = true
     } else {
       // 已有 part: 增量补 query / url / 完成状态; 不允许把更精确的 query 退回到默认占位文案
