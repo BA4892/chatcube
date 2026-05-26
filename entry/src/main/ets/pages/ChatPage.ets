@@ -109,7 +109,11 @@ import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { getSearchToolIds, isSearchToolId } from '../utils/SearchToolIdentityUtils'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
-import { savePreviewImageToAlbum } from '../utils/ImagePreviewSaveUtil'
+import {
+  preparePreviewImageForShare,
+  savePreviewImageToAlbum,
+  savePreviewImageToAlbumAuthorized
+} from '../utils/ImagePreviewSaveUtil'
 import { DocumentParsePolicy, DocumentParseResult, WebDocumentParserService } from '../services/DocumentParseService'
 import { shouldUseLeftHandAdaptiveLayout } from '../utils/HandAdaptiveUtils'
 
@@ -208,6 +212,7 @@ export struct ChatPage {
   @Local previewImages: Array<string> = []
   @Local previewImageIndex: number = 0
   @Local isImagePreviewSaving: boolean = false
+  @Local isImagePreviewSharing: boolean = false
   private previewImageSourceIds: Array<string> = []
   private imagePreviewDialogId: string = ''
   @Local showMessageWebSheet: boolean = false
@@ -2778,10 +2783,6 @@ export struct ChatPage {
       .setBackListener((): void => {
         this.handleChatImagePreviewClosed()
       })
-      .setLongPressListener((_item: DefaultMediaModel, mediaIndex: number): void => {
-        this.previewImageIndex = mediaIndex
-        this.saveCurrentChatPreviewImage()
-      })
       .setToolBuilder((): void => {
         this.ChatImagePreviewToolBuilder()
       })
@@ -2814,6 +2815,7 @@ export struct ChatPage {
     this.previewImageSourceIds = []
     this.imagePreviewDialogId = ''
     this.isImagePreviewSaving = false
+    this.isImagePreviewSharing = false
     this.updateStatusBar()
   }
 
@@ -2822,7 +2824,7 @@ export struct ChatPage {
       this.previewImages[this.previewImageIndex] !== ''
   }
 
-  private async saveCurrentChatPreviewImage(): Promise<void> {
+  private async saveCurrentChatPreviewImage(authorized: boolean): Promise<void> {
     if (this.isImagePreviewSaving || !this.hasCurrentChatPreviewImage()) {
       return
     }
@@ -2834,7 +2836,12 @@ export struct ChatPage {
 
     this.isImagePreviewSaving = true
     try {
-      await savePreviewImageToAlbum(hostContext as common.UIAbilityContext, this.previewImages[this.previewImageIndex])
+      const imageUri = this.previewImages[this.previewImageIndex]
+      if (authorized) {
+        await savePreviewImageToAlbumAuthorized(hostContext as common.UIAbilityContext, imageUri)
+      } else {
+        await savePreviewImageToAlbum(hostContext as common.UIAbilityContext, imageUri)
+      }
       this.showChatSnack($r('app.string.image_saved_to_album'), 2000, SnackBarTone.SUCCESS)
     } catch (error) {
       hilog.error(DOMAIN, TAG, 'Save preview image failed: %{public}s', JSON.stringify(error))
@@ -2844,29 +2851,87 @@ export struct ChatPage {
     }
   }
 
+  private async shareCurrentChatPreviewImage(): Promise<void> {
+    if (this.isImagePreviewSharing || !this.hasCurrentChatPreviewImage()) {
+      return
+    }
+    const hostContext = this.getUIContext().getHostContext()
+    if (hostContext === undefined || hostContext === null) {
+      this.showChatSnack($r('app.string.share_failed'), 2000, SnackBarTone.ERROR)
+      return
+    }
+
+    this.isImagePreviewSharing = true
+    try {
+      const imagePath = await preparePreviewImageForShare(
+        hostContext as common.UIAbilityContext,
+        this.previewImages[this.previewImageIndex]
+      )
+      const shareService = ServiceRegistry.share()
+      shareService.init(hostContext as common.UIAbilityContext)
+      const result = await shareService.shareImage(imagePath, 'image')
+      if (!result.success) {
+        this.showChatSnack($r('app.string.share_failed'), 2000, SnackBarTone.ERROR)
+      }
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, 'Share preview image failed: %{public}s', JSON.stringify(error))
+      this.showChatSnack($r('app.string.share_failed'), 2000, SnackBarTone.ERROR)
+    } finally {
+      this.isImagePreviewSharing = false
+    }
+  }
+
   @Builder
   private ChatImagePreviewToolBuilder() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
+      Row({ space: 12 }) {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          if (this.isImagePreviewSharing) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color('rgba(255, 255, 255, 0.86)')
+          } else {
+            SymbolGlyph($r('sys.symbol.share'))
+              .fontSize(20)
+              .fontColor(['rgba(255, 255, 255, 0.9)'])
+          }
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor('rgba(8, 12, 18, 0.62)')
+        .accessibilityText($r('app.string.menu_share'))
+        .enabled(!this.isImagePreviewSharing && this.hasCurrentChatPreviewImage())
+        .onClick(() => {
+          this.shareCurrentChatPreviewImage()
+        })
+
         if (this.isImagePreviewSaving) {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-            .color('rgba(255, 255, 255, 0.86)')
+          Button({ type: ButtonType.Circle, stateEffect: false }) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color('rgba(255, 255, 255, 0.86)')
+          }
+          .width(48)
+          .height(48)
+          .backgroundColor('rgba(8, 12, 18, 0.62)')
         } else {
-          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
-            .fontSize(20)
-            .fontColor(['rgba(255, 255, 255, 0.9)'])
+          SaveButton({ icon: SaveIconStyle.FULL_FILLED, buttonType: ButtonType.Circle })
+            .width(48)
+            .height(48)
+            .backgroundColor('rgba(8, 12, 18, 0.62)')
+            .onClick((_event: ClickEvent, result: SaveButtonOnClickResult): void => {
+              if (result !== SaveButtonOnClickResult.SUCCESS) {
+                this.showChatSnack($r('app.string.image_save_failed'), 2000, SnackBarTone.ERROR)
+                return
+              }
+              this.saveCurrentChatPreviewImage(true)
+            })
         }
       }
-      .width(48)
-      .height(48)
       .margin({ bottom: 24 + this.px2vp(this.bottomAvoidHeight) })
-      .backgroundColor('rgba(8, 12, 18, 0.62)')
-      .enabled(!this.isImagePreviewSaving && this.hasCurrentChatPreviewImage())
-      .onClick(() => {
-        this.saveCurrentChatPreviewImage()
-      })
+      .hitTestBehavior(HitTestMode.Block)
     }
     .width('100%')
     .height('100%')

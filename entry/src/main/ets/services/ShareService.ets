@@ -157,10 +157,11 @@ export class ShareService {
     try {
       console.info('ShareService', `[shareImage] 开始分享图片: ${imagePath}`)
       const uri = fileUri.getUriFromPath(imagePath)
+      const imageUtd = this.resolveImageUtd(imagePath)
       console.info('ShareService', `[shareImage] 文件URI: ${uri}`)
 
       const shareData = new systemShare.SharedData({
-        utd: utd.UniformDataType.PNG,
+        utd: imageUtd,
         uri: uri,
         title: title
       })
@@ -178,6 +179,30 @@ export class ShareService {
       console.error('ShareService', `[shareImage] 分享图片失败: ${JSON.stringify(error)}`)
       return { success: false, errorMessage: `分享失败: ${error}` }
     }
+  }
+
+  private resolveImageUtd(imagePath: string): string {
+    const extension = this.getFileExtension(imagePath)
+    if (extension === '') {
+      return utd.UniformDataType.IMAGE
+    }
+    try {
+      return utd.getUniformDataTypeByFilenameExtension(extension, utd.UniformDataType.IMAGE)
+    } catch (error) {
+      console.warn('ShareService', `Resolve image UTD failed: ${JSON.stringify(error)}`)
+      return utd.UniformDataType.IMAGE
+    }
+  }
+
+  private getFileExtension(filePath: string): string {
+    const queryIndex = filePath.indexOf('?')
+    const cleanPath = queryIndex >= 0 ? filePath.substring(0, queryIndex) : filePath
+    const dotIndex = cleanPath.lastIndexOf('.')
+    if (dotIndex < 0 || dotIndex === cleanPath.length - 1) {
+      return ''
+    }
+    const extension = cleanPath.substring(dotIndex + 1).toLowerCase()
+    return extension === 'jpeg' ? 'jpg' : extension
   }
 
   // 滚动截图并拼接成完整长图。复用预览态 Scroll 内已渲染的 ShareMessageCard,

@@ -30,6 +30,8 @@ import {
 import { getAppUiState } from '../state/AppUiState'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { saveFileImageToAlbum } from '../utils/RawfileImageSaveUtil'
+import { savePreviewImageToAlbumAuthorized } from '../utils/ImagePreviewSaveUtil'
+import { getShareService } from '../services/ShareService'
 import { showToast } from '../utils/ToastUtil'
 
 let imageGenerationPagePathStack: NavPathStack | null = null
@@ -49,6 +51,7 @@ struct ImageGenerationPage {
   @Local isPreviewOpen: boolean = false
   @Local previewCurrentIndex: number = 0
   @Local isPreviewSaving: boolean = false
+  @Local isPreviewSharing: boolean = false
   @Local isPreviewPreparingEdit: boolean = false
   private previewDialogId: string = ''
   private previewSourceItems: GeneratedMedia[] = []
@@ -277,10 +280,6 @@ struct ImageGenerationPage {
       .setBackListener((): void => {
         this.handlePreviewClosed()
       })
-      .setLongPressListener((_item: DefaultMediaModel, mediaIndex: number): void => {
-        this.previewCurrentIndex = mediaIndex
-        this.saveCurrentPreviewMedia()
-      })
       .setToolBuilder((): void => {
         this.PreviewToolBuilder()
       })
@@ -353,6 +352,7 @@ struct ImageGenerationPage {
     this.isPreviewOpen = false
     this.previewDialogId = ''
     this.isPreviewSaving = false
+    this.isPreviewSharing = false
     this.isPreviewPreparingEdit = false
     this.previewCurrentIndex = 0
     this.previewSourceItems = []
@@ -367,6 +367,7 @@ struct ImageGenerationPage {
     this.previewCurrentIndex = 0
     this.previewSourceItems = []
     this.isPreviewSaving = false
+    this.isPreviewSharing = false
     this.isPreviewPreparingEdit = false
   }
 
@@ -374,13 +375,17 @@ struct ImageGenerationPage {
     return this.previewCurrentIndex >= 0 && this.previewCurrentIndex < this.previewSourceItems.length
   }
 
-  private async saveCurrentPreviewMedia(): Promise<void> {
+  private async saveCurrentPreviewMedia(authorized: boolean): Promise<void> {
     if (this.isPreviewSaving || !this.hasCurrentPreviewMedia()) {
       return
     }
     this.isPreviewSaving = true
     try {
-      await this.saveMedia(this.previewSourceItems[this.previewCurrentIndex])
+      if (authorized) {
+        await this.savePreviewMediaAuthorized(this.previewSourceItems[this.previewCurrentIndex])
+      } else {
+        await this.saveMedia(this.previewSourceItems[this.previewCurrentIndex])
+      }
     } finally {
       this.isPreviewSaving = false
     }
@@ -395,6 +400,18 @@ struct ImageGenerationPage {
       await this.continueEditMedia(this.previewSourceItems[this.previewCurrentIndex])
     } finally {
       this.isPreviewPreparingEdit = false
+    }
+  }
+
+  private async shareCurrentPreviewMedia(): Promise<void> {
+    if (this.isPreviewSharing || !this.hasCurrentPreviewMedia()) {
+      return
+    }
+    this.isPreviewSharing = true
+    try {
+      await this.shareMedia(this.previewSourceItems[this.previewCurrentIndex])
+    } finally {
+      this.isPreviewSharing = false
     }
   }
 
@@ -441,6 +458,32 @@ struct ImageGenerationPage {
     } catch (error) {
       console.error('ImageGenerationPage', `Save image failed: ${JSON.stringify(error)}`)
       showToast(this.getUIContext(), $r('app.string.image_generation_save_failed'))
+    }
+  }
+
+  private async savePreviewMediaAuthorized(media: GeneratedMedia): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+      await savePreviewImageToAlbumAuthorized(context, media.filePath)
+      showToast(this.getUIContext(), $r('app.string.image_generation_save_success'))
+    } catch (error) {
+      console.error('ImageGenerationPage', `Save preview image failed: ${JSON.stringify(error)}`)
+      showToast(this.getUIContext(), $r('app.string.image_generation_save_failed'))
+    }
+  }
+
+  private async shareMedia(media: GeneratedMedia): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+      const shareService = getShareService()
+      shareService.init(context)
+      const result = await shareService.shareImage(media.filePath, 'generated-image')
+      if (!result.success) {
+        showToast(this.getUIContext(), $r('app.string.share_failed'))
+      }
+    } catch (error) {
+      console.error('ImageGenerationPage', `Share image failed: ${JSON.stringify(error)}`)
+      showToast(this.getUIContext(), $r('app.string.share_failed'))
     }
   }
 
@@ -756,13 +799,13 @@ struct ImageGenerationPage {
         })
 
         Button({ type: ButtonType.Circle, stateEffect: false }) {
-          if (this.isPreviewSaving) {
+          if (this.isPreviewSharing) {
             LoadingProgress()
               .width(20)
               .height(20)
               .color('rgba(255, 255, 255, 0.86)')
           } else {
-            SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            SymbolGlyph($r('sys.symbol.share'))
               .fontSize(20)
               .fontColor(['rgba(255, 255, 255, 0.9)'])
           }
@@ -770,13 +813,38 @@ struct ImageGenerationPage {
         .width(48)
         .height(48)
         .backgroundColor('rgba(8, 12, 18, 0.62)')
-        .accessibilityText($r('app.string.image_generation_save_image'))
-        .enabled(!this.isPreviewSaving && this.hasCurrentPreviewMedia())
+        .accessibilityText($r('app.string.menu_share'))
+        .enabled(!this.isPreviewSharing && this.hasCurrentPreviewMedia())
         .onClick(() => {
-          this.saveCurrentPreviewMedia()
+          this.shareCurrentPreviewMedia()
         })
+
+        if (this.isPreviewSaving) {
+          Button({ type: ButtonType.Circle, stateEffect: false }) {
+            LoadingProgress()
+              .width(20)
+              .height(20)
+              .color('rgba(255, 255, 255, 0.86)')
+          }
+          .width(48)
+          .height(48)
+          .backgroundColor('rgba(8, 12, 18, 0.62)')
+        } else {
+          SaveButton({ icon: SaveIconStyle.FULL_FILLED, buttonType: ButtonType.Circle })
+            .width(48)
+            .height(48)
+            .backgroundColor('rgba(8, 12, 18, 0.62)')
+            .onClick((_event: ClickEvent, result: SaveButtonOnClickResult): void => {
+              if (result !== SaveButtonOnClickResult.SUCCESS) {
+                showToast(this.getUIContext(), $r('app.string.image_generation_save_failed'))
+                return
+              }
+              this.saveCurrentPreviewMedia(true)
+            })
+        }
       }
       .margin({ bottom: 24 + this.px2vp(getAppUiState().bottomAvoidHeight) })
+      .hitTestBehavior(HitTestMode.Block)
     }
     .width('100%')
     .height('100%')

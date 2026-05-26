@@ -16,6 +16,39 @@ export async function savePreviewImageToAlbum(context: common.UIAbilityContext, 
   await saveFromFileUri(context, imageUri)
 }
 
+// 必须在 SaveButton 授权成功后的回调中调用。该路径不弹出系统保存确认弹窗,适合预览层内保存。
+export async function savePreviewImageToAlbumAuthorized(
+  context: common.UIAbilityContext,
+  imageUri: string
+): Promise<void> {
+  if (imageUri.startsWith('data:')) {
+    await saveFromBase64Authorized(context, imageUri)
+    return
+  }
+  if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+    await saveFromRemoteUriAuthorized(context, imageUri)
+    return
+  }
+  await saveFromFileUriAuthorized(context, imageUri)
+}
+
+export async function preparePreviewImageForShare(
+  context: common.UIAbilityContext,
+  imageUri: string
+): Promise<string> {
+  if (imageUri.startsWith('data:')) {
+    return writeBase64ImageToTempPath(context, imageUri, 'share_preview')
+  }
+  if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+    return await downloadRemoteImageToTempPath(context, imageUri, 'share_preview')
+  }
+  const imagePath = resolveLocalFilePath(imageUri)
+  if (imagePath === '') {
+    throw new Error('Image path is empty')
+  }
+  return imagePath
+}
+
 async function saveFromFileUri(context: common.UIAbilityContext, imageUri: string): Promise<void> {
   let srcFile: fileIo.File | null = null
   let desFile: fileIo.File | null = null
@@ -50,10 +83,31 @@ async function saveFromFileUri(context: common.UIAbilityContext, imageUri: strin
   }
 }
 
+async function saveFromFileUriAuthorized(context: common.UIAbilityContext, imageUri: string): Promise<void> {
+  let srcFile: fileIo.File | null = null
+  let desFile: fileIo.File | null = null
+  try {
+    const srcPath = resolveLocalFilePath(imageUri)
+    if (srcPath === '') {
+      throw new Error('Image path is empty')
+    }
+    const ext = getExtensionFromUri(srcPath)
+    const destUri = await createAlbumImageAsset(context, ext)
+    srcFile = fileIo.openSync(srcPath, fileIo.OpenMode.READ_ONLY)
+    desFile = fileIo.openSync(destUri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE)
+    await fileIo.copyFile(srcFile.fd, desFile.fd)
+  } catch (error) {
+    throw new Error(`Save from file uri failed: ${formatSaveError(error)}`)
+  } finally {
+    closeFileQuietly(srcFile)
+    closeFileQuietly(desFile)
+  }
+}
+
 async function saveFromRemoteUri(context: common.UIAbilityContext, imageUri: string): Promise<void> {
   let tempFilePath = ''
   try {
-    tempFilePath = await downloadRemoteImageToTempPath(context, imageUri)
+    tempFilePath = await downloadRemoteImageToTempPath(context, imageUri, 'temp_save')
     await saveFromFileUri(context, fileUri.getUriFromPath(tempFilePath))
   } catch (error) {
     throw new Error(`Save from remote uri failed: ${formatSaveError(error)}`)
@@ -62,7 +116,40 @@ async function saveFromRemoteUri(context: common.UIAbilityContext, imageUri: str
   }
 }
 
-async function downloadRemoteImageToTempPath(context: common.UIAbilityContext, imageUri: string): Promise<string> {
+async function saveFromRemoteUriAuthorized(context: common.UIAbilityContext, imageUri: string): Promise<void> {
+  const httpRequest = http.createHttp()
+  let desFile: fileIo.File | null = null
+  try {
+    const ext = getExtensionFromUri(imageUri)
+    const destUri = await createAlbumImageAsset(context, ext)
+    const response = await httpRequest.request(imageUri, {
+      method: http.RequestMethod.GET,
+      connectTimeout: 15000,
+      readTimeout: 60000,
+      expectDataType: http.HttpDataType.ARRAY_BUFFER
+    })
+    if (response.responseCode !== 200) {
+      throw new Error(`HTTP ${response.responseCode}`)
+    }
+    const imageBuffer = response.result as ArrayBuffer
+    if (imageBuffer.byteLength <= 0) {
+      throw new Error('Empty image data')
+    }
+    desFile = fileIo.openSync(destUri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE)
+    fileIo.writeSync(desFile.fd, imageBuffer)
+  } catch (error) {
+    throw new Error(`Save from remote uri failed: ${formatSaveError(error)}`)
+  } finally {
+    closeFileQuietly(desFile)
+    httpRequest.destroy()
+  }
+}
+
+async function downloadRemoteImageToTempPath(
+  context: common.UIAbilityContext,
+  imageUri: string,
+  filePrefix: string
+): Promise<string> {
   const httpRequest = http.createHttp()
   let tempFile: fileIo.File | null = null
   let tempFilePath = ''
@@ -84,7 +171,7 @@ async function downloadRemoteImageToTempPath(context: common.UIAbilityContext, i
 
     const contentType = response.header?.['content-type'] as string | undefined
     const ext = getExtensionForRemoteImage(imageUri, contentType)
-    tempFilePath = `${context.cacheDir}/temp_save_${Date.now()}.${ext}`
+    tempFilePath = `${context.cacheDir}/${filePrefix}_${Date.now()}.${ext}`
     tempFile = fileIo.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
     fileIo.writeSync(tempFile.fd, imageBuffer)
     return tempFilePath
@@ -98,6 +185,46 @@ async function downloadRemoteImageToTempPath(context: common.UIAbilityContext, i
 }
 
 async function saveFromBase64(context: common.UIAbilityContext, dataUri: string): Promise<void> {
+  let tempFilePath = ''
+
+  try {
+    tempFilePath = writeBase64ImageToTempPath(context, dataUri, 'temp_save')
+    await saveFromFileUri(context, fileUri.getUriFromPath(tempFilePath))
+  } catch (error) {
+    throw new Error(`Save from base64 failed: ${formatSaveError(error)}`)
+  } finally {
+    unlinkQuietly(tempFilePath)
+  }
+}
+
+async function saveFromBase64Authorized(context: common.UIAbilityContext, dataUri: string): Promise<void> {
+  const commaIndex = dataUri.indexOf(',')
+  if (commaIndex < 0) {
+    throw new Error('Invalid data uri')
+  }
+
+  const base64Data = dataUri.substring(commaIndex + 1)
+  const mimeSection = dataUri.substring(0, commaIndex)
+  const ext = getExtensionFromMimeSection(mimeSection)
+  let desFile: fileIo.File | null = null
+  try {
+    const destUri = await createAlbumImageAsset(context, ext)
+    const decodedBuffer = buffer.from(base64Data, 'base64')
+    desFile = fileIo.openSync(destUri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE)
+    fileIo.writeSync(desFile.fd, decodedBuffer.buffer)
+  } catch (error) {
+    throw new Error(`Save from base64 failed: ${formatSaveError(error)}`)
+  } finally {
+    closeFileQuietly(desFile)
+  }
+}
+
+async function createAlbumImageAsset(context: common.UIAbilityContext, extension: string): Promise<string> {
+  const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context)
+  return await phAccessHelper.createAsset(photoAccessHelper.PhotoType.IMAGE, normalizeImageExtension(extension))
+}
+
+function writeBase64ImageToTempPath(context: common.UIAbilityContext, dataUri: string, filePrefix: string): string {
   const commaIndex = dataUri.indexOf(',')
   if (commaIndex < 0) {
     throw new Error('Invalid data uri')
@@ -107,21 +234,27 @@ async function saveFromBase64(context: common.UIAbilityContext, dataUri: string)
   const mimeSection = dataUri.substring(0, commaIndex)
   const ext = getExtensionFromMimeSection(mimeSection)
   const decodedBuffer = buffer.from(base64Data, 'base64')
-  const tempFilePath = `${context.cacheDir}/temp_save_${Date.now()}.${ext}`
+  const tempFilePath = `${context.cacheDir}/${filePrefix}_${Date.now()}.${ext}`
   let tempFile: fileIo.File | null = null
 
   try {
     tempFile = fileIo.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
     fileIo.writeSync(tempFile.fd, decodedBuffer.buffer)
-    closeFileQuietly(tempFile)
-    tempFile = null
-    await saveFromFileUri(context, fileUri.getUriFromPath(tempFilePath))
+    return tempFilePath
   } catch (error) {
-    throw new Error(`Save from base64 failed: ${formatSaveError(error)}`)
+    unlinkQuietly(tempFilePath)
+    throw new Error(`Write base64 image failed: ${formatSaveError(error)}`)
   } finally {
     closeFileQuietly(tempFile)
-    unlinkQuietly(tempFilePath)
   }
+}
+
+function normalizeImageExtension(extension: string): string {
+  const clean = extension.trim().toLowerCase()
+  if (clean === '') {
+    return 'jpg'
+  }
+  return clean.startsWith('.') ? clean.substring(1) : clean
 }
 
 function getExtensionFromMimeSection(mimeSection: string): string {
