@@ -11,6 +11,7 @@ import {
   BuiltInResponsesToolSpec,
   HostedResponsesToolEvent,
   HostedResponsesToolEventKind,
+  AIGeneratedImageFileCallbacks,
   OpenAIResponsesToolChoice
 } from '../services/AIApiService'
 import { getAppStateManager, AppStateManager } from './AppStateManager'
@@ -20,6 +21,7 @@ import { getToolExecutionService, ToolExecutionService, ToolExecutionContext, is
 import { getProviderViewModel, ProviderViewModel } from './ProviderViewModel'
 import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '../services/AssistantService'
 import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
+import { AIGeneratedImageFileResult, AIGeneratedImageFileSink } from '../models/AIGeneratedImageFileModels'
 import { WebSearchResult, SearchResult } from '../services/WebSearchService'
 import { http } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
@@ -1351,7 +1353,13 @@ export class ChatViewModel {
           return
         }
         this.handleHostedResponsesToolEvent(aiMessage, event, onAIMessageUpdated)
-      }
+      },
+      this.createAIGeneratedImageFileCallbacks(
+        pendingImageSaves,
+        aiMessage,
+        onAIMessageUpdated,
+        () => cancelled
+      )
     )
 
     // 注册到活跃请求 Map
@@ -2305,8 +2313,54 @@ ${limitedSearchContext}
     const task = this.saveAIGeneratedImage(imageData, mimeType, aiMessage, onAIMessageUpdated)
       .catch((error: Object): void => {
         console.error('ChatViewModel', `Failed to save AI generated image: ${JSON.stringify(error)}`)
-      })
+    })
     pendingImageSaves.push(task)
+  }
+
+  private createAIGeneratedImageFileCallbacks(
+    pendingImageSaves: Promise<void>[],
+    aiMessage: ChatMessage,
+    onAIMessageUpdated: (message: ChatMessage) => void,
+    shouldIgnore: () => boolean
+  ): AIGeneratedImageFileCallbacks {
+    return {
+      createSink: (mimeType: string): AIGeneratedImageFileSink | null => {
+        return this.attachmentStorageService.createAIGeneratedImageFileSink(mimeType)
+      },
+      onFile: (result: AIGeneratedImageFileResult): void => {
+        const task = this.saveAIGeneratedImageFile(result, aiMessage, onAIMessageUpdated, shouldIgnore)
+          .catch((error: Object): void => {
+            console.error('ChatViewModel', `Failed to attach AI generated image file: ${JSON.stringify(error)}`)
+          })
+        pendingImageSaves.push(task)
+      }
+    }
+  }
+
+  private async saveAIGeneratedImageFile(
+    result: AIGeneratedImageFileResult,
+    aiMessage: ChatMessage,
+    onAIMessageUpdated: (message: ChatMessage) => void,
+    shouldIgnore: () => boolean
+  ): Promise<void> {
+    if (shouldIgnore()) {
+      await this.attachmentStorageService.deleteAttachment(result.filePath)
+      return
+    }
+    if (result.filePath === '' || result.attachmentId === '') {
+      return
+    }
+    const attachment = new MessageAttachment(
+      result.attachmentId,
+      AttachmentType.IMAGE,
+      result.fileName,
+      result.filePath,
+      result.mimeType,
+      result.size
+    )
+    attachment.base64Data = ''
+    aiMessage.addAttachment(attachment)
+    onAIMessageUpdated(aiMessage)
   }
 
   // OpenAI Responses 内置搜索引用累积:
@@ -3053,7 +3107,13 @@ ${limitedSearchContext}
               return
             }
             this.handleHostedResponsesToolEvent(aiMessage, event, onAIMessageUpdated)
-          }
+          },
+          this.createAIGeneratedImageFileCallbacks(
+            pendingImageSaves,
+            aiMessage,
+            onAIMessageUpdated,
+            isCancelledFn
+          )
         )
 
         // 更新活跃请求中的 httpRequest 引用(每轮 stream 可能创建新的 httpRequest)。

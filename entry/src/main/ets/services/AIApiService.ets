@@ -11,6 +11,7 @@ import {
   ToolCall,
   OpenAITransport
 } from '../models/ChatModels'
+import { AIGeneratedImageFileResult, AIGeneratedImageFileSink } from '../models/AIGeneratedImageFileModels'
 import { SearchReference } from '../models/SearchReference'
 import {
   AnthropicAuthStrategy,
@@ -27,6 +28,13 @@ import { AttachmentContentService } from './AttachmentContentService'
 import { normalizeCustomHeaderName, parseCustomHeadersMap } from '../utils/CustomHeaderUtils'
 
 const STREAM_DROP_PREFIX_MAX_LEN = 192
+const STREAM_IMAGE_RESULT_SCAN_MAX_LEN = 64 * 1024
+const STREAM_IMAGE_BASE64_CALLBACK_CHARS = 32 * 1024
+
+export interface AIGeneratedImageFileCallbacks {
+  createSink: (mimeType: string) => AIGeneratedImageFileSink | null
+  onFile: (result: AIGeneratedImageFileResult) => void
+}
 
 // URL 解析工具类
 class ApiUrlResolver {
@@ -75,9 +83,26 @@ class StreamLineAccumulator {
   private length: number = 0
   private droppingLine: boolean = false
   private dropOpenAIResponsesLargeLines: boolean = false
+  private imageFileCallbacks?: AIGeneratedImageFileCallbacks
+  private imageMimeType: string = 'image/png'
+  private onHostedImageCompleted?: (itemId: string, outputIndex: number) => void
+  private streamingImageLine: boolean = false
+  private imageSink: AIGeneratedImageFileSink | null = null
+  private imageItemId: string = ''
+  private imageOutputIndex: number = -1
+  private imageBase64Chunk: string = ''
+  private imageEscapePending: boolean = false
 
-  constructor(dropOpenAIResponsesLargeLines: boolean) {
+  constructor(
+    dropOpenAIResponsesLargeLines: boolean,
+    imageFileCallbacks?: AIGeneratedImageFileCallbacks,
+    imageMimeType: string = 'image/png',
+    onHostedImageCompleted?: (itemId: string, outputIndex: number) => void
+  ) {
     this.dropOpenAIResponsesLargeLines = dropOpenAIResponsesLargeLines
+    this.imageFileCallbacks = imageFileCallbacks
+    this.imageMimeType = imageMimeType
+    this.onHostedImageCompleted = onHostedImageCompleted
   }
 
   append(chunk: Uint8Array): Uint8Array[] {
@@ -85,6 +110,7 @@ class StreamLineAccumulator {
     let start = 0
     while (start < chunk.length) {
       const newlineIndex = this.indexOfNewline(chunk, start)
+      const hasLineEnd = newlineIndex >= 0
       const end = newlineIndex >= 0 ? newlineIndex : chunk.length
 
       if (this.droppingLine) {
@@ -97,6 +123,26 @@ class StreamLineAccumulator {
       }
 
       const segment = chunk.subarray(start, end)
+      if (this.streamingImageLine) {
+        const completed = this.consumeImageResultBytes(segment)
+        if (completed && !hasLineEnd) {
+          this.droppingLine = true
+          return lines
+        }
+        if (!completed && !this.streamingImageLine && !hasLineEnd) {
+          this.droppingLine = true
+          return lines
+        }
+        if (hasLineEnd) {
+          if (this.streamingImageLine) {
+            this.abortImageLine('image result line ended before closing quote')
+          }
+          start = newlineIndex + 1
+          continue
+        }
+        return lines
+      }
+
       if (this.segments.length === 0 && this.length === 0 && this.shouldDropLinePrefix(segment)) {
         if (newlineIndex >= 0) {
           start = newlineIndex + 1
@@ -106,14 +152,33 @@ class StreamLineAccumulator {
         return lines
       }
 
+      if (segment.length > 0) {
+        this.segments.push(segment)
+        this.length += segment.length
+      }
+
+      if (this.tryConsumePendingImageResultLine(hasLineEnd)) {
+        if (!hasLineEnd) {
+          return lines
+        }
+        start = newlineIndex + 1
+        continue
+      }
+
+      if (this.shouldDropPendingLine()) {
+        this.clearPending()
+        if (!hasLineEnd) {
+          this.droppingLine = true
+          return lines
+        }
+        start = newlineIndex + 1
+        continue
+      }
+
       if (newlineIndex >= 0) {
         if (this.segments.length === 0) {
           lines.push(segment)
         } else {
-          if (segment.length > 0) {
-            this.segments.push(segment)
-            this.length += segment.length
-          }
           const line = this.mergeSegments()
           this.clearPending()
           lines.push(line)
@@ -122,20 +187,16 @@ class StreamLineAccumulator {
         continue
       }
 
-      if (segment.length > 0) {
-        this.segments.push(segment)
-        this.length += segment.length
-        if (this.shouldDropPendingLine()) {
-          this.clearPending()
-          this.droppingLine = true
-        }
-      }
       return lines
     }
     return lines
   }
 
   flush(): Uint8Array | null {
+    if (this.streamingImageLine) {
+      this.abortImageLine('stream ended before image result completed')
+      return null
+    }
     if (this.droppingLine) {
       this.droppingLine = false
       this.clearPending()
@@ -144,9 +205,198 @@ class StreamLineAccumulator {
     if (this.length === 0) {
       return null
     }
+    if (this.tryConsumePendingImageResultLine(true)) {
+      return null
+    }
     const line = this.mergeSegments()
     this.clearPending()
     return line
+  }
+
+  abortActiveImageFile(): void {
+    if (this.streamingImageLine || this.imageSink !== null) {
+      this.abortImageLine('stream aborted')
+    }
+  }
+
+  private tryConsumePendingImageResultLine(lineEnded: boolean): boolean {
+    if (!this.dropOpenAIResponsesLargeLines || this.imageFileCallbacks === undefined || this.length < 32) {
+      return false
+    }
+    const scanBytes = this.length > STREAM_IMAGE_RESULT_SCAN_MAX_LEN ?
+      this.getPendingPrefixBytes(STREAM_IMAGE_RESULT_SCAN_MAX_LEN) :
+      this.mergeSegments()
+    const resultStart = this.findJsonStringValueStartBytes(scanBytes, 'result', 0)
+    if (resultStart < 0) {
+      if (!lineEnded && this.length >= STREAM_IMAGE_RESULT_SCAN_MAX_LEN &&
+        this.isLikelyResponsesImageDonePrefix(scanBytes)) {
+        console.warn('AIApiService', 'Dropping oversized image_generation line before result field was found')
+        this.clearPending()
+        this.droppingLine = true
+        return true
+      }
+      return false
+    }
+    if (this.indexOfAsciiPattern(scanBytes, 'response.output_item.done', 0, resultStart) < 0 ||
+      this.indexOfAsciiPattern(scanBytes, 'image_generation_call', 0, resultStart) < 0) {
+      return false
+    }
+
+    const sink = this.imageFileCallbacks.createSink(this.imageMimeType)
+    if (sink === null) {
+      return false
+    }
+    this.imageSink = sink
+    this.streamingImageLine = true
+    this.imageBase64Chunk = ''
+    this.imageEscapePending = false
+    this.imageItemId = this.readStringBefore(scanBytes, 'id', resultStart)
+    this.imageOutputIndex = this.findJsonNumberValueBeforeBytes(scanBytes, 'output_index', resultStart)
+
+    const completed = this.consumePendingBytesFrom(resultStart)
+    this.clearPending()
+    if (completed && !lineEnded) {
+      this.droppingLine = true
+    }
+    if (!completed && !this.streamingImageLine && !lineEnded) {
+      this.droppingLine = true
+    }
+    if (lineEnded && this.streamingImageLine) {
+      this.abortImageLine('image result line ended before closing quote')
+    }
+    return true
+  }
+
+  private consumePendingBytesFrom(startOffset: number): boolean {
+    let offset = 0
+    for (let i = 0; i < this.segments.length; i++) {
+      const segment = this.segments[i]
+      const nextOffset = offset + segment.length
+      if (nextOffset <= startOffset) {
+        offset = nextOffset
+        continue
+      }
+      const localStart = Math.max(0, startOffset - offset)
+      const completed = this.consumeImageResultBytes(segment.subarray(localStart))
+      if (completed) {
+        return true
+      }
+      offset = nextOffset
+    }
+    return false
+  }
+
+  private consumeImageResultBytes(bytes: Uint8Array): boolean {
+    for (let i = 0; i < bytes.length; i++) {
+      const byte = bytes[i]
+      if (this.imageEscapePending) {
+        this.imageEscapePending = false
+        if (byte === 47 || byte === 43 || byte === 61 || this.isBase64Byte(byte)) {
+          if (!this.appendImageBase64Byte(byte)) {
+            return false
+          }
+        } else if (byte === 110 || byte === 114 || byte === 116) {
+          // Escaped whitespace is ignored; OpenAI normally does not emit it, but this keeps proxies tolerant.
+        } else {
+          this.abortImageLine('unsupported escape in image result')
+          return false
+        }
+        continue
+      }
+
+      if (byte === 34) {
+        if (!this.flushImageBase64Chunk()) {
+          return false
+        }
+        return this.completeImageFile()
+      }
+      if (byte === 92) {
+        this.imageEscapePending = true
+        continue
+      }
+      if (this.isJsonWhitespaceByte(byte)) {
+        continue
+      }
+      if (!this.isBase64Byte(byte) && byte !== 43 && byte !== 47 && byte !== 61) {
+        this.abortImageLine('invalid byte in image result')
+        return false
+      }
+      if (!this.appendImageBase64Byte(byte)) {
+        return false
+      }
+    }
+    return false
+  }
+
+  private appendImageBase64Byte(byte: number): boolean {
+    this.imageBase64Chunk += String.fromCharCode(byte)
+    if (this.imageBase64Chunk.length >= STREAM_IMAGE_BASE64_CALLBACK_CHARS) {
+      return this.flushImageBase64Chunk()
+    }
+    return true
+  }
+
+  private flushImageBase64Chunk(): boolean {
+    if (this.imageBase64Chunk === '') {
+      return true
+    }
+    const sink = this.imageSink
+    if (sink === null) {
+      this.abortImageLine('image sink missing')
+      return false
+    }
+    try {
+      sink.appendBase64Chunk(this.imageBase64Chunk)
+      this.imageBase64Chunk = ''
+      return true
+    } catch (error) {
+      console.error('AIApiService', `Failed to write image base64 chunk: ${JSON.stringify(error)}`)
+      this.abortImageLine('image sink write failed')
+      return false
+    }
+  }
+
+  private completeImageFile(): boolean {
+    const sink = this.imageSink
+    const callbacks = this.imageFileCallbacks
+    if (sink === null || callbacks === undefined) {
+      this.abortImageLine('image sink missing at completion')
+      return false
+    }
+    try {
+      const result = sink.complete(this.imageItemId, this.imageOutputIndex)
+      callbacks.onFile(result)
+      if (this.onHostedImageCompleted !== undefined) {
+        this.onHostedImageCompleted(this.imageItemId, this.imageOutputIndex)
+      }
+      this.resetImageLineState()
+      return true
+    } catch (error) {
+      console.error('AIApiService', `Failed to complete generated image file: ${JSON.stringify(error)}`)
+      this.abortImageLine('image sink completion failed')
+      return false
+    }
+  }
+
+  private abortImageLine(reason: string): void {
+    console.warn('AIApiService', `Abort streaming image result: ${reason}`)
+    if (this.imageSink !== null) {
+      try {
+        this.imageSink.abort()
+      } catch (_e) {
+        // ignore cleanup failures
+      }
+    }
+    this.resetImageLineState()
+  }
+
+  private resetImageLineState(): void {
+    this.streamingImageLine = false
+    this.imageSink = null
+    this.imageItemId = ''
+    this.imageOutputIndex = -1
+    this.imageBase64Chunk = ''
+    this.imageEscapePending = false
   }
 
   private shouldDropLinePrefix(segment: Uint8Array): boolean {
@@ -177,6 +427,13 @@ class StreamLineAccumulator {
       prefix.includes('"type": "response.completed"') ||
       prefix.includes('"type":"response.image_generation_call.partial_image"') ||
       prefix.includes('"type": "response.image_generation_call.partial_image"')
+  }
+
+  private isLikelyResponsesImageDonePrefix(prefixBytes: Uint8Array): boolean {
+    const prefix = this.bytesToAsciiString(prefixBytes).trimStart()
+    return prefix.startsWith('data:') &&
+      prefix.includes('response.output_item.done') &&
+      prefix.includes('image_generation_call')
   }
 
   private bytesToAsciiString(bytes: Uint8Array): string {
@@ -226,6 +483,145 @@ class StreamLineAccumulator {
   private clearPending(): void {
     this.segments = []
     this.length = 0
+  }
+
+  private readStringBefore(bytes: Uint8Array, key: string, beforeIndex: number): string {
+    const valueStart = this.findJsonStringValueStartBeforeBytes(bytes, key, beforeIndex)
+    if (valueStart < 0) {
+      return ''
+    }
+    const valueEnd = this.indexOfByte(bytes, 34, valueStart)
+    if (valueEnd <= valueStart) {
+      return ''
+    }
+    return this.bytesToAsciiString(bytes.subarray(valueStart, valueEnd))
+  }
+
+  private indexOfByte(bytes: Uint8Array, target: number, fromIndex: number): number {
+    for (let i = Math.max(0, fromIndex); i < bytes.length; i++) {
+      if (bytes[i] === target) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private indexOfAsciiPattern(bytes: Uint8Array, pattern: string, fromIndex: number, beforeIndex: number): number {
+    if (pattern.length === 0) {
+      return -1
+    }
+    const start = Math.max(0, fromIndex)
+    const limit = Math.min(beforeIndex, bytes.length) - pattern.length
+    const first = pattern.charCodeAt(0)
+    for (let i = start; i <= limit; i++) {
+      if (bytes[i] !== first) {
+        continue
+      }
+      let matched = true
+      for (let j = 1; j < pattern.length; j++) {
+        if (bytes[i + j] !== pattern.charCodeAt(j)) {
+          matched = false
+          break
+        }
+      }
+      if (matched) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private findJsonStringValueStartBytes(bytes: Uint8Array, key: string, fromIndex: number): number {
+    let searchIndex = fromIndex
+    const keyPattern = `"${key}"`
+    while (searchIndex < bytes.length) {
+      const keyIndex = this.indexOfAsciiPattern(bytes, keyPattern, searchIndex, bytes.length)
+      if (keyIndex < 0) {
+        return -1
+      }
+      const valueStart = this.findJsonValueStartAfterKeyBytes(bytes, keyIndex + keyPattern.length)
+      if (valueStart >= 0 && bytes[valueStart] === 34) {
+        return valueStart + 1
+      }
+      searchIndex = keyIndex + keyPattern.length
+    }
+    return -1
+  }
+
+  private findJsonStringValueStartBeforeBytes(bytes: Uint8Array, key: string, beforeIndex: number): number {
+    let searchIndex = 0
+    let result = -1
+    while (searchIndex < beforeIndex) {
+      const found = this.findJsonStringValueStartBytes(bytes, key, searchIndex)
+      if (found < 0 || found >= beforeIndex) {
+        return result
+      }
+      result = found
+      searchIndex = found + 1
+    }
+    return result
+  }
+
+  private findJsonNumberValueBeforeBytes(bytes: Uint8Array, key: string, beforeIndex: number): number {
+    let searchIndex = 0
+    let result = -1
+    while (searchIndex < beforeIndex) {
+      const keyPattern = `"${key}"`
+      const keyIndex = this.indexOfAsciiPattern(bytes, keyPattern, searchIndex, beforeIndex)
+      if (keyIndex < 0) {
+        return result
+      }
+      const valueStart = this.findJsonValueStartAfterKeyBytes(bytes, keyIndex + keyPattern.length)
+      if (valueStart >= 0 && valueStart < beforeIndex) {
+        const parsed = this.parseJsonNumberAtBytes(bytes, valueStart, beforeIndex)
+        if (parsed >= 0) {
+          result = parsed
+        }
+      }
+      searchIndex = keyIndex + keyPattern.length
+    }
+    return result
+  }
+
+  private findJsonValueStartAfterKeyBytes(bytes: Uint8Array, fromIndex: number): number {
+    let index = fromIndex
+    while (index < bytes.length && this.isJsonWhitespaceByte(bytes[index])) {
+      index++
+    }
+    if (index >= bytes.length || bytes[index] !== 58) {
+      return -1
+    }
+    index++
+    while (index < bytes.length && this.isJsonWhitespaceByte(bytes[index])) {
+      index++
+    }
+    return index < bytes.length ? index : -1
+  }
+
+  private parseJsonNumberAtBytes(bytes: Uint8Array, fromIndex: number, beforeIndex: number): number {
+    let index = fromIndex
+    let value = 0
+    let hasDigit = false
+    while (index < beforeIndex) {
+      const byte = bytes[index]
+      if (byte < 48 || byte > 57) {
+        break
+      }
+      value = value * 10 + byte - 48
+      hasDigit = true
+      index++
+    }
+    return hasDigit ? value : -1
+  }
+
+  private isJsonWhitespaceByte(byte: number): boolean {
+    return byte === 32 || byte === 9 || byte === 10 || byte === 13
+  }
+
+  private isBase64Byte(byte: number): boolean {
+    return (byte >= 48 && byte <= 57) ||
+      (byte >= 65 && byte <= 90) ||
+      (byte >= 97 && byte <= 122)
   }
 }
 
@@ -1096,17 +1492,6 @@ export class AIApiService {
     return incrementalContent
   }
 
-  private getImageMimeTypeForOutputFormat(format: string): string {
-    const normalized = format.toLowerCase()
-    if (normalized === 'jpeg' || normalized === 'jpg') {
-      return 'image/jpeg'
-    }
-    if (normalized === 'webp') {
-      return 'image/webp'
-    }
-    return 'image/png'
-  }
-
   private tryEmitResponsesImageDoneLine(
     jsonStr: string,
     onImageData?: (base64Data: string, mimeType: string, isPartial: boolean) => void,
@@ -1553,40 +1938,9 @@ export class AIApiService {
         } else if (spec.kind === BuiltInResponsesToolKind.IMAGE_GENERATION) {
           const tool: OpenAIResponsesTool = { type: 'image_generation' }
           tool.model = spec.imageModel !== undefined && spec.imageModel !== '' ? spec.imageModel : 'gpt-image-2'
-          if (spec.imageSize !== undefined && spec.imageSize !== '') {
-            tool.size = spec.imageSize
-          }
-          if (spec.imageQuality !== undefined && spec.imageQuality !== '') {
-            tool.quality = spec.imageQuality
-          }
-          if (spec.imageOutputFormat !== undefined && spec.imageOutputFormat !== '') {
-            tool.output_format = spec.imageOutputFormat
-          }
-          if (tool.output_format !== undefined && tool.output_format !== '') {
-            const normalizedOutputFormat = tool.output_format.toLowerCase()
-            if (spec.imageOutputCompression !== undefined &&
-              (normalizedOutputFormat === 'jpeg' || normalizedOutputFormat === 'webp')) {
-              tool.output_compression = Math.max(0, Math.min(100, Math.round(spec.imageOutputCompression)))
-            }
-            this.currentResponsesHostedImageMimeType = this.getImageMimeTypeForOutputFormat(normalizedOutputFormat)
-          } else {
-            this.currentResponsesHostedImageMimeType = 'image/png'
-          }
-          if (spec.imageBackground !== undefined && spec.imageBackground !== '') {
-            tool.background = spec.imageBackground
-          }
-          // 与 RikkaHub 保持一致: 默认不传 partial_images, 让 OpenAI 使用官方默认值。
-          // 如果调用方显式设置, 才透传 0-3; 流解析侧仍会丢弃 partial_image 大行兜底防 OOM。
-          let partialLog = 'default'
-          if (spec.imagePartialImages !== undefined && spec.imagePartialImages >= 0) {
-            const partial = Math.min(3, Math.round(spec.imagePartialImages))
-            tool.partial_images = partial
-            partialLog = `${partial}`
-          }
+          this.currentResponsesHostedImageMimeType = 'image/png'
           console.info('AIApiService',
-            `[Responses] image_generation tool: model=${tool.model}, partial_images=${partialLog}, size=${tool.size ?? 'auto'}, ` +
-            `quality=${tool.quality ?? 'auto'}, format=${tool.output_format ?? 'png'}, ` +
-            `compression=${tool.output_compression ?? 'auto'}`)
+            `[Responses] image_generation tool: model=${tool.model}, request=minimal_rikkahub`)
           responseTools.push(tool)
         }
       }
@@ -3437,7 +3791,8 @@ export class AIApiService {
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,  // 推理级别参数
     builtInResponsesTools?: BuiltInResponsesToolSpec[],
     onSearchReferences?: (references: SearchReference[]) => void,
-    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void,
+    imageFileCallbacks?: AIGeneratedImageFileCallbacks
   ): http.HttpRequest {
     this.resetThinkingState()
 
@@ -3472,7 +3827,14 @@ export class AIApiService {
     console.info('AIApiService', `Streaming request to: ${url}`)
     console.info('AIApiService', `Request body: ${JSON.stringify(requestBody).substring(0, 500)}...`)
 
-    const lineAccumulator = new StreamLineAccumulator(useOpenAIResponses)
+    const lineAccumulator = new StreamLineAccumulator(
+      useOpenAIResponses,
+      imageFileCallbacks,
+      this.currentResponsesHostedImageMimeType,
+      (itemId: string, outputIndex: number) => {
+        this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+      }
+    )
 
     return this.httpService.streamPost(
       url,
@@ -3496,6 +3858,7 @@ export class AIApiService {
             onData, onError, onReasoningData, onImageData, onSearchReferences, onHostedToolEvent)
         }
         if (!response.success) {
+          lineAccumulator.abortActiveImageFile()
           console.error('AIApiService', `Stream response error: ${response.errorMessage}`)
           onError(response.errorMessage)
           return
@@ -3504,6 +3867,7 @@ export class AIApiService {
         onComplete()
       },
       (error) => {
+        lineAccumulator.abortActiveImageFile()
         console.error('AIApiService', `Stream error: ${error}`)
         onError(error)
       }
@@ -3528,7 +3892,8 @@ export class AIApiService {
     onToolCallDelta?: (toolCallDeltas: ToolCallDelta[]) => void,
     builtInResponsesTools?: BuiltInResponsesToolSpec[],
     onSearchReferences?: (references: SearchReference[]) => void,
-    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void
+    onHostedToolEvent?: (event: HostedResponsesToolEvent) => void,
+    imageFileCallbacks?: AIGeneratedImageFileCallbacks
   ): http.HttpRequest {
     this.resetThinkingState()
 
@@ -3562,7 +3927,14 @@ export class AIApiService {
     console.info('AIApiService', `Streaming request with tools to: ${url}`)
     console.info('AIApiService', `Request body: ${JSON.stringify(requestBody).substring(0, 500)}...`)
 
-    const lineAccumulator = new StreamLineAccumulator(useOpenAIResponses)
+    const lineAccumulator = new StreamLineAccumulator(
+      useOpenAIResponses,
+      imageFileCallbacks,
+      this.currentResponsesHostedImageMimeType,
+      (itemId: string, outputIndex: number) => {
+        this.emitHostedImageGenerationCompleted(itemId, outputIndex, onHostedToolEvent)
+      }
+    )
 
     return this.httpService.streamPost(
       url,
@@ -3586,6 +3958,7 @@ export class AIApiService {
             onData, onError, onReasoningData, onImageData, onToolCallDelta, onSearchReferences, onHostedToolEvent)
         }
         if (!response.success) {
+          lineAccumulator.abortActiveImageFile()
           console.error('AIApiService', `Stream response error: ${response.errorMessage}`)
           onError(response.errorMessage)
           return
@@ -3595,6 +3968,7 @@ export class AIApiService {
         onComplete(accumulatedToolCalls)
       },
       (error) => {
+        lineAccumulator.abortActiveImageFile()
         console.error('AIApiService', `Stream error: ${error}`)
         onError(error)
       }
