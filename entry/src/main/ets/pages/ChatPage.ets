@@ -2931,7 +2931,10 @@ export struct ChatPage {
         }
       }
       .margin({ bottom: 24 + this.px2vp(this.bottomAvoidHeight) })
-      .hitTestBehavior(HitTestMode.Block)
+      .hitTestBehavior(HitTestMode.Default)
+      .onTouch((event: TouchEvent): void => {
+        event.stopPropagation()
+      })
     }
     .width('100%')
     .height('100%')
