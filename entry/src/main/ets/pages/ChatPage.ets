@@ -4,7 +4,8 @@ import {
   DefaultMediaModel,
   DefaultMediaType,
   MediaPreview,
-  MediaPreviewOptions
+  MediaPreviewOptions,
+  PromptActionTool
 } from '@lyb/media-preview'
 import {
   HdsNavDestination,
@@ -215,6 +216,7 @@ export struct ChatPage {
   @Local isImagePreviewSharing: boolean = false
   private previewImageSourceIds: Array<string> = []
   private imagePreviewDialogId: string = ''
+  private imagePreviewOptions: MediaPreviewOptions<DefaultMediaModel> | null = null
   @Local showMessageWebSheet: boolean = false
   @Local messageWebSheetUrl: string = ''
   @Local messageWebSheetTitle: string = ''
@@ -2663,7 +2665,9 @@ export struct ChatPage {
     .onHidden(() => {
       this.isPageVisible = false
       this.resetDocumentParseQueue()
-      this.closeActiveChatImagePreview(false)
+      if (!this.isImagePreviewSharing) {
+        this.closeActiveChatImagePreview(false)
+      }
       if (this.isMultiSelectMode) {
         this.handleExitMultiSelectMode()
       }
@@ -2794,6 +2798,8 @@ export struct ChatPage {
       .setMaxScale(4)
       .setDuration(260)
     this.imagePreviewDialogId = MediaPreview.open(this.getUIContext(), options)
+    options.dialogId = this.imagePreviewDialogId
+    this.imagePreviewOptions = options
   }
 
   private closeActiveChatImagePreview(animated: boolean): void {
@@ -2814,6 +2820,7 @@ export struct ChatPage {
     this.previewImageIndex = 0
     this.previewImageSourceIds = []
     this.imagePreviewDialogId = ''
+    this.imagePreviewOptions = null
     this.isImagePreviewSaving = false
     this.isImagePreviewSharing = false
     this.updateStatusBar()
@@ -2862,6 +2869,7 @@ export struct ChatPage {
     }
 
     this.isImagePreviewSharing = true
+    this.setChatImagePreviewSystemBackEnabled(false)
     try {
       const imagePath = await preparePreviewImageForShare(
         hostContext as common.UIAbilityContext,
@@ -2877,7 +2885,21 @@ export struct ChatPage {
       hilog.error(DOMAIN, TAG, 'Share preview image failed: %{public}s', JSON.stringify(error))
       this.showChatSnack($r('app.string.share_failed'), 2000, SnackBarTone.ERROR)
     } finally {
+      this.setChatImagePreviewSystemBackEnabled(true)
       this.isImagePreviewSharing = false
+    }
+  }
+
+  private setChatImagePreviewSystemBackEnabled(enabled: boolean): void {
+    if (this.imagePreviewOptions === null || this.imagePreviewDialogId === '') {
+      return
+    }
+    try {
+      this.imagePreviewOptions.dialogId = this.imagePreviewDialogId
+      this.imagePreviewOptions.setDismissOnSystemBack(enabled)
+      PromptActionTool.updateCustomDialog(this.imagePreviewOptions)
+    } catch (error) {
+      hilog.warn(DOMAIN, TAG, 'Update preview system back failed: %{public}s', JSON.stringify(error))
     }
   }
 

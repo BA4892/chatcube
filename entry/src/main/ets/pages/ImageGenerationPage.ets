@@ -6,7 +6,8 @@ import {
   DefaultMediaModel,
   DefaultMediaType,
   MediaPreview,
-  MediaPreviewOptions
+  MediaPreviewOptions,
+  PromptActionTool
 } from '@lyb/media-preview'
 import { ModelProvider } from '../models/ChatModels'
 import {
@@ -54,6 +55,7 @@ struct ImageGenerationPage {
   @Local isPreviewSharing: boolean = false
   @Local isPreviewPreparingEdit: boolean = false
   private previewDialogId: string = ''
+  private previewOptions: MediaPreviewOptions<DefaultMediaModel> | null = null
   private previewSourceItems: GeneratedMedia[] = []
   private swiperController: SwiperController = new SwiperController()
 
@@ -86,7 +88,9 @@ struct ImageGenerationPage {
 
   aboutToDisappear(): void {
     AppStorage.setOrCreate(AppStorageKeys.ACTIVE_IMAGE_GENERATION_PAGE, false)
-    this.closeActivePreviewWithoutAnimation()
+    if (!this.isPreviewSharing) {
+      this.closeActivePreviewWithoutAnimation()
+    }
     if (imageGenerationBackHandler !== null) {
       imageGenerationBackHandler = null
     }
@@ -295,6 +299,8 @@ struct ImageGenerationPage {
     this.previewCurrentIndex = previewIndex
     this.isPreviewOpen = true
     this.previewDialogId = MediaPreview.open(this.getUIContext(), previewOptions)
+    previewOptions.dialogId = this.previewDialogId
+    this.previewOptions = previewOptions
   }
 
   private openReferenceImagePreview(index: number): void {
@@ -346,11 +352,14 @@ struct ImageGenerationPage {
     this.previewCurrentIndex = previewIndex
     this.isPreviewOpen = true
     this.previewDialogId = MediaPreview.open(this.getUIContext(), previewOptions)
+    previewOptions.dialogId = this.previewDialogId
+    this.previewOptions = previewOptions
   }
 
   private handlePreviewClosed(): void {
     this.isPreviewOpen = false
     this.previewDialogId = ''
+    this.previewOptions = null
     this.isPreviewSaving = false
     this.isPreviewSharing = false
     this.isPreviewPreparingEdit = false
@@ -363,6 +372,7 @@ struct ImageGenerationPage {
       MediaPreview.close({ dialogId: this.previewDialogId, animated: false })
     }
     this.previewDialogId = ''
+    this.previewOptions = null
     this.isPreviewOpen = false
     this.previewCurrentIndex = 0
     this.previewSourceItems = []
@@ -408,10 +418,25 @@ struct ImageGenerationPage {
       return
     }
     this.isPreviewSharing = true
+    this.setPreviewSystemBackEnabled(false)
     try {
       await this.shareMedia(this.previewSourceItems[this.previewCurrentIndex])
     } finally {
+      this.setPreviewSystemBackEnabled(true)
       this.isPreviewSharing = false
+    }
+  }
+
+  private setPreviewSystemBackEnabled(enabled: boolean): void {
+    if (this.previewOptions === null || this.previewDialogId === '') {
+      return
+    }
+    try {
+      this.previewOptions.dialogId = this.previewDialogId
+      this.previewOptions.setDismissOnSystemBack(enabled)
+      PromptActionTool.updateCustomDialog(this.previewOptions)
+    } catch (error) {
+      console.warn('ImageGenerationPage', `Update preview system back failed: ${JSON.stringify(error)}`)
     }
   }
 
