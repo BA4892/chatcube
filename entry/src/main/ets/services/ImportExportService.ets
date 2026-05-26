@@ -44,6 +44,7 @@ import { getSearchEngineRegistry, registerAllSearchEngines } from './search/Inde
 import { GeneratedMedia } from '../models/ImageGenerationModels'
 
 const ASSISTANT_AVATAR_EXPORT_DIR: string = 'assistant_avatars'
+const PROVIDER_ICON_EXPORT_DIR: string = 'provider_icons'
 const GENERATED_MEDIA_EXPORT_DIR: string = 'generated_media'
 const GENERATED_MEDIA_IMAGES_EXPORT_DIR: string = 'images'
 
@@ -119,6 +120,7 @@ export interface ProviderExportData {
   textIcon: string
   textIconBgColor: string
   customImagePath: string
+  providerIconFileName?: string
 }
 
 export interface AssistantExportData {
@@ -829,8 +831,8 @@ export class ImportExportService {
       }
     }
 
-    // 写入供应商数据
     if (options.includeProviders && providers.length > 0) {
+      await this.writeProviderIconFiles(tempDir, providers)
       this.writeTextFile(`${tempDir}/providers.json`, JSON.stringify(providers, null, 2))
     }
 
@@ -1213,7 +1215,7 @@ export class ImportExportService {
     if (options.importProviders && importData.providers.length > 0) {
       const sortedProviders = this.sortImportedProviders(importData.providers)
       for (const providerData of sortedProviders) {
-        await this.importProvider(providerData)
+        await this.importProvider(providerData, tempDir)
       }
       await this.restoreProviderOrder(sortedProviders)
     }
@@ -1275,7 +1277,7 @@ export class ImportExportService {
     }
   }
 
-  private async importProvider(providerData: ProviderExportData): Promise<void> {
+  private async importProvider(providerData: ProviderExportData, tempDir: string): Promise<void> {
     // 解析 modelsJson 为 ModelInfo 数组
     let models: ModelInfo[] = []
     try {
@@ -1329,7 +1331,7 @@ export class ImportExportService {
     provider.iconType = iconType
     provider.textIcon = providerData.textIcon
     provider.textIconBgColor = providerData.textIconBgColor
-    provider.customImagePath = providerData.customImagePath
+    provider.customImagePath = await this.resolveImportedProviderIconPath(providerData, tempDir)
     provider.models = models
 
     // 保存到数据库
@@ -1447,6 +1449,16 @@ export class ImportExportService {
     }
   }
 
+  private isLocalProviderIconPath(value: string): boolean {
+    const trimmed = value.trim()
+    if (trimmed === '') {
+      return false
+    }
+    const lower = trimmed.toLowerCase()
+    return lower.startsWith('file://') || (!lower.startsWith('http://') && !lower.startsWith('https://') &&
+      !lower.startsWith('data:'))
+  }
+
   private sanitizeFileName(value: string): string {
     const safeName = value.trim().replace(/[^0-9A-Za-z._-]/g, '_').replace(/\.\./g, '_')
     if (safeName === '' || safeName === '.' || safeName === '..') {
@@ -1467,6 +1479,88 @@ export class ImportExportService {
       fileIo.mkdirSync(dirPath, true)
     } catch (error) {
       console.warn('ImportExportService', `Directory may already exist: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private isLocalProviderIcon(provider: ProviderExportData): boolean {
+    return provider.iconType === ProviderIconType.IMAGE && provider.customImagePath !== '' &&
+      this.isLocalProviderIconPath(provider.customImagePath)
+  }
+
+  private buildExportedProviderIconFileName(provider: ProviderExportData): string {
+    const sourcePath = this.getPathFromFileUri(provider.customImagePath)
+    const ext = this.getExtension(sourcePath.split('?')[0])
+    const baseName = this.sanitizeFileName(provider.id !== '' ? provider.id : provider.name)
+    return `${baseName}${ext !== '' ? ext : '.jpg'}`
+  }
+
+  private async writeProviderIconFiles(tempDir: string, providers: ProviderExportData[]): Promise<void> {
+    let iconDirReady = false
+    const iconDir = `${tempDir}/${PROVIDER_ICON_EXPORT_DIR}`
+    for (const provider of providers) {
+      if (!this.isLocalProviderIcon(provider)) {
+        continue
+      }
+      const sourcePath = this.getPathFromFileUri(provider.customImagePath)
+      let sourceExists = false
+      try {
+        sourceExists = fileIo.accessSync(sourcePath)
+      } catch (error) {
+        console.warn('ImportExportService', `Provider icon access failed: ${JSON.stringify(error)}`)
+        sourceExists = false
+      }
+      if (!sourceExists) {
+        continue
+      }
+      if (!iconDirReady) {
+        this.ensureDirectory(iconDir)
+        iconDirReady = true
+      }
+      const fileName = this.buildExportedProviderIconFileName(provider)
+      try {
+        await fileIo.copyFile(sourcePath, `${iconDir}/${fileName}`)
+        provider.providerIconFileName = fileName
+      } catch (error) {
+        console.warn('ImportExportService', `Failed to export provider icon: ${JSON.stringify(error)}`)
+      }
+    }
+  }
+
+  private async resolveImportedProviderIconPath(providerData: ProviderExportData, tempDir: string): Promise<string> {
+    const fallbackIcon = providerData.customImagePath !== undefined ? providerData.customImagePath : ''
+    if (providerData.iconType !== ProviderIconType.IMAGE) {
+      return fallbackIcon
+    }
+    const iconFileName = providerData.providerIconFileName !== undefined ?
+      this.sanitizeFileName(providerData.providerIconFileName) : ''
+    if (iconFileName === '' || this.context === null) {
+      return fallbackIcon
+    }
+
+    const sourcePath = `${tempDir}/${PROVIDER_ICON_EXPORT_DIR}/${iconFileName}`
+    let sourceExists = false
+    try {
+      sourceExists = fileIo.accessSync(sourcePath)
+    } catch (error) {
+      console.warn('ImportExportService', `Imported provider icon access failed: ${JSON.stringify(error)}`)
+      sourceExists = false
+    }
+    if (!sourceExists) {
+      return fallbackIcon
+    }
+
+    const iconDir = `${this.context.filesDir}/${PROVIDER_ICON_EXPORT_DIR}`
+    this.ensureDirectory(iconDir)
+    const ext = this.getExtension(iconFileName)
+    const providerId = this.sanitizeFileName(providerData.id !== '' ? providerData.id : providerData.name)
+    const targetPath =
+      `${iconDir}/icon_${providerId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext !== '' ? ext : '.jpg'}`
+    try {
+      await fileIo.copyFile(sourcePath, targetPath)
+      return fileUri.getUriFromPath(targetPath)
+    } catch (error) {
+      console.warn('ImportExportService', `Failed to import provider icon: ${JSON.stringify(error)}`)
+      return fallbackIcon
     }
   }
 
