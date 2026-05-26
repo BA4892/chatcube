@@ -6,7 +6,7 @@ export enum ColorTheme {
   VIOLET = 'violet',        // 雾紫
   MINT = 'mint',            // 松雾绿
   NOTION = 'notion',        // Notion 极简
-  CLASSIC_BLUE = 'classic_blue', // 经典复刻
+  HARMONY_NATIVE = 'classic_blue', // 鸿蒙原生，保留旧存储值
   OBSIDIAN = 'obsidian'     // 曜石灰
 }
 
@@ -390,59 +390,59 @@ const NOTION_THEME: ThemeInfo = {
   }
 }
 
-// 经典复刻主题：纯白/纯黑底盘，复刻早期默认鸿蒙主色和蓝灰气泡。
-const CLASSIC_BLUE_THEME: ThemeInfo = {
-  id: ColorTheme.CLASSIC_BLUE,
-  nameKey: 'theme_color_classic_blue',
-  descriptionKey: 'theme_color_classic_blue_desc',
-  previewColors: ['#FFFFFF', '#E8EEF2', '#4E6F9E', '#5A7597'],
+// 鸿蒙原生主题：参考 HarmonyOS NEXT 系统 Token 的宇宙蓝与雪域灰。
+const HARMONY_NATIVE_THEME: ThemeInfo = {
+  id: ColorTheme.HARMONY_NATIVE,
+  nameKey: 'theme_color_harmony_native',
+  descriptionKey: 'theme_color_harmony_native_desc',
+  previewColors: ['#FFFFFF', '#F1F3F5', '#0A59F7', '#317AF7'],
   light: {
-    primary: '#4E6F9E',
-    primaryLight: '#E8EEF2',
+    primary: '#0A59F7',
+    primaryLight: '#190A59F7',
     background: '#FFFFFF',
     surface: '#FFFFFF',
-    divider: '#E5E7EB',
-    userBubble: '#5A7597',
+    divider: '#33000000',
+    userBubble: '#0A59F7',
     userBubbleText: '#FFFFFF',
     aiBubble: '#FFFFFF',
-    textPrimary: '#111827',
-    textSecondary: '#4B5563',
-    textTertiary: '#8B95A1',
-    markdownTitle: '#111827',
-    markdownText: '#2F3A46',
-    markdownLink: '#4E6F9E',
+    textPrimary: '#E5000000',
+    textSecondary: '#99000000',
+    textTertiary: '#66000000',
+    markdownTitle: '#E5000000',
+    markdownText: '#E5000000',
+    markdownLink: '#0A59F7',
     markdownLinkBg: '#00000000',
-    markdownCodeBg: '#F3F4F6',
-    markdownCodeText: '#6D4F3F',
-    markdownQuoteBg: '#F7F8FA',
+    markdownCodeBg: '#F1F3F5',
+    markdownCodeText: '#1F2937',
+    markdownQuoteBg: '#F1F3F5',
     markdownTableBg: '#FFFFFF',
-    markdownTableHeaderBg: '#F3F4F6',
-    markdownTableAltBg: '#FAFAFB',
-    markdownTableBorder: '#E5E7EB'
+    markdownTableHeaderBg: '#F1F3F5',
+    markdownTableAltBg: '#F7F8FA',
+    markdownTableBorder: '#33000000'
   },
   dark: {
-    primary: '#7FA2CC',
-    primaryLight: '#1D2B3A',
+    primary: '#317AF7',
+    primaryLight: '#19317AF7',
     background: '#000000',
-    surface: '#101010',
-    divider: '#2A2A2A',
-    userBubble: '#4F6886',
-    userBubbleText: '#F7FAFD',
-    aiBubble: '#101010',
-    textPrimary: '#F5F5F5',
-    textSecondary: '#C2C7D0',
-    textTertiary: '#858B94',
-    markdownTitle: '#F5F5F5',
-    markdownText: '#E5E7EB',
-    markdownLink: '#9CBFE8',
+    surface: '#202224',
+    divider: '#33FFFFFF',
+    userBubble: '#317AF7',
+    userBubbleText: '#FFFFFF',
+    aiBubble: '#202224',
+    textPrimary: '#E5FFFFFF',
+    textSecondary: '#99FFFFFF',
+    textTertiary: '#66FFFFFF',
+    markdownTitle: '#E5FFFFFF',
+    markdownText: '#E5FFFFFF',
+    markdownLink: '#317AF7',
     markdownLinkBg: '#00000000',
-    markdownCodeBg: '#181818',
-    markdownCodeText: '#D7C4A9',
-    markdownQuoteBg: '#181818',
-    markdownTableBg: '#101010',
-    markdownTableHeaderBg: '#181818',
-    markdownTableAltBg: '#141414',
-    markdownTableBorder: '#2A2A2A'
+    markdownCodeBg: '#191A1C',
+    markdownCodeText: '#E5FFFFFF',
+    markdownQuoteBg: '#191A1C',
+    markdownTableBg: '#202224',
+    markdownTableHeaderBg: '#191A1C',
+    markdownTableAltBg: '#2E3033',
+    markdownTableBorder: '#33FFFFFF'
   }
 }
 
@@ -510,7 +510,7 @@ export const ALL_THEMES: ThemeInfo[] = [
   MINT_THEME,
   VIOLET_THEME,
   NOTION_THEME,
-  CLASSIC_BLUE_THEME,
+  HARMONY_NATIVE_THEME,
   OBSIDIAN_THEME
 ]
 

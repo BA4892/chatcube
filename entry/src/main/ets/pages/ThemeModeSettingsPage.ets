@@ -35,6 +35,11 @@ const PREVIEW_TAB_INDEX_ASSISTANTS = 0
 const PREVIEW_TAB_INDEX_CHAT = 1
 const PREVIEW_TAB_INDEX_SETTINGS = 2
 
+const PREVIEW_FAB_SIZE = 52
+const PREVIEW_FAB_SIDE_MARGIN = 20
+const PREVIEW_FAB_BOTTOM_SPACING = 20
+const PREVIEW_FAB_CONTENT_BREATHING_ROOM = 12
+
 @ComponentV2
 export struct ThemeAppearanceSettingsView {
   private get topAvoidHeight(): number {
@@ -157,9 +162,28 @@ export struct ThemeAppearanceSettingsView {
     return this.settingsDetailPresentationMode === SettingsPagePresentationMode.DETAIL_PANE
   }
 
+  private getPreviewFabBaseBottomInset(): number {
+    if (this.isDetailPaneMode()) {
+      return PREVIEW_FAB_BOTTOM_SPACING
+    }
+    return PREVIEW_FAB_BOTTOM_SPACING + this.px2vp(this.bottomAvoidHeight)
+  }
+
+  private getPreviewFabOffsetX(): number {
+    return -(PREVIEW_FAB_SIZE + PREVIEW_FAB_SIDE_MARGIN)
+  }
+
+  private getPreviewFabOffsetY(): number {
+    return -(PREVIEW_FAB_SIZE + this.getPreviewFabBaseBottomInset())
+  }
+
+  private getPreviewFabContentInset(): number {
+    return this.getPreviewFabBaseBottomInset() + PREVIEW_FAB_SIZE + PREVIEW_FAB_CONTENT_BREATHING_ROOM
+  }
+
   private getScrollBottomPadding(): number {
     return 24 + getSettingsPageCompactTabsTotalInset(this.px2vp(this.bottomAvoidHeight),
-      this.settingsDetailPresentationMode)
+      this.settingsDetailPresentationMode) + this.getPreviewFabContentInset()
   }
 
   private getCompactTitleBarMaskExtraHeight(): number {
@@ -213,8 +237,8 @@ export struct ThemeAppearanceSettingsView {
     if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion')
     }
-    if (themeId === ColorTheme.CLASSIC_BLUE) {
-      return $r('app.string.theme_color_classic_blue')
+    if (themeId === ColorTheme.HARMONY_NATIVE) {
+      return $r('app.string.theme_color_harmony_native')
     }
     if (themeId === ColorTheme.OBSIDIAN) {
       return $r('app.string.theme_color_obsidian')
@@ -238,8 +262,8 @@ export struct ThemeAppearanceSettingsView {
     if (themeId === ColorTheme.NOTION) {
       return $r('app.string.theme_color_notion_desc')
     }
-    if (themeId === ColorTheme.CLASSIC_BLUE) {
-      return $r('app.string.theme_color_classic_blue_desc')
+    if (themeId === ColorTheme.HARMONY_NATIVE) {
+      return $r('app.string.theme_color_harmony_native_desc')
     }
     if (themeId === ColorTheme.OBSIDIAN) {
       return $r('app.string.theme_color_obsidian_desc')
@@ -1174,9 +1198,9 @@ export struct ThemeAppearanceSettingsView {
         .fontSize(22)
         .fontColor([Color.White])
     }
-    .width(52)
-    .height(52)
-    .borderRadius(26)
+    .width(PREVIEW_FAB_SIZE)
+    .height(PREVIEW_FAB_SIZE)
+    .borderRadius(PREVIEW_FAB_SIZE / 2)
     .backgroundColor(this.themePrimary)
     .justifyContent(FlexAlign.Center)
     .shadow({
@@ -1190,11 +1214,13 @@ export struct ThemeAppearanceSettingsView {
         this.showPreview = !this.showPreview
       })
     })
+    .position({ x: '100%', y: '100%' })
+    .translate({ x: this.getPreviewFabOffsetX(), y: this.getPreviewFabOffsetY() })
   }
 
   @Builder
   private PageBody() {
-    Stack() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
       Column({ space: 12 }) {
         if (this.showPreview) {
           Row() {
@@ -1244,10 +1270,7 @@ export struct ThemeAppearanceSettingsView {
       .width('100%')
       .layoutWeight(1)
 
-      Column() {
-        this.PreviewFab()
-      }
-      .position({ right: 20, bottom: this.isDetailPaneMode() ? 20 : 20 + this.px2vp(this.bottomAvoidHeight) })
+      this.PreviewFab()
     }
     .width('100%')
     .layoutWeight(1)

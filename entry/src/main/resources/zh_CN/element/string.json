@@ -1001,12 +1001,12 @@
       "value": "极简纯净"
     },
     {
-      "name": "theme_color_classic_blue",
-      "value": "经典复刻"
+      "name": "theme_color_harmony_native",
+      "value": "鸿蒙原生"
     },
     {
-      "name": "theme_color_classic_blue_desc",
-      "value": "鸿蒙主色"
+      "name": "theme_color_harmony_native_desc",
+      "value": "宇宙蓝与雪域灰"
     },
     {
       "name": "theme_color_obsidian",

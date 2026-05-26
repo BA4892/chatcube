@@ -39,8 +39,8 @@ export function getColorThemeDisplayTextForIndex(theme: ColorTheme): Resource {
   if (theme === ColorTheme.NOTION) {
     return $r('app.string.theme_color_notion')
   }
-  if (theme === ColorTheme.CLASSIC_BLUE) {
-    return $r('app.string.theme_color_classic_blue')
+  if (theme === ColorTheme.HARMONY_NATIVE) {
+    return $r('app.string.theme_color_harmony_native')
   }
   if (theme === ColorTheme.OBSIDIAN) {
     return $r('app.string.theme_color_obsidian')

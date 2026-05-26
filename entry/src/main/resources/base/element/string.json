@@ -1001,12 +1001,12 @@
       "value": "Clean minimalist"
     },
     {
-      "name": "theme_color_classic_blue",
-      "value": "Classic Revival"
+      "name": "theme_color_harmony_native",
+      "value": "HarmonyOS Native"
     },
     {
-      "name": "theme_color_classic_blue_desc",
-      "value": "HarmonyOS blue"
+      "name": "theme_color_harmony_native_desc",
+      "value": "Cosmic blue and snow gray"
     },
     {
       "name": "theme_color_obsidian",
