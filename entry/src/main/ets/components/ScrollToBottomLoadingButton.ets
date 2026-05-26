@@ -1,5 +1,5 @@
 /**
- * 带系统 LoadingProgress 的底部居中"回到底部"按钮
+ * 带 Loading 外环旋转动效的底部居中"回到底部"按钮
  * 仅在 AI 流式生成中且用户不在底部时显示
  */
 
@@ -19,6 +19,10 @@ export struct ScrollToBottomLoadingButton {
   @Event onScrollToBottom: () => void = () => {}
 
   @Local private btnPressed: boolean = false
+  @Local private loadingAngle: number = 0
+  private spinStartToken: number = 0
+  private spinStartTimerId: number = -1
+
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
@@ -35,30 +39,85 @@ export struct ScrollToBottomLoadingButton {
     return this.isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
   }
 
+  aboutToDisappear(): void {
+    this.cancelPendingSpinStart()
+    this.spinStartToken++
+  }
+
+  @Monitor('isVisible')
+  onVisibleChange(): void {
+    if (this.isVisible) {
+      this.startSpinAnimation()
+      return
+    }
+    this.cancelPendingSpinStart()
+    this.spinStartToken++
+    this.loadingAngle = 0
+  }
+
+  private cancelPendingSpinStart(): void {
+    if (this.spinStartTimerId < 0) {
+      return
+    }
+    clearTimeout(this.spinStartTimerId)
+    this.spinStartTimerId = -1
+  }
+
+  private startSpinAnimation(): void {
+    this.cancelPendingSpinStart()
+    const token = this.spinStartToken + 1
+    this.spinStartToken = token
+    this.loadingAngle = 0
+    this.spinStartTimerId = setTimeout(() => {
+      this.spinStartTimerId = -1
+      if (!this.isVisible || token !== this.spinStartToken) {
+        return
+      }
+      this.getUIContext()?.animateTo({
+        duration: 1000,
+        curve: Curve.Linear,
+        iterations: -1,
+        playMode: PlayMode.Normal,
+        expectedFrameRateRange: { min: 30, max: 120, expected: 60 }
+      }, () => {
+        this.loadingAngle = 360
+      })
+    }, 0)
+  }
+
   build() {
     if (this.isVisible) {
       Stack({ alignContent: Alignment.Center }) {
-        Button({ type: ButtonType.Circle }) {
-          Stack({ alignContent: Alignment.Center }) {
-            LoadingProgress()
-              .width(26)
-              .height(26)
-              .color(this.themePrimary)
+        Progress({ value: 25, total: 100, type: ProgressType.Ring })
+          .width(48)
+          .height(48)
+          .color(this.themePrimary)
+          .backgroundColor('transparent')
+          .style({ strokeWidth: 2.5 })
+          .rotate({ angle: this.loadingAngle })
+          .onAppear(() => {
+            this.startSpinAnimation()
+          })
 
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(13)
-              .fontColor([this.themePrimary])
-          }
+        Button({ type: ButtonType.Circle }) {
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(20)
+            .fontColor([this.themePrimary])
         }
-        .width(48)
-        .height(48)
+        .width(40)
+        .height(40)
         .backgroundColor(this.materialBg)
         .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
         .border({
           width: 0.5,
           color: this.materialBorder
         })
-        .shadow({ radius: 8, color: this.isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.12)', offsetX: 0, offsetY: 2 })
+        .shadow({
+          radius: 8,
+          color: this.isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.12)',
+          offsetX: 0,
+          offsetY: 2
+        })
         .scale(getButtonScale(this.btnPressed))
         .animation(getButtonAnimation())
         .onTouch(createButtonTouchHandler((pressed: boolean) => {
@@ -78,6 +137,7 @@ export struct ScrollToBottomLoadingButton {
           TransitionEffect.scale({ x: 0.8, y: 0.8 })
         ).animation({ duration: 200, curve: Curve.EaseOut })
       )
+      .zIndex(13)
     }
   }
 }

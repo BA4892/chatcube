@@ -186,6 +186,7 @@ export struct ChatPage {
   // 是否在列表顶部
   @Local isAtTop: boolean = false
   @Local isScrollJumpButtonsVisible: boolean = false
+  @Local isGeneratingScrollTipVisible: boolean = false
   @Local currentScrollOffsetVp: number = 0
   private firstVisibleListIndex: number = 0
   private lastVisibleListIndex: number = 0
@@ -501,6 +502,7 @@ export struct ChatPage {
     if (this.isSending && !hasActiveRequestForCurrentSession) {
       this.isSending = false
       this.currentTaskId = ''
+      this.setGeneratingScrollTipVisible(false)
       // 同步清理 orchestrator 中该 session 的孤立 RUNNING 任务，
       // 避免全局并行任务计数不下降导致「并行任务已达上限」。
       this.chatTaskOrchestrator.failOrphanedTasksForSession(this.sessionId)
@@ -860,6 +862,7 @@ export struct ChatPage {
     this.isAtTop = false
     this.isAtBottom = false
     this.isScrollJumpButtonsVisible = false
+    this.isGeneratingScrollTipVisible = false
     this.clearScrollJumpButtonsHideTimer()
     this.scrollGestureStartOffsetVp = 0
     this.hasScrollJumpGestureMoved = false
@@ -1559,11 +1562,17 @@ export struct ChatPage {
     if (this.sessionId === '') {
       this.isSending = false
       this.currentTaskId = ''
+      this.setGeneratingScrollTipVisible(false)
       return
     }
     this.isSending = this.chatViewModel.hasActiveRequestForSession(this.sessionId)
     if (!this.isSending) {
       this.currentTaskId = ''
+      this.setGeneratingScrollTipVisible(false)
+      return
+    }
+    if (this.shouldRevealGeneratingScrollTipFromCurrentPosition()) {
+      this.setGeneratingScrollTipVisible(true)
     }
   }
 
@@ -1633,6 +1642,7 @@ export struct ChatPage {
       },
       onSetSending: (value: boolean): void => {
         this.isSending = value
+        this.syncGeneratingScrollTipAfterSendingChange(value)
       },
       onSetCurrentTaskId: (taskId: string): void => {
         this.currentTaskId = taskId
@@ -1691,6 +1701,7 @@ export struct ChatPage {
       },
       onSetSending: (value: boolean): void => {
         this.isSending = value
+        this.syncGeneratingScrollTipAfterSendingChange(value)
       },
       onSetLoading: (value: boolean): void => {
         this.isLoading = value
@@ -3662,7 +3673,28 @@ export struct ChatPage {
 
   private shouldShowScrollToBottomLoadingButton(): boolean {
     return !this.isEditingMessage && !this.hasDraftContent() && !this.showImagePreview &&
-      !this.isAtBottom && !this.isMultiSelectMode && this.isSending
+      !this.isMultiSelectMode && this.isSending && this.isGeneratingScrollTipVisible
+  }
+
+  private setGeneratingScrollTipVisible(value: boolean): void {
+    if (this.isGeneratingScrollTipVisible === value) {
+      return
+    }
+    this.isGeneratingScrollTipVisible = value
+  }
+
+  private shouldRevealGeneratingScrollTipFromCurrentPosition(): boolean {
+    return this.isSending && !this.isAtBottom && !this.syncIsAtBottomBoundaryFromScroller()
+  }
+
+  private syncGeneratingScrollTipAfterSendingChange(value: boolean): void {
+    if (!value) {
+      this.setGeneratingScrollTipVisible(false)
+      return
+    }
+    if (this.shouldRevealGeneratingScrollTipFromCurrentPosition()) {
+      this.setGeneratingScrollTipVisible(true)
+    }
   }
 
   private clearScrollJumpButtonsHideTimer(): void {
@@ -3771,8 +3803,14 @@ export struct ChatPage {
 
   private handleMessageListScrollStop(): void {
     if (this.getScrollUiFlow().handleScrollStop()) {
+      if (this.isSending && (this.isAtBottom || this.syncIsAtBottomBoundaryFromScroller())) {
+        this.setGeneratingScrollTipVisible(false)
+      }
       this.hasScrollJumpGestureMoved = false
       return
+    }
+    if (this.isSending && (this.isAtBottom || this.syncIsAtBottomBoundaryFromScroller())) {
+      this.setGeneratingScrollTipVisible(false)
     }
     if (this.hasScrollJumpGestureMoved) {
       this.showScrollJumpButtonsTemporarily()
@@ -3793,7 +3831,12 @@ export struct ChatPage {
         this.hasScrollJumpGestureMoved = true
       }
     }
-    this.getScrollUiFlow().handleMessageListDidScroll(scrollOffset, scrollState)
+    const userScrolledAwayFromBottom = this.getScrollUiFlow().handleMessageListDidScroll(scrollOffset, scrollState)
+    if (this.isSending && userScrolledAwayFromBottom) {
+      this.setGeneratingScrollTipVisible(true)
+    } else if (this.isSending && isActiveScroll && this.syncIsAtBottomBoundaryFromScroller()) {
+      this.setGeneratingScrollTipVisible(false)
+    }
   }
 
   private handleMessageListContentLayoutChanged(): void {
@@ -3806,6 +3849,7 @@ export struct ChatPage {
 
   private handleMessageListReachEnd(): void {
     this.getScrollUiFlow().handleReachEnd()
+    this.setGeneratingScrollTipVisible(false)
   }
 
   private hasDraftContent(): boolean {
@@ -3977,6 +4021,7 @@ export struct ChatPage {
 
   // 滚动到底部（带动画过渡）
   private scrollToBottomWithAnimation(): void {
+    this.setGeneratingScrollTipVisible(false)
     this.showScrollJumpButtonsTemporarily()
     this.getScrollUiFlow().scrollToBottomWithAnimation()
   }
