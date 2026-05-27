@@ -64,6 +64,7 @@ export class ChatScrollUiFlow {
   private pendingIndexedScrollCorrectionCount: number = 0
   private pendingIndexedScrollCorrectionDeadline: number = 0
   private pendingIndexedScrollCenteredOnce: boolean = false
+  private interactiveContentResizePending: boolean = false
 
   constructor(deps: ChatScrollUiFlowDependencies) {
     this.deps = deps
@@ -143,6 +144,10 @@ export class ChatScrollUiFlow {
 
   private clearBottomPinMute(): void {
     this.bottomPinMutedUntil = 0
+  }
+
+  private clearInteractiveContentResizePending(): void {
+    this.interactiveContentResizePending = false
   }
 
   private activateBottomLayoutPin(): void {
@@ -376,6 +381,7 @@ export class ChatScrollUiFlow {
   }
 
   alignToBottomAfterLayout(): void {
+    this.clearInteractiveContentResizePending()
     this.activateBottomLayoutPin()
     setTimeout(() => {
       this.scrollBottomEdge()
@@ -506,6 +512,7 @@ export class ChatScrollUiFlow {
   }
 
   scrollToBottomWithAnimation(): void {
+    this.clearInteractiveContentResizePending()
     this.clearPinnedBottomAlignmentTimers()
     this.clearBottomPinMute()
     this.activateBottomLayoutPin()
@@ -518,6 +525,7 @@ export class ChatScrollUiFlow {
   }
 
   scrollToTopWithAnimation(): void {
+    this.clearInteractiveContentResizePending()
     this.muteBottomPin(ChatScrollUiFlow.EDGE_SCROLL_BOTTOM_PIN_MUTE_MS)
     this.setPendingEdgeScrollTarget(ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP)
     this.setIsAtBottom(false)
@@ -526,6 +534,7 @@ export class ChatScrollUiFlow {
   }
 
   public prepareForIndexedJump(): void {
+    this.clearInteractiveContentResizePending()
     this.muteBottomPin(ChatScrollUiFlow.EDGE_SCROLL_BOTTOM_PIN_MUTE_MS)
     this.clearPendingEdgeScrollTarget()
     this.clearPendingIndexedScrollTarget()
@@ -545,6 +554,17 @@ export class ChatScrollUiFlow {
     this.pendingIndexedScrollCorrectionDeadline = Date.now() +
       ChatScrollUiFlow.INDEXED_SCROLL_CORRECTION_WINDOW_MS
     this.scrollPendingIndexedTarget(false, ScrollAlign.START)
+  }
+
+  public prepareForInteractiveContentResize(): void {
+    this.interactiveContentResizePending = true
+    this.clearPinnedBottomAlignmentTimers()
+    this.clearPendingBottomScrollTarget()
+    this.clearBottomLayoutPin()
+    if (this.deps.getIsAtBottom()) {
+      this.setIsAtBottom(false)
+    }
+    this.setInputBarVisible(true)
   }
 
   public handleScrollIndexChanged(): void {
@@ -572,6 +592,7 @@ export class ChatScrollUiFlow {
   }
 
   handleScrollStart(): void {
+    this.clearInteractiveContentResizePending()
     if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE) {
       return
     }
@@ -603,6 +624,20 @@ export class ChatScrollUiFlow {
     if (this.hasPendingIndexedScrollTarget() && this.pendingIndexedScrollCenteredOnce &&
       this.isPendingIndexedScrollTargetVisible()) {
       this.correctPendingIndexedScroll(false)
+      return
+    }
+    if (this.interactiveContentResizePending &&
+      this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
+      this.clearPinnedBottomAlignmentTimers()
+      this.clearPendingBottomScrollTarget()
+      this.clearBottomLayoutPin()
+      if (this.deps.getIsAtBottom()) {
+        this.setIsAtBottom(false)
+      }
+      this.setInputBarVisible(true)
+      if (!this.deps.syncIsAtBottomBoundary()) {
+        this.clearInteractiveContentResizePending()
+      }
       return
     }
     if (this.isBottomPinMuted()) {
@@ -641,6 +676,7 @@ export class ChatScrollUiFlow {
   }
 
   scrollPageUpWithAnimation(): void {
+    this.clearInteractiveContentResizePending()
     this.muteBottomPin(ChatScrollUiFlow.PAGE_SCROLL_BOTTOM_PIN_MUTE_MS)
     this.clearPendingBottomScrollTarget()
     this.setIsAtBottom(false)
@@ -649,6 +685,7 @@ export class ChatScrollUiFlow {
   }
 
   scrollPageDownWithAnimation(): void {
+    this.clearInteractiveContentResizePending()
     this.clearPinnedBottomAlignmentTimers()
     this.setIsAtTop(false)
     this.setInputBarVisible(true)
@@ -669,6 +706,7 @@ export class ChatScrollUiFlow {
     if (this.isBottomPinMuted()) {
       return
     }
+    this.clearInteractiveContentResizePending()
     const cumulativeOffset = this.deps.syncCurrentScrollOffset()
     this.deps.setLastScrollOffset(cumulativeOffset)
     this.activateBottomLayoutPin()

@@ -60,6 +60,7 @@ export struct ChatMessageListSection {
   @Event onScrollStart: () => void = (): void => {}
   @Event onScrollStop: () => void = (): void => {}
   @Event onContentLayoutChange: () => void = (): void => {}
+  @Event onInteractiveContentResize: () => void = (): void => {}
   @Event onMessageItemAppear: (listIndex: number) => void = (_listIndex: number): void => {}
   @Event onMessageItemLayoutChange: (listIndex: number) => void = (_listIndex: number): void => {}
   @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
@@ -477,6 +478,9 @@ export struct ChatMessageListSection {
                     onContentLayoutChange: (): void => {
                       this.onContentLayoutChange()
                       this.onMessageItemLayoutChange(_index + 1)
+                    },
+                    onInteractiveContentResize: (): void => {
+                      this.onInteractiveContentResize()
                     },
                     onSelect: (messageId: string): void => {
                       this.onSelect(messageId)

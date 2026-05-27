@@ -254,6 +254,7 @@ export struct MessageBubble {
   @Event onTTS: (messageId: string, content: string) => void = () => {}
   @Event onTTSStop: () => void = () => {}
   @Event onContentLayoutChange: () => void = () => {}
+  @Event onInteractiveContentResize: () => void = () => {}
   // 多选模式回调
   @Event onSelect: (messageId: string) => void = () => {}
   @Event onEnterMultiSelect: (messageId: string) => void = () => {}
@@ -1035,11 +1036,16 @@ export struct MessageBubble {
       this.message.toolResults.length === 0
   }
 
+  private notifyInteractiveContentResize(): void {
+    this.onInteractiveContentResize()
+  }
+
   // 处理翻译
   private handleTranslate(targetLang: string): void {
     if (this.isTranslating) {
       return
     }
+    this.notifyInteractiveContentResize()
     const requestToken = ++this.translationRequestToken
     const requestMessageId = this.message.id
     this.isTranslating = true
@@ -1540,6 +1546,9 @@ export struct MessageBubble {
 
   // 清空翻译
   private clearTranslation(): void {
+    if (this.showTranslation) {
+      this.notifyInteractiveContentResize()
+    }
     this.translationRequestToken++
     this.showTranslation = false
     this.translatedText = ''
@@ -2280,6 +2289,7 @@ export struct MessageBubble {
       .height(36)
       .padding({ left: 12, right: 12 })
       .onClick(() => {
+        this.notifyInteractiveContentResize()
         this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
           this.isTranslationExpanded = !this.isTranslationExpanded
         })
@@ -2475,6 +2485,7 @@ export struct MessageBubble {
     } else {
       next.push(key)
     }
+    this.notifyInteractiveContentResize()
     this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
       this.expandedReasoningKeys = next
     })
@@ -2549,6 +2560,7 @@ export struct MessageBubble {
     if (!found) {
       next.push(key)
     }
+    this.notifyInteractiveContentResize()
     this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
       this.expandedToolStepKeys = next
     })
@@ -3648,6 +3660,7 @@ export struct MessageBubble {
 
   // 点击标题栏切换展开:可见 → 完全收起;收起 → 完全展开
   private toggleReasoningCard(): void {
+    this.notifyInteractiveContentResize()
     this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       if (this.isReasoningCardVisible()) {
         this.isReasoningExpanded = false

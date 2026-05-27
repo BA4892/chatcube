@@ -2288,6 +2288,9 @@ export struct ChatPage {
           onContentLayoutChange: (): void => {
             this.handleMessageListContentLayoutChanged()
           },
+          onInteractiveContentResize: (): void => {
+            this.handleMessageListInteractiveContentResize()
+          },
           onMessageItemAppear: (listIndex: number): void => {
             this.getScrollUiFlow().handleIndexedTargetItemReady(listIndex)
           },
@@ -3741,6 +3744,10 @@ export struct ChatPage {
 
   private handleMessageListContentLayoutChanged(): void {
     this.getScrollUiFlow().handleContentLayoutChanged()
+  }
+
+  private handleMessageListInteractiveContentResize(): void {
+    this.getScrollUiFlow().prepareForInteractiveContentResize()
   }
 
   private handleMessageListReachStart(): void {
