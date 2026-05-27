@@ -26,7 +26,7 @@ import {
   ToolResult
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
-import { deserializeMessageParts, serializeMessageParts } from '../models/MessageParts'
+import { deserializeMessageParts, MessagePartKind, serializeMessageParts } from '../models/MessageParts'
 import { DatabaseService } from './DatabaseService'
 import { AttachmentStorageService } from './AttachmentStorageService'
 import { getPreferencesService, PreferenceKeys } from './PreferencesService'
@@ -47,6 +47,7 @@ const ASSISTANT_AVATAR_EXPORT_DIR: string = 'assistant_avatars'
 const PROVIDER_ICON_EXPORT_DIR: string = 'provider_icons'
 const GENERATED_MEDIA_EXPORT_DIR: string = 'generated_media'
 const GENERATED_MEDIA_IMAGES_EXPORT_DIR: string = 'images'
+const GENERATED_MEDIA_REFERENCES_EXPORT_DIR: string = 'references'
 
 // 导出选项
 export interface ExportOptions {
@@ -160,6 +161,7 @@ export interface GeneratedMediaExportData {
   mimeType: string
   aspectRatio: string
   sourcePathsJson: string
+  sourceFilesJson?: string
   requestOptionsJson: string
   actualOptionsJson: string
   revisedPrompt: string
@@ -299,10 +301,23 @@ interface AttachmentMetadata {
   name: string
   mimeType: string
   size: number
+  sourcePath?: string
   processState?: string
   parseEngine?: string
   parsedText?: string
   parseError?: string
+}
+
+interface ImportedAttachmentBinding {
+  metadata: AttachmentMetadata
+  filePath: string
+}
+
+interface GeneratedMediaSourceFileExportData {
+  index?: number
+  path?: string
+  fileName?: string
+  mimeType?: string
 }
 
 // 导入文件数据
@@ -804,6 +819,7 @@ export class ImportExportService {
               name: a.name,
               mimeType: a.mimeType,
               size: a.size,
+              sourcePath: a.filePath,
               processState: a.processState,
               parseEngine: a.parseEngine,
               parsedText: a.parsedText,
@@ -1161,6 +1177,7 @@ export class ImportExportService {
           if (msgData.attachmentIds && msgData.attachmentIds.length > 0) {
             const attachments = attachmentsMetadata[msgData.id]
             if (attachments) {
+              const importedAttachmentBindings: ImportedAttachmentBinding[] = []
               for (const attData of attachments) {
                 const subDir = attData.type === 'image' ? 'images' : 'files'
                 const ext = this.getExtension(attData.name)
@@ -1191,9 +1208,16 @@ export class ImportExportService {
                   const savedPath = await this.attachmentService.importExistingAttachment(srcPath, attachment)
                   attachment.filePath = savedPath
 
-                  message.attachments.push(attachment)
+                  if (savedPath !== '') {
+                    message.attachments.push(attachment)
+                    importedAttachmentBindings.push({
+                      metadata: attData,
+                      filePath: savedPath
+                    })
+                  }
                 }
               }
+              this.rewriteImportedMessageImageParts(message, importedAttachmentBindings)
             }
           }
 
@@ -1246,6 +1270,72 @@ export class ImportExportService {
     }
 
     return result
+  }
+
+  private rewriteImportedMessageImageParts(message: ChatMessage, bindings: ImportedAttachmentBinding[]): void {
+    if (message.parts.length === 0 || bindings.length === 0) {
+      return
+    }
+    for (let i = 0; i < message.parts.length; i++) {
+      const part = message.parts[i]
+      if (part.kind !== MessagePartKind.IMAGE) {
+        continue
+      }
+      for (let j = 0; j < bindings.length; j++) {
+        const binding = bindings[j]
+        if (this.doesImagePartBelongToAttachment(part.mediaUrl, part.mediaName, part.mediaMime, binding.metadata)) {
+          part.mediaUrl = binding.filePath
+          part.mediaName = binding.metadata.name
+          part.mediaMime = binding.metadata.mimeType
+          break
+        }
+      }
+    }
+  }
+
+  private doesImagePartBelongToAttachment(
+    mediaUrl: string,
+    mediaName: string,
+    mediaMime: string,
+    attachment: AttachmentMetadata
+  ): boolean {
+    if (attachment.type !== 'image') {
+      return false
+    }
+    const oldPath = attachment.sourcePath !== undefined ? attachment.sourcePath : ''
+    if (oldPath !== '' && this.isSameLocalMediaSource(mediaUrl, oldPath)) {
+      return true
+    }
+
+    const normalized = this.normalizeLocalMediaSource(mediaUrl)
+    const ext = this.getExtension(attachment.name)
+    if (normalized !== '' && ext !== '' && normalized.endsWith(`/${attachment.id}${ext}`)) {
+      return true
+    }
+
+    return mediaName !== '' && mediaName === attachment.name &&
+      (mediaMime === '' || mediaMime === attachment.mimeType)
+  }
+
+  private isSameLocalMediaSource(left: string, right: string): boolean {
+    const normalizedLeft = this.normalizeLocalMediaSource(left)
+    const normalizedRight = this.normalizeLocalMediaSource(right)
+    return normalizedLeft !== '' && normalizedRight !== '' && normalizedLeft === normalizedRight
+  }
+
+  private normalizeLocalMediaSource(value: string): string {
+    const trimmed = value.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    const lower = trimmed.toLowerCase()
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:')) {
+      return trimmed
+    }
+    if (lower.startsWith('file://')) {
+      return this.getPathFromFileUri(trimmed)
+    }
+    return trimmed
   }
 
   private async importAssistants(assistants: AssistantExportData[], tempDir: string): Promise<void> {
@@ -1634,6 +1724,7 @@ export class ImportExportService {
   private async writeGeneratedMediaFiles(tempDir: string, generatedMedia: GeneratedMedia[]): Promise<void> {
     const mediaDir = `${tempDir}/${GENERATED_MEDIA_EXPORT_DIR}`
     const imagesDir = `${mediaDir}/${GENERATED_MEDIA_IMAGES_EXPORT_DIR}`
+    const referencesDir = `${mediaDir}/${GENERATED_MEDIA_REFERENCES_EXPORT_DIR}`
     this.ensureDirectory(mediaDir)
     this.ensureDirectory(imagesDir)
 
@@ -1645,6 +1736,7 @@ export class ImportExportService {
       const fileName = this.buildExportedGeneratedMediaFileName(media)
       try {
         await fileIo.copyFile(media.filePath, `${imagesDir}/${fileName}`)
+        const sourceFiles = await this.writeGeneratedMediaSourceFiles(media, referencesDir)
         metadata.push({
           id: media.id,
           type: media.type,
@@ -1657,6 +1749,7 @@ export class ImportExportService {
           mimeType: media.mimeType,
           aspectRatio: media.aspectRatio,
           sourcePathsJson: media.sourcePathsJson,
+          sourceFilesJson: sourceFiles.length > 0 ? JSON.stringify(sourceFiles) : '',
           requestOptionsJson: media.requestOptionsJson,
           actualOptionsJson: media.actualOptionsJson,
           revisedPrompt: media.revisedPrompt,
@@ -1670,6 +1763,49 @@ export class ImportExportService {
     if (metadata.length > 0) {
       this.writeTextFile(`${mediaDir}/metadata.json`, JSON.stringify(metadata, null, 2))
     }
+  }
+
+  private async writeGeneratedMediaSourceFiles(
+    media: GeneratedMedia,
+    referencesDir: string
+  ): Promise<GeneratedMediaSourceFileExportData[]> {
+    const sourcePaths = this.parseStringArrayJson(media.sourcePathsJson)
+    const sourceFiles: GeneratedMediaSourceFileExportData[] = []
+    let referencesDirReady = false
+    for (let i = 0; i < sourcePaths.length; i++) {
+      const sourcePath = this.resolveLocalExportFilePath(sourcePaths[i])
+      if (sourcePath === '') {
+        continue
+      }
+      let sourceExists = false
+      try {
+        sourceExists = fileIo.accessSync(sourcePath)
+      } catch (error) {
+        console.warn('ImportExportService', `Generated media reference access failed: ${JSON.stringify(error)}`)
+        sourceExists = false
+      }
+      if (!sourceExists) {
+        continue
+      }
+      if (!referencesDirReady) {
+        this.ensureDirectory(referencesDir)
+        referencesDirReady = true
+      }
+
+      const fileName = this.buildExportedGeneratedMediaReferenceFileName(media, i, sourcePath)
+      try {
+        await fileIo.copyFile(sourcePath, `${referencesDir}/${fileName}`)
+        sourceFiles.push({
+          index: i,
+          path: sourcePaths[i],
+          fileName: fileName,
+          mimeType: this.resolveMimeTypeFromExtension(fileName)
+        })
+      } catch (error) {
+        console.warn('ImportExportService', `Failed to export generated media reference: ${JSON.stringify(error)}`)
+      }
+    }
+    return sourceFiles
   }
 
   private async importGeneratedMedia(generatedMedia: GeneratedMediaExportData[], tempDir: string): Promise<number> {
@@ -1705,6 +1841,7 @@ export class ImportExportService {
       if (savedPath === '') {
         continue
       }
+      const importedSourcePathsJson = await this.importGeneratedMediaSourcePaths(mediaData, tempDir, id)
 
       const media = new GeneratedMedia()
       media.id = id
@@ -1717,7 +1854,7 @@ export class ImportExportService {
       media.filePath = savedPath
       media.mimeType = mimeType
       media.aspectRatio = mediaData.aspectRatio
-      media.sourcePathsJson = mediaData.sourcePathsJson
+      media.sourcePathsJson = importedSourcePathsJson
       media.requestOptionsJson = mediaData.requestOptionsJson
       media.actualOptionsJson = mediaData.actualOptionsJson
       media.revisedPrompt = mediaData.revisedPrompt
@@ -1728,10 +1865,143 @@ export class ImportExportService {
     return imported
   }
 
+  private async importGeneratedMediaSourcePaths(
+    mediaData: GeneratedMediaExportData,
+    tempDir: string,
+    mediaId: string
+  ): Promise<string> {
+    const sourcePaths = this.parseStringArrayJson(mediaData.sourcePathsJson)
+    const sourceFiles = this.parseGeneratedMediaSourceFiles(mediaData.sourceFilesJson || '')
+    if (sourceFiles.length === 0) {
+      return mediaData.sourcePathsJson
+    }
+
+    let importedCount = 0
+    for (let i = 0; i < sourceFiles.length; i++) {
+      const sourceFile = sourceFiles[i]
+      const fileName = sourceFile.fileName !== undefined ? this.sanitizeFileName(sourceFile.fileName) : ''
+      if (fileName === '') {
+        continue
+      }
+      const sourcePath = `${tempDir}/${GENERATED_MEDIA_EXPORT_DIR}/${GENERATED_MEDIA_REFERENCES_EXPORT_DIR}/${fileName}`
+      let sourceExists = false
+      try {
+        sourceExists = fileIo.accessSync(sourcePath)
+      } catch (error) {
+        console.warn('ImportExportService', `Generated media reference access failed: ${JSON.stringify(error)}`)
+        sourceExists = false
+      }
+      if (!sourceExists) {
+        continue
+      }
+
+      const sourceMimeType = sourceFile.mimeType !== undefined ? sourceFile.mimeType : ''
+      const mimeType = sourceMimeType !== '' ? sourceMimeType : this.resolveMimeTypeFromExtension(fileName)
+      const sourceIndex = sourceFile.index !== undefined ? sourceFile.index : -1
+      const referenceId =
+        this.sanitizeFileName(`${mediaId}_ref_${sourceIndex}_${Date.now()}_${importedCount}`)
+      const attachment = new MessageAttachment(
+        referenceId,
+        AttachmentType.IMAGE,
+        `${referenceId}${this.getExtensionForMimeTypeOrFileName(fileName, mimeType)}`,
+        '',
+        mimeType,
+        0
+      )
+      const savedPath = await this.attachmentService.importExistingAttachment(sourcePath, attachment)
+      if (savedPath === '') {
+        continue
+      }
+      if (sourceIndex >= 0 && sourceIndex < sourcePaths.length) {
+        sourcePaths[sourceIndex] = savedPath
+      } else {
+        sourcePaths.push(savedPath)
+      }
+      importedCount++
+    }
+
+    return importedCount > 0 ? JSON.stringify(sourcePaths) : mediaData.sourcePathsJson
+  }
+
   private buildExportedGeneratedMediaFileName(media: GeneratedMedia): string {
     const ext = this.getExtensionForMimeTypeOrFileName(media.filePath, media.mimeType)
     const baseName = this.sanitizeFileName(media.id !== '' ? media.id : `generated_${media.createdAt}`)
     return `${baseName}${ext}`
+  }
+
+  private buildExportedGeneratedMediaReferenceFileName(media: GeneratedMedia, index: number, sourcePath: string): string {
+    const ext = this.getExtensionForMimeTypeOrFileName(sourcePath, '')
+    const mediaName = media.id !== '' ? media.id : `generated_${media.createdAt}`
+    const baseName = this.sanitizeFileName(`${mediaName}_ref_${index}`)
+    return `${baseName}${ext}`
+  }
+
+  private resolveLocalExportFilePath(value: string): string {
+    const trimmed = value.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    const lower = trimmed.toLowerCase()
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:')) {
+      return ''
+    }
+    if (lower.startsWith('file://')) {
+      return this.getPathFromFileUri(trimmed)
+    }
+    return trimmed
+  }
+
+  private parseStringArrayJson(value: string): string[] {
+    if (value.trim() === '') {
+      return []
+    }
+    try {
+      const raw = JSON.parse(value) as Object
+      if (!Array.isArray(raw)) {
+        return []
+      }
+      const items = raw as string[]
+      const result: string[] = []
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (typeof item === 'string' && item.trim() !== '') {
+          result.push(item)
+        }
+      }
+      return result
+    } catch (error) {
+      console.warn('ImportExportService', `Failed to parse string array json: ${JSON.stringify(error)}`)
+      return []
+    }
+  }
+
+  private parseGeneratedMediaSourceFiles(value: string): GeneratedMediaSourceFileExportData[] {
+    if (value.trim() === '') {
+      return []
+    }
+    try {
+      const raw = JSON.parse(value) as Object
+      if (!Array.isArray(raw)) {
+        return []
+      }
+      const items = raw as GeneratedMediaSourceFileExportData[]
+      const result: GeneratedMediaSourceFileExportData[] = []
+      for (let i = 0; i < items.length; i++) {
+        const fileName = items[i].fileName !== undefined ? items[i].fileName : ''
+        if (fileName !== '') {
+          result.push({
+            index: items[i].index !== undefined ? items[i].index : -1,
+            path: items[i].path !== undefined ? items[i].path : '',
+            fileName: fileName,
+            mimeType: items[i].mimeType !== undefined ? items[i].mimeType : ''
+          })
+        }
+      }
+      return result
+    } catch (error) {
+      console.warn('ImportExportService', `Failed to parse generated media source files: ${JSON.stringify(error)}`)
+      return []
+    }
   }
 
   private getExtensionForMimeTypeOrFileName(fileName: string, mimeType: string): string {

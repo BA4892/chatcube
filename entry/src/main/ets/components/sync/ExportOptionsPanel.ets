@@ -9,7 +9,7 @@ import { getAppUiState } from '../../state/AppUiState'
 @ComponentV2
 export struct ExportOptionsPanel {
   @Param includeAttachments: boolean = true
-  @Param includeGeneratedImages: boolean = false
+  @Param includeGeneratedImages: boolean = true
   @Param includeProviders: boolean = true
   @Param includePreferences: boolean = true
   @Event onIncludeAttachmentsChange: (value: boolean) => void = () => {}

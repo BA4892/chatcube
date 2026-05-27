@@ -57,7 +57,7 @@ struct ExportDataPage {
   @Local selectedSessionIds: string[] = []
   @Local selectAll: boolean = true
   @Local includeAttachments: boolean = true
-  @Local includeGeneratedImages: boolean = false
+  @Local includeGeneratedImages: boolean = true
   @Local includeProviders: boolean = true
   @Local includePreferences: boolean = true
   @Local isExporting: boolean = false
