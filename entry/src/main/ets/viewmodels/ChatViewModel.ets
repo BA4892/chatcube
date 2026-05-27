@@ -156,10 +156,6 @@ export class ChatViewModel {
   private readonly MAX_TOOL_STEPS = 256
   // 取消令牌：用于停止”尚未开始发送的请求”（例如退出页面时）
   private cancelToken: number = 0
-  // 历史附件懒加载配置
-  private readonly MAX_HISTORY_ATTACHMENTS = 5
-  private readonly MAX_HISTORY_ATTACHMENT_SIZE = 5 * 1024 * 1024 // 5MB
-
   // V2 流式渲染: 由 ChatPage 在 aboutToAppear 时通过 setStreamingUIContext 注入
   // DisplaySyncTypewriter.start() 必须包在 UIContext.runScopedTask 内, 所以 ChatViewModel 自己拿不到 ctx
   // 拿不到 ctx 时 createStreamFlusher 自动降级到 createThrottle(150), 保证兜底可用
@@ -359,6 +355,31 @@ export class ChatViewModel {
       attachment.parsedText = attachments[i].parsedText
       attachment.parseError = attachments[i].parseError
       cloned.push(attachment)
+    }
+    return cloned
+  }
+
+  private cloneAttachmentsForStoredMessage(attachments: MessageAttachment[]): MessageAttachment[] {
+    const cloned = this.cloneAttachments(attachments)
+    for (let i = 0; i < cloned.length; i++) {
+      if (cloned[i].filePath !== '') {
+        cloned[i].base64Data = ''
+      }
+    }
+    return cloned
+  }
+
+  private cloneAttachmentsForRequestHistory(
+    attachments: MessageAttachment[],
+    includeAttachmentPayloads: boolean
+  ): MessageAttachment[] {
+    const cloned = this.cloneAttachments(attachments)
+    if (includeAttachmentPayloads) {
+      return cloned
+    }
+    for (let i = 0; i < cloned.length; i++) {
+      cloned[i].base64Data = ''
+      cloned[i].parsedText = ''
     }
     return cloned
   }
@@ -970,8 +991,16 @@ export class ChatViewModel {
     })
   }
 
-  private appendFlatRequestHistoryMessage(historyMessages: RequestMessage[], msg: ChatMessage): void {
-    const requestMessage = new RequestMessage(msg.role, msg.content, this.cloneAttachments(msg.attachments))
+  private appendFlatRequestHistoryMessage(
+    historyMessages: RequestMessage[],
+    msg: ChatMessage,
+    includeAttachmentPayloads: boolean
+  ): void {
+    const requestMessage = new RequestMessage(
+      msg.role,
+      msg.content,
+      this.cloneAttachmentsForRequestHistory(msg.attachments, includeAttachmentPayloads)
+    )
     requestMessage.reasoningContent = msg.reasoningContent
     requestMessage.reasoningSignatureBlob = msg.reasoningSignatureBlob
     historyMessages.push(requestMessage)
@@ -1070,7 +1099,8 @@ export class ChatViewModel {
   private buildConversationRequestHistory(
     messages: ChatMessage[],
     contextStartIndex: number,
-    preserveToolPartOrder: boolean = false
+    preserveToolPartOrder: boolean = false,
+    includeAttachmentPayloads: boolean = true
   ): RequestMessage[] {
     const historyMessages: RequestMessage[] = []
     for (let i = contextStartIndex; i < messages.length; i++) {
@@ -1081,7 +1111,7 @@ export class ChatViewModel {
       if (preserveToolPartOrder && this.appendPartsRequestHistory(historyMessages, msg)) {
         continue
       }
-      this.appendFlatRequestHistoryMessage(historyMessages, msg)
+      this.appendFlatRequestHistoryMessage(historyMessages, msg, includeAttachmentPayloads)
     }
     return historyMessages
   }
@@ -1364,7 +1394,13 @@ export class ChatViewModel {
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
     const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
-    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex)
+    const includeHistoryAttachmentPayloads = attachments.length === 0
+    const historyMessages = this.buildConversationRequestHistory(
+      messages,
+      contextStartIndex,
+      false,
+      includeHistoryAttachmentPayloads
+    )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1377,12 +1413,7 @@ export class ChatViewModel {
       content,
       ''
     )
-    // 添加附件到用户消息
-    if (attachments.length > 0) {
-      for (let i = 0; i < attachments.length; i++) {
-        userMessage.attachments.push(attachments[i])
-      }
-    }
+    userMessage.attachments = this.cloneAttachmentsForStoredMessage(attachments)
 
     // 通知 UI 添加用户消息（优先渲染，避免”返回再进来只剩用户消息/无模型信息”）
     onUserMessageAdded(userMessage)
@@ -1425,8 +1456,11 @@ export class ChatViewModel {
     }
     requestMessages.push(new RequestMessage('user', content, requestAttachments))
 
-    // 懒加载历史附件
-    await this.prepareHistoryAttachments(requestMessages)
+    await this.prepareRequestHistoryAttachmentsIfNeeded(
+      requestMessages,
+      includeHistoryAttachmentPayloads,
+      attachments.length
+    )
     if (this.isCancelled(cancelSnapshot)) {
       return
     }
@@ -1687,7 +1721,13 @@ export class ChatViewModel {
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
     const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
-    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex)
+    const includeHistoryAttachmentPayloads = attachments.length === 0
+    const historyMessages = this.buildConversationRequestHistory(
+      messages,
+      contextStartIndex,
+      false,
+      includeHistoryAttachmentPayloads
+    )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1710,9 +1750,7 @@ ${webContext.content}
       content,
       ''
     )
-    for (let i = 0; i < attachments.length; i++) {
-      userMessage.attachments.push(attachments[i])
-    }
+    userMessage.attachments = this.cloneAttachmentsForStoredMessage(attachments)
 
     onUserMessageAdded(userMessage)
 
@@ -1744,7 +1782,11 @@ ${webContext.content}
     }
     requestMessages.push(new RequestMessage('user', content, requestAttachments))
 
-    await this.prepareHistoryAttachments(requestMessages)
+    await this.prepareRequestHistoryAttachmentsIfNeeded(
+      requestMessages,
+      includeHistoryAttachmentPayloads,
+      attachments.length
+    )
     if (this.isCancelled(cancelSnapshot)) {
       return
     }
@@ -1965,7 +2007,13 @@ ${webContext.content}
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
     const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
-    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex)
+    const includeHistoryAttachmentPayloads = attachments.length === 0
+    const historyMessages = this.buildConversationRequestHistory(
+      messages,
+      contextStartIndex,
+      false,
+      includeHistoryAttachmentPayloads
+    )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -2000,9 +2048,7 @@ ${limitedSearchContext}
       content,
       ''
     )
-    for (let i = 0; i < attachments.length; i++) {
-      userMessage.attachments.push(attachments[i])
-    }
+    userMessage.attachments = this.cloneAttachmentsForStoredMessage(attachments)
 
     // 添加搜索引用数据和查询内容
     userMessage.searchQuery = searchResult.query
@@ -2054,7 +2100,11 @@ ${limitedSearchContext}
       this.buildSearchResultRequestContent(content, searchResult),
       requestAttachments))
 
-    await this.prepareHistoryAttachments(requestMessages)
+    await this.prepareRequestHistoryAttachmentsIfNeeded(
+      requestMessages,
+      includeHistoryAttachmentPayloads,
+      attachments.length
+    )
     if (this.isCancelled(cancelSnapshot)) {
       return
     }
@@ -2283,7 +2333,13 @@ ${limitedSearchContext}
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
     const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
-    const historyMessages = this.buildConversationRequestHistory(messages, contextStartIndex, true)
+    const includeHistoryAttachmentPayloads = attachments.length === 0
+    const historyMessages = this.buildConversationRequestHistory(
+      messages,
+      contextStartIndex,
+      true,
+      includeHistoryAttachmentPayloads
+    )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -2296,12 +2352,7 @@ ${limitedSearchContext}
       content,
       ''
     )
-    // 添加附件到用户消息
-    if (attachments.length > 0) {
-      for (let i = 0; i < attachments.length; i++) {
-        userMessage.attachments.push(attachments[i])
-      }
-    }
+    userMessage.attachments = this.cloneAttachmentsForStoredMessage(attachments)
 
     // 通知 UI 添加用户消息（优先渲染）
     onUserMessageAdded(userMessage)
@@ -2359,8 +2410,11 @@ ${limitedSearchContext}
     }
     requestMessages.push(new RequestMessage('user', content, requestAttachments))
 
-    // 懒加载历史附件
-    await this.prepareHistoryAttachments(requestMessages)
+    await this.prepareRequestHistoryAttachmentsIfNeeded(
+      requestMessages,
+      includeHistoryAttachmentPayloads,
+      attachments.length
+    )
     if (this.isCancelled(cancelSnapshot)) {
       return
     }
@@ -4315,31 +4369,37 @@ ${limitedSearchContext}
     return false
   }
 
-  // 懒加载历史附件（从后向前扫描，只加载最后 N 条用户消息的附件）
+  private async prepareRequestHistoryAttachmentsIfNeeded(
+    messages: RequestMessage[],
+    includeHistoryAttachmentPayloads: boolean,
+    currentAttachmentCount: number
+  ): Promise<void> {
+    if (!includeHistoryAttachmentPayloads) {
+      console.info('ChatViewModel',
+        `Skipped history attachment payloads because current request has ${currentAttachmentCount} attachment(s)`)
+      return
+    }
+    await this.prepareHistoryAttachments(messages)
+  }
+
+  // 懒加载历史附件：请求上下文里保留哪些历史消息由助手上下文配置控制。
+  // 附件大小/数量不在客户端额外截断，交给模型服务端按自身限制处理。
   private async prepareHistoryAttachments(messages: RequestMessage[]): Promise<void> {
     let loadedCount = 0
     let totalSize = 0
 
-    // 从后向前扫描，只加载最后 N 条用户消息的附件
+    // 从后向前扫描，优先补齐最近消息；不做客户端大小截断。
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]
       if (msg.role === 'user' && msg.attachments.length > 0) {
-        if (loadedCount >= this.MAX_HISTORY_ATTACHMENTS) {
-          break
-        }
-
         for (let j = 0; j < msg.attachments.length; j++) {
           const att = msg.attachments[j]
           if (att.parsedText !== '') {
             continue
           }
-          if (att.base64Data !== '') {
-            continue
-          }
-
           const estimatedSize = att.size > 0 ? att.size : (1024 * 1024)
-          if (totalSize + estimatedSize > this.MAX_HISTORY_ATTACHMENT_SIZE) {
-            console.warn('ChatViewModel', `Attachment size limit reached, skipping ${att.id}`)
+          if (att.base64Data !== '') {
+            totalSize += estimatedSize
             continue
           }
 

@@ -219,6 +219,9 @@ export struct AttachmentPicker {
       const filePath = await storageService.saveAttachment(attachment)
       console.info('AttachmentPicker', `Saved attachment to: ${filePath}`)
       attachment.filePath = filePath
+      if (filePath !== '') {
+        attachment.base64Data = ''
+      }
 
       return attachment
     } catch (error) {
@@ -257,6 +260,9 @@ export struct AttachmentPicker {
       const storageService = getAttachmentStorageService()
       const filePath = await storageService.saveAttachment(attachment)
       attachment.filePath = filePath
+      if (filePath !== '') {
+        attachment.base64Data = ''
+      }
 
       return attachment
     } catch (error) {
