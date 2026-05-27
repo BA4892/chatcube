@@ -2,15 +2,9 @@ import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { ProviderIconSmall } from './ProviderIcon'
 import { getAppUiState, observeAppUiState } from '../state/AppUiState'
 import { buildIconResourcePath, getModelIconPath, isNetworkIconPath, isSandboxIconPath } from '../utils/ProviderIconUtils'
-import {
-  createButtonTouchHandler,
-  getButtonAnimation,
-  getButtonScale
-} from '../utils/ButtonAnimationUtils'
 
 export const CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT = 56
-const CHAT_NAVIGATION_ACTION_BUTTON_SIZE = 30
-const CHAT_NAVIGATION_CONTENT_VERTICAL_OFFSET = -5
+const CHAT_NAVIGATION_CONTENT_VERTICAL_OFFSET = 0
 
 @ComponentV2
 export struct ChatNavigationTitleContent {
@@ -26,27 +20,19 @@ export struct ChatNavigationTitleContent {
   @Param currentProviderCustomImagePath: string = ''
   @Param currentProviderBrandColor: ResourceColor = ''
   @Param isTitleGenerating: boolean = false
-  @Param isSending: boolean = false
   @Param titleGenerateFailed: boolean = false
-  @Param leftActionLaneWidth: number = 44
-  @Param rightActionLaneWidth: number = 44
-  @Param showNewChatAction: boolean = false
+  @Param editTitleRequestTick: number = 0
+  @Param contentStartInset: number = 56
+  @Param contentEndInset: number = 96
 
-  @Event onBack: () => void = () => {}
   @Event onModelSelect: () => void = () => {}
-  @Event onNewChat: () => void = () => {}
-  @Event onDeleteChat: () => void = () => {}
   @Event onRegenerateTitle: () => void = () => {}
   @Event onWillEditTitle: () => void = () => {}
   @Event onTitleChanged: (newTitle: string) => void = (_newTitle: string): void => {}
-  @Event onOpenMessageMap: () => void = () => {}
 
-  @Local private backBtnPressed: boolean = false
-  @Local private newChatBtnPressed: boolean = false
-  @Local private moreBtnPressed: boolean = false
-  @Local private messageMapBtnPressed: boolean = false
   @Local private isEditingTitle: boolean = false
   @Local private editingTitleInput: string = ''
+  @Local private handledEditTitleRequestTick: number = 0
   private readonly titleInputFocusId: string = 'chat_navigation_title_input'
   private titleMarkdownController: MarkdownController = new MarkdownController()
   private themeObserverDisposer: (() => void) | null = null
@@ -92,14 +78,6 @@ export struct ChatNavigationTitleContent {
 
   private getModelIdentityChevronColor(): string {
     return this.isDarkMode ? '#C7CDD5' : '#5A6573'
-  }
-
-  private getNavigationActionButtonBackgroundColor(): string {
-    return this.isDarkMode ? '#30FFFFFF' : '#D9FFFFFF'
-  }
-
-  private getMoreMenuBackgroundColor(): string {
-    return this.isDarkMode ? '#A8212328' : '#BFFFFFFF'
   }
 
   private getCurrentModelIconPath(): string {
@@ -168,7 +146,11 @@ export struct ChatNavigationTitleContent {
     this.isEditingTitle = true
     setTimeout(() => {
       if (this.isEditingTitle) {
-        this.getUIContext().getFocusController().requestFocus(this.titleInputFocusId)
+        try {
+          this.getUIContext().getFocusController().requestFocus(this.titleInputFocusId)
+        } catch (error) {
+          console.warn('ChatNavigationTitleContent', `Failed to focus title input: ${JSON.stringify(error)}`)
+        }
       }
     }, 60)
   }
@@ -185,6 +167,15 @@ export struct ChatNavigationTitleContent {
     if (!this.isEditingTitle) {
       this.onModelSelect()
     }
+  }
+
+  @Monitor('editTitleRequestTick')
+  onEditTitleRequestTickChanged(): void {
+    if (this.editTitleRequestTick <= 0 || this.editTitleRequestTick === this.handledEditTitleRequestTick) {
+      return
+    }
+    this.handledEditTitleRequestTick = this.editTitleRequestTick
+    this.startEditingTitle()
   }
 
   @Builder
@@ -235,267 +226,126 @@ export struct ChatNavigationTitleContent {
     }
   }
 
-  @Builder
-  private BackButtonBuilder() {
-    Button({ type: ButtonType.Circle }) {
-      SymbolGlyph($r('sys.symbol.chevron_left'))
-        .fontSize(17)
-        .fontColor([$r('app.color.text_primary')])
-    }
-    .width(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .height(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-    .backgroundColor(this.getNavigationActionButtonBackgroundColor())
-    .scale(getButtonScale(this.backBtnPressed))
-    .animation(getButtonAnimation())
-    .onTouch(createButtonTouchHandler((pressed: boolean): void => {
-      this.backBtnPressed = pressed
-    }))
-    .onClick(() => {
-      this.onBack()
-    })
-  }
-
-  @Builder
-  private NewChatButtonBuilder() {
-    Button({ type: ButtonType.Circle }) {
-      SymbolGlyph($r('sys.symbol.message_badge_plus'))
-        .fontSize(17)
-        .fontColor([$r('app.color.text_primary')])
-    }
-    .width(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .height(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-    .backgroundColor(this.getNavigationActionButtonBackgroundColor())
-    .scale(getButtonScale(this.newChatBtnPressed))
-    .animation(getButtonAnimation())
-    .onTouch(createButtonTouchHandler((pressed: boolean): void => {
-      this.newChatBtnPressed = pressed
-    }))
-    .onClick(() => {
-      this.onNewChat()
-    })
-  }
-
-  @Builder
-  private MessageMapButtonBuilder() {
-    Button({ type: ButtonType.Circle }) {
-      SymbolGlyph($r('sys.symbol.map'))
-        .fontSize(16)
-        .fontColor([$r('app.color.text_primary')])
-    }
-    .width(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .height(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-    .backgroundColor(this.getNavigationActionButtonBackgroundColor())
-    .scale(getButtonScale(this.messageMapBtnPressed))
-    .animation(getButtonAnimation())
-    .onTouch(createButtonTouchHandler((pressed: boolean): void => {
-      this.messageMapBtnPressed = pressed
-    }))
-    .onClick(() => {
-      this.onOpenMessageMap()
-    })
-  }
-
-  @Builder
-  private MoreButtonBuilder() {
-    Button({ type: ButtonType.Circle }) {
-      SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
-        .fontSize(16)
-        .fontColor([$r('app.color.text_primary')])
-    }
-    .width(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .height(CHAT_NAVIGATION_ACTION_BUTTON_SIZE)
-    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-    .backgroundColor(this.getNavigationActionButtonBackgroundColor())
-    .scale(getButtonScale(this.moreBtnPressed))
-    .animation(getButtonAnimation())
-    .onTouch(createButtonTouchHandler((pressed: boolean): void => {
-      this.moreBtnPressed = pressed
-    }))
-    .bindMenu(this.MoreMenuBuilder(), {
-      placement: Placement.BottomRight,
-      offset: { x: 0, y: 10 },
-      backgroundColor: this.getMoreMenuBackgroundColor(),
-      backgroundBlurStyle: BlurStyle.Regular
-    })
-  }
-
-  @Builder
-  private MoreMenuBuilder() {
-    Menu() {
-      MenuItem({
-        startIcon: $r('sys.symbol.square_and_pencil'),
-        content: $r('app.string.edit_chat_title')
-      })
-        .onClick(() => {
-          this.startEditingTitle()
-        })
-
-      MenuItem({
-        startIcon: $r('sys.symbol.arrow_clockwise'),
-        content: $r('app.string.regenerate_title')
-      })
-        .enabled(!this.isTitleGenerating && !this.isSending)
-        .onClick(() => {
-          this.onRegenerateTitle()
-        })
-
-      MenuItem({
-        startIcon: $r('sys.symbol.trash'),
-        content: $r('app.string.delete_chat')
-      })
-        .contentFontColor($r('app.color.status_error'))
-        .onClick(() => {
-          this.onDeleteChat()
-        })
-    }
-  }
-
   build() {
-    Row() {
-      Row() {
-        this.BackButtonBuilder()
-      }
-      .width(this.leftActionLaneWidth)
-      .height(CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT)
-      .justifyContent(FlexAlign.Start)
-      .alignItems(VerticalAlign.Center)
+    Column() {
+      if (this.isEditingTitle) {
+        TextInput({ text: this.editingTitleInput, placeholder: $r('app.string.chat_title_input_placeholder') })
+          .id(this.titleInputFocusId)
+          .defaultFocus(true)
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .placeholderColor($r('app.color.text_tertiary'))
+          .backgroundColor(Color.Transparent)
+          .border({ width: { bottom: 1 }, color: this.themePrimary })
+          .maxLength(50)
+          .height(36)
+          .width('100%')
+          .onChange((value: string) => {
+            this.editingTitleInput = value
+          })
+          .onSubmit(() => {
+            this.finishEditingTitle()
+          })
+          .onBlur(() => {
+            this.finishEditingTitle()
+          })
+      } else {
+        Row({ space: 8 }) {
+          Row() {
+            this.IdentityIconBuilder()
+          }
+          .margin({ top: 1 })
 
-      Column() {
-        if (this.isEditingTitle) {
-          TextInput({ text: this.editingTitleInput, placeholder: $r('app.string.chat_title_input_placeholder') })
-            .id(this.titleInputFocusId)
-            .defaultFocus(true)
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .placeholderColor($r('app.color.text_tertiary'))
-            .backgroundColor(Color.Transparent)
-            .border({ width: { bottom: 1 }, color: this.themePrimary })
-            .maxLength(50)
-            .height(36)
-            .width('100%')
-            .onChange((value: string) => {
-              this.editingTitleInput = value
-            })
-            .onSubmit(() => {
-              this.finishEditingTitle()
-            })
-            .onBlur(() => {
-              this.finishEditingTitle()
-            })
-        } else {
-          Row({ space: 8 }) {
+          Column({ space: 1 }) {
             Row() {
-              this.IdentityIconBuilder()
-            }
-            .margin({ top: 1 })
-
-            Column({ space: 1 }) {
-              Row() {
-                if (this.titleContainsLatex()) {
-                  Markdown({
-                    controller: this.titleMarkdownController,
-                    text: this.normalizeLatexInTitle(this.sessionTitle)
-                  })
-                    .layoutWeight(1)
-                    .constraintSize({ maxHeight: 22 })
-                    .clip(true)
-                    .backgroundColor(Color.Transparent)
-                } else {
-                  Text(this.sessionTitle)
-                    .layoutWeight(1)
-                    .fontSize(15)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
-                    .maxLines(1)
-                    .lineHeight(17)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-
-                if (this.isTitleGenerating) {
-                  LoadingProgress()
-                    .width(12)
-                    .height(12)
-                    .color($r('app.color.text_tertiary'))
-                    .margin({ left: 4 })
-                }
-
-                if (this.titleGenerateFailed && !this.isTitleGenerating) {
-                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                    .fontSize(12)
-                    .fontColor([$r('app.color.text_tertiary')])
-                    .margin({ left: 4 })
-                    .onClick(() => {
-                      this.onRegenerateTitle()
-                    })
-                }
-              }
-              .width('100%')
-              .alignItems(VerticalAlign.Center)
-              .gesture(
-                LongPressGesture()
-                  .onAction(() => {
-                    this.startEditingTitle()
-                  })
-              )
-
-              Row({ space: 3 }) {
-                Text(this.getCurrentModelTitle())
+              if (this.titleContainsLatex()) {
+                Markdown({
+                  controller: this.titleMarkdownController,
+                  text: this.normalizeLatexInTitle(this.sessionTitle)
+                })
                   .layoutWeight(1)
-                  .fontSize(10)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(this.getModelIdentityTextColor())
+                  .constraintSize({ maxHeight: 22 })
+                  .clip(true)
+                  .backgroundColor(Color.Transparent)
+              } else {
+                Text(this.sessionTitle)
+                  .layoutWeight(1)
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.text_primary'))
                   .maxLines(1)
+                  .lineHeight(17)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
 
-                SymbolGlyph($r('sys.symbol.chevron_down'))
+              if (this.isTitleGenerating) {
+                LoadingProgress()
+                  .width(12)
+                  .height(12)
+                  .color($r('app.color.text_tertiary'))
+                  .margin({ left: 4 })
+              }
+
+              if (this.titleGenerateFailed && !this.isTitleGenerating) {
+                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                   .fontSize(12)
+                  .fontColor([$r('app.color.text_tertiary')])
+                  .margin({ left: 4 })
+                  .onClick(() => {
+                    this.onRegenerateTitle()
+                  })
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+
+            Row({ space: 3 }) {
+              Text(this.getCurrentModelTitle())
+                .layoutWeight(1)
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.getModelIdentityTextColor())
+                .maxLines(1)
+                .lineHeight(14)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+              Row() {
+                SymbolGlyph($r('sys.symbol.chevron_down'))
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Bold)
                   .fontColor([this.getModelIdentityChevronColor()])
               }
-              .width('100%')
+              .width(16)
+              .height(16)
+              .justifyContent(FlexAlign.Center)
               .alignItems(VerticalAlign.Center)
             }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
+            .width('100%')
+            .height(16)
+            .alignItems(VerticalAlign.Center)
           }
-          .width('100%')
-          .height('100%')
-          .alignItems(VerticalAlign.Center)
-          .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => {
-            this.openModelSelector()
-          })
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
         }
+        .width('100%')
+        .height('100%')
+        .alignItems(VerticalAlign.Center)
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          this.openModelSelector()
+        })
       }
-      .layoutWeight(1)
-      .height(CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT)
-      .padding({
-        left: this.isEditingTitle ? 6 : 4,
-        right: this.isEditingTitle ? 8 : 6,
-        top: this.isEditingTitle ? 4 : 2,
-        bottom: this.isEditingTitle ? 4 : 2
-      })
-      .justifyContent(FlexAlign.Center)
-      .backgroundColor(Color.Transparent)
-
-      Row({ space: 6 }) {
-        if (this.showNewChatAction) {
-          this.NewChatButtonBuilder()
-        }
-        this.MessageMapButtonBuilder()
-        this.MoreButtonBuilder()
-      }
-      .width(this.rightActionLaneWidth)
-      .height(CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT)
-      .justifyContent(FlexAlign.End)
-      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .height(CHAT_NAVIGATION_TITLE_STACK_BUILDER_HEIGHT)
-    .padding({ left: 12, right: 12 })
+    .padding({
+      left: this.contentStartInset + (this.isEditingTitle ? 6 : 4),
+      right: this.contentEndInset + (this.isEditingTitle ? 8 : 6),
+      top: this.isEditingTitle ? 4 : 2,
+      bottom: this.isEditingTitle ? 4 : 2
+    })
+    .justifyContent(FlexAlign.Center)
     .translate({ y: CHAT_NAVIGATION_CONTENT_VERTICAL_OFFSET })
     .backgroundColor(Color.Transparent)
     .renderGroup(false)

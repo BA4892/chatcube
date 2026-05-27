@@ -1,4 +1,4 @@
-import { KeyboardAvoidMode } from '@kit.ArkUI'
+import { KeyboardAvoidMode, SymbolGlyphModifier } from '@kit.ArkUI'
 import { common } from '@kit.AbilityKit'
 import {
   DefaultMediaModel,
@@ -8,6 +8,8 @@ import {
   PromptActionTool
 } from '@lyb/media-preview'
 import {
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationMenuItemOptions,
   HdsNavDestination,
   HdsNavDestinationTitleMode,
   HdsNavigationTitleBarOptions
@@ -132,9 +134,10 @@ class ProviderModelSelection {
 }
 
 const HDS_NAV_DESTINATION_MINI_TITLE_BAR_HEIGHT: number = 56
-const HDS_NAV_TITLE_LEFT_ACTION_LANE_WIDTH: number = 44
-const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_SINGLE: number = 80
-const HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_DOUBLE: number = 116
+const HDS_NAV_TITLE_NATIVE_START_INSET: number = 56
+const HDS_NAV_TITLE_NATIVE_MENU_BUTTON_WIDTH: number = 56
+const HDS_NAV_TITLE_NATIVE_MENU_EDGE_INSET: number = 16
+const HDS_NAV_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT: number = 20
 
 @ComponentV2
 export struct ChatPage {
@@ -203,6 +206,7 @@ export struct ChatPage {
   @Local sessionTitle: string = ''
   @Local isTitleGenerating: boolean = false
   @Local titleGenerateFailed: boolean = false
+  @Local titleEditRequestTick: number = 0
   // 图片预览状态
   @Local showImagePreview: boolean = false
   @Local previewImages: Array<string> = []
@@ -2105,12 +2109,6 @@ export struct ChatPage {
       this.getChatTitleBarMaskExtraHeight()
   }
 
-  private getTitleRightActionLaneWidth(): number {
-    return this.shouldShowTitleBarNewChatAction() ?
-      HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_DOUBLE :
-      HDS_NAV_TITLE_RIGHT_ACTION_LANE_WIDTH_SINGLE
-  }
-
   private getStatusBarContentColor(): string {
     return this.isDarkMode ? '#F5F7FA' : '#1F2329'
   }
@@ -2141,7 +2139,19 @@ export struct ChatPage {
     options.maskExtraHeightVp = this.getChatTitleBarMaskExtraHeight()
     options.blurEffectiveEndOffsetVp = this.windowWidthVp > this.windowHeightVp ? 20 : 28
     options.stackBuilder = (): void => this.ChatTitleStackBuilder()
-    return buildHdsTopNavigationTitleBarOptions(options)
+    const titleBarOptions = buildHdsTopNavigationTitleBarOptions(options)
+    titleBarOptions.content = {
+      title: {
+        mainTitle: ' '
+      },
+      backIcon: this.getTitleBarBackIcon(),
+      menu: {
+        maxCount: this.getTitleBarDirectMenuCount(),
+        value: this.getTitleBarMenuItems()
+      },
+      stackBuilder: options.stackBuilder
+    }
+    return titleBarOptions
   }
 
   // 平板分栏复用 Index.ets 外层宽度判定，避免右栏按旧阈值保留分栏态。
@@ -2149,13 +2159,112 @@ export struct ChatPage {
     return shouldUseIndexChatSplitLayout(this.windowWidthVp, this.windowHeightVp, this.layoutSizeClass)
   }
 
-  // 大屏分栏下削减模糊蒙版向下渐变带的视觉占位，
-  // 让 titleBar 下沿与内容区贴得更紧；手机/竖屏维持 HDS 推荐值。
+  // 平板分栏下需要更长的下沿渐变模糊，避免滚动内容贴近 titleBar 时干扰标题可读性。
+  // 手机/非分栏维持 HDS 推荐值（横屏 16 / 竖屏 20）。
   private getChatTitleBarMaskExtraHeight(): number {
     if (this.isChatSplitLayout()) {
-      return 8
+      return HDS_NAV_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT
     }
     return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
+  }
+
+  private createTitleBarSymbolIcon(symbol: Resource, fontSize: number = 20): SymbolGlyphModifier {
+    const icon = new SymbolGlyphModifier(symbol)
+    icon.fontSize(fontSize)
+    icon.fontColor([$r('app.color.text_primary')])
+    return icon
+  }
+
+  private getTitleBarBackIcon(): HdsNavigationBackButtonItemOptions {
+    return {
+      icon: this.createTitleBarSymbolIcon($r('sys.symbol.chevron_left'), 20),
+      action: () => {
+        this.handleBack()
+      }
+    }
+  }
+
+  private getTitleStackContentStartInset(): number {
+    return HDS_NAV_TITLE_NATIVE_START_INSET
+  }
+
+  private getTitleBarDirectMenuCount(): number {
+    if (this.isChatSplitLayout()) {
+      return 1
+    }
+    return this.shouldShowTitleBarNewChatAction() ? 2 : 1
+  }
+
+  private getTitleBarMenuItemCount(): number {
+    return this.shouldShowTitleBarNewChatAction() ? 5 : 4
+  }
+
+  private getTitleBarVisibleActionSlotCount(): number {
+    return Math.min(this.getTitleBarDirectMenuCount(), this.getTitleBarMenuItemCount())
+  }
+
+  private getTitleStackContentEndInset(): number {
+    return HDS_NAV_TITLE_NATIVE_MENU_EDGE_INSET +
+      HDS_NAV_TITLE_NATIVE_MENU_BUTTON_WIDTH * this.getTitleBarVisibleActionSlotCount()
+  }
+
+  private getTitleBarMenuItems(): Array<HdsNavigationMenuItemOptions> {
+    const menus: Array<HdsNavigationMenuItemOptions> = []
+    if (this.shouldShowTitleBarNewChatAction()) {
+      menus.push({
+        content: {
+          label: $r('app.string.new_chat'),
+          icon: this.createTitleBarSymbolIcon($r('sys.symbol.message_badge_plus'), 20),
+          action: () => {
+            void this.handleNewChat()
+          }
+        }
+      })
+    }
+
+    menus.push({
+      content: {
+        label: $r('app.string.message_map_menu_entry'),
+        icon: this.createTitleBarSymbolIcon($r('sys.symbol.map'), 20),
+        action: () => {
+          this.handleOpenMessageMap()
+        }
+      }
+    })
+    menus.push({
+      content: {
+        label: $r('app.string.edit_chat_title'),
+        icon: this.createTitleBarSymbolIcon($r('sys.symbol.square_and_pencil'), 20),
+        action: () => {
+          this.requestTitleEditFromMenu()
+        }
+      }
+    })
+    menus.push({
+      content: {
+        label: $r('app.string.regenerate_title'),
+        icon: this.createTitleBarSymbolIcon($r('sys.symbol.arrow_clockwise'), 20),
+        isEnabled: !this.isTitleGenerating && !this.isSending,
+        action: () => {
+          void this.handleRegenerateTitle()
+        }
+      }
+    })
+    menus.push({
+      content: {
+        label: $r('app.string.delete_chat'),
+        icon: this.createTitleBarSymbolIcon($r('sys.symbol.trash'), 20),
+        action: () => {
+          this.handleDeleteChat()
+        }
+      }
+    })
+    return menus
+  }
+
+  private requestTitleEditFromMenu(): void {
+    this.safeStopInputSession()
+    this.titleEditRequestTick += 1
   }
 
   @Builder
@@ -2173,24 +2282,14 @@ export struct ChatPage {
       currentProviderCustomImagePath: this.currentProvider?.customImagePath ?? '',
       currentProviderBrandColor: this.currentProvider?.brandColor ?? '',
       isTitleGenerating: this.isTitleGenerating,
-      isSending: this.isSending,
       titleGenerateFailed: this.titleGenerateFailed,
-      showNewChatAction: this.shouldShowTitleBarNewChatAction(),
-      leftActionLaneWidth: HDS_NAV_TITLE_LEFT_ACTION_LANE_WIDTH,
-      rightActionLaneWidth: this.getTitleRightActionLaneWidth(),
-      onBack: (): void => {
-        this.handleBack()
-      },
+      editTitleRequestTick: this.titleEditRequestTick,
+      contentStartInset: this.getTitleStackContentStartInset(),
+      contentEndInset: this.getTitleStackContentEndInset(),
       onModelSelect: (): void => {
         this.safeStopInputSession()
         this.isModelSelectorVisible = true
         this.modelSheetActivePanel = 'selector'
-      },
-      onNewChat: (): void => {
-        void this.handleNewChat()
-      },
-      onDeleteChat: (): void => {
-        this.handleDeleteChat()
       },
       onRegenerateTitle: (): void => {
         void this.handleRegenerateTitle()
@@ -2203,9 +2302,6 @@ export struct ChatPage {
           console.error('ChatPage', `Failed to save inline title: ${JSON.stringify(error)}`)
           this.showError($r('app.string.action_failed_retry'))
         })
-      },
-      onOpenMessageMap: (): void => {
-        this.handleOpenMessageMap()
       }
     })
   }
@@ -2651,7 +2747,7 @@ export struct ChatPage {
       { statusBarContentColor: this.getStatusBarContentColor() },
       { statusBarContentColor: this.getStatusBarContentColor() }
     )
-    .hideBackButton(true)
+    .hideBackButton(false)
     // 注意：不要在 NavDestination 上设置 ignoreLayoutSafeArea([SYSTEM], [TOP])。
     // HdsNavigation 容器（Index.ets）已经处理了顶部 SafeArea，这里再设一次会被叠加，
     // 导致分栏右栏 titleBar 顶部出现额外留白。SafeArea 由 Navigation 容器统一管。

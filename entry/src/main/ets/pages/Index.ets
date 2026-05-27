@@ -137,6 +137,7 @@ struct Index {
   private static readonly COMPACT_TABS_SHOW_SCROLL_OFFSET_PX: number = 1
   private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 220
   private static readonly SETTINGS_SHEET_OUTSIDE_DISMISS_GUARD_MS: number = 320
+  private static readonly COMPACT_CHAT_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT: number = 20
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -2538,10 +2539,10 @@ struct Index {
   }
 
   private getCompactChatTitleBarMaskExtraHeight(): number {
-    // 大屏分栏下削减模糊蒙版向下渐变带的视觉占位，让 titleBar 与列表更紧凑；
-    // 手机/竖屏维持 HDS 推荐值（横屏 16 / 竖屏 20）。
+    // 平板分栏下需要更长的下沿渐变模糊，避免列表内容贴近 titleBar 时干扰标题可读性。
+    // 手机/非分栏维持 HDS 推荐值（横屏 16 / 竖屏 20）。
     if (this.isChatSplitLayout()) {
-      return 8
+      return Index.COMPACT_CHAT_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT
     }
     return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
   }
@@ -4049,7 +4050,8 @@ struct Index {
             .constraintSize({ maxWidth: this.getAssistantSwitchNameMaxWidth() })
 
           SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(13)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
             .fontColor([$r('app.color.text_secondary')])
         }
         .alignItems(VerticalAlign.Center)
