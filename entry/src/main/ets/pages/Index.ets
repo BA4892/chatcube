@@ -136,6 +136,7 @@ struct Index {
   private static readonly COMPACT_TABS_HIDE_SCROLL_OFFSET_PX: number = 1
   private static readonly COMPACT_TABS_SHOW_SCROLL_OFFSET_PX: number = 1
   private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 220
+  private static readonly SETTINGS_SHEET_OUTSIDE_DISMISS_GUARD_MS: number = 320
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -343,6 +344,7 @@ struct Index {
   // Settings Sheet 关闭动画期间的状态机（避免“关闭回调晚到”误关新弹窗）
   private settingsSheetClosing: boolean = false
   private pendingSettingsSheetType: SettingsSheetType = SettingsSheetType.NONE
+  private settingsSheetOutsideDismissEnabledAt: number = 0
   private chatTabNavStack: NavPathStack = new NavPathStack()
   private settingsNavPathStack: NavPathStack = new NavPathStack()
   private static readonly CHAT_DETAIL_EMPTY_ROUTE: string = 'ChatDetailEmpty'
@@ -472,6 +474,7 @@ struct Index {
     this.pendingSettingsSheetType = SettingsSheetType.NONE
     if (this.showSettingsSheet) {
       this.settingsSheetClosing = true
+      this.settingsSheetOutsideDismissEnabledAt = 0
       this.showSettingsSheet = false
       return
     }
@@ -1707,8 +1710,7 @@ struct Index {
       return
     }
 
-    this.activeSettingsSheetType = type
-    this.showSettingsSheet = true
+    this.showSettingsSheetWithType(type)
   }
 
   private closeAllSettingsSheets(): void {
@@ -1717,6 +1719,7 @@ struct Index {
     }
     // 仅当弹窗当前处于打开状态时进入 Closing，避免重复 close 干扰排队打开逻辑。
     this.settingsSheetClosing = true
+    this.settingsSheetOutsideDismissEnabledAt = 0
     this.showSettingsSheet = false
   }
 
@@ -1724,8 +1727,28 @@ struct Index {
     return this.showSettingsSheet || this.settingsSheetClosing
   }
 
+  private showSettingsSheetWithType(type: SettingsSheetType): void {
+    this.activeSettingsSheetType = type
+    this.settingsSheetOutsideDismissEnabledAt =
+      Date.now() + Index.SETTINGS_SHEET_OUTSIDE_DISMISS_GUARD_MS
+    this.showSettingsSheet = true
+  }
+
+  private canDismissSettingsSheetByOutsideTouch(): boolean {
+    return this.settingsSheetOutsideDismissEnabledAt <= 0 ||
+      Date.now() >= this.settingsSheetOutsideDismissEnabledAt
+  }
+
   private handleSettingsSheetWillDismiss(dismissAction: DismissSheetAction): void {
-    if (dismissAction.reason === DismissReason.PRESS_BACK || dismissAction.reason === DismissReason.SLIDE_DOWN) {
+    if (dismissAction.reason === DismissReason.TOUCH_OUTSIDE && !this.canDismissSettingsSheetByOutsideTouch()) {
+      return
+    }
+    if (dismissAction.reason === DismissReason.PRESS_BACK ||
+      dismissAction.reason === DismissReason.SLIDE_DOWN ||
+      dismissAction.reason === DismissReason.TOUCH_OUTSIDE ||
+      dismissAction.reason === DismissReason.CLOSE_BUTTON) {
+      this.settingsSheetClosing = true
+      this.settingsSheetOutsideDismissEnabledAt = 0
       dismissAction.dismiss()
     }
   }
@@ -1925,11 +1948,11 @@ struct Index {
             if (this.pendingSettingsSheetType !== SettingsSheetType.NONE) {
               const nextType = this.pendingSettingsSheetType
               this.pendingSettingsSheetType = SettingsSheetType.NONE
-              this.activeSettingsSheetType = nextType
-              this.showSettingsSheet = true
+              this.showSettingsSheetWithType(nextType)
               return
             }
             this.activeSettingsSheetType = SettingsSheetType.NONE
+            this.settingsSheetOutsideDismissEnabledAt = 0
           }
         })
 
@@ -4740,7 +4763,7 @@ struct Index {
   SettingsSheetBuilder() {
     Column() {
       Column() {
-        // 自绘标题栏：唯一关闭入口，避免系统遮罩/拖拽关闭造成“点快了自己收缩/吞点击”。
+        // 自绘标题栏保留明确关闭入口；遮罩、返回和拖拽关闭统一走 onWillDismiss 收口。
         Row() {
           Button() {
             SymbolGlyph($r('sys.symbol.xmark'))
