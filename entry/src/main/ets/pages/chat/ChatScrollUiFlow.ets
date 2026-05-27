@@ -1,5 +1,5 @@
 import { ChatMessage } from '../../models/ChatModels'
-import { LengthUnit } from '@kit.ArkUI'
+import { LengthMetrics } from '@kit.ArkUI'
 
 export interface ChatScrollUiFlowDependencies {
   scroller: Scroller
@@ -49,8 +49,16 @@ export class ChatScrollUiFlow {
   // 单次动画太长容易堆叠抖动; 200ms 与 ChatGPT 网页端的滚动跟随节奏相近
   private static readonly PIN_BOTTOM_ALIGNMENT_ANIMATION_DURATION_MS: number = 200
   private static readonly INDEXED_SCROLL_TARGET_NONE: number = -1
+  private static readonly INDEXED_SCROLL_PHASE_NONE: number = 0
+  private static readonly INDEXED_SCROLL_PHASE_WAIT_APPEAR: number = 1
+  private static readonly INDEXED_SCROLL_PHASE_WAIT_STABLE: number = 2
+  private static readonly INDEXED_SCROLL_PHASE_FINE_TUNE: number = 3
   private static readonly INDEXED_SCROLL_CORRECTION_MAX_COUNT: number = 8
-  private static readonly INDEXED_SCROLL_CORRECTION_WINDOW_MS: number = 1800
+  private static readonly INDEXED_SCROLL_FINE_TUNE_WINDOW_MS: number = 800
+  private static readonly INDEXED_SCROLL_WAIT_STABLE_TIMEOUT_MS: number = 1500
+  private static readonly INDEXED_SCROLL_UNMEASURED_FALLBACK_MS: number = 80
+  private static readonly INDEXED_SCROLL_STABLE_HEIGHT_DELTA_VP: number = 2
+  private static readonly INDEXED_SCROLL_STABLE_TICK_TARGET: number = 2
   private deps: ChatScrollUiFlowDependencies
   private pinnedBottomAlignmentTimerIds: number[] = []
   private pinnedBottomAlignmentCompletionTimerId: number = -1
@@ -66,7 +74,10 @@ export class ChatScrollUiFlow {
   private pendingIndexedScrollOffset: number = 0
   private pendingIndexedScrollCorrectionCount: number = 0
   private pendingIndexedScrollCorrectionDeadline: number = 0
-  private pendingIndexedScrollCenteredOnce: boolean = false
+  private pendingIndexedScrollPhase: number = ChatScrollUiFlow.INDEXED_SCROLL_PHASE_NONE
+  private pendingIndexedTargetLastHeight: number = 0
+  private pendingIndexedTargetStableTickCount: number = 0
+  private pendingIndexedScrollPhaseTimerId: number = -1
   private interactiveContentResizePending: boolean = false
 
   constructor(deps: ChatScrollUiFlowDependencies) {
@@ -254,13 +265,24 @@ export class ChatScrollUiFlow {
     }
   }
 
+  private clearPendingIndexedScrollPhaseTimer(): void {
+    if (this.pendingIndexedScrollPhaseTimerId < 0) {
+      return
+    }
+    clearTimeout(this.pendingIndexedScrollPhaseTimerId)
+    this.pendingIndexedScrollPhaseTimerId = -1
+  }
+
   private clearPendingIndexedScrollTarget(): void {
+    this.clearPendingIndexedScrollPhaseTimer()
     this.pendingIndexedScrollTarget = ChatScrollUiFlow.INDEXED_SCROLL_TARGET_NONE
     this.pendingIndexedScrollAlign = ScrollAlign.CENTER
     this.pendingIndexedScrollOffset = 0
     this.pendingIndexedScrollCorrectionCount = 0
     this.pendingIndexedScrollCorrectionDeadline = 0
-    this.pendingIndexedScrollCenteredOnce = false
+    this.pendingIndexedScrollPhase = ChatScrollUiFlow.INDEXED_SCROLL_PHASE_NONE
+    this.pendingIndexedTargetLastHeight = 0
+    this.pendingIndexedTargetStableTickCount = 0
   }
 
   private isAtTopBoundary(): boolean {
@@ -310,17 +332,18 @@ export class ChatScrollUiFlow {
     return true
   }
 
-  private scrollPendingIndexedTarget(animated: boolean, align: ScrollAlign): boolean {
+  private scrollPendingIndexedTarget(animated: boolean, align: ScrollAlign, useOffset: boolean = true): boolean {
     if (!this.hasPendingIndexedScrollTarget()) {
       return false
     }
     try {
-      this.deps.scroller.scrollToIndex(this.pendingIndexedScrollTarget, animated, align, {
-        extraOffset: {
-          value: this.pendingIndexedScrollOffset,
-          unit: LengthUnit.VP
-        }
-      })
+      if (useOffset && this.pendingIndexedScrollOffset > 0) {
+        this.deps.scroller.scrollToIndex(this.pendingIndexedScrollTarget, animated, align, {
+          extraOffset: LengthMetrics.vp(-this.pendingIndexedScrollOffset)
+        })
+      } else {
+        this.deps.scroller.scrollToIndex(this.pendingIndexedScrollTarget, animated, align)
+      }
       return true
     } catch (_error) {
       this.clearPendingIndexedScrollTarget()
@@ -328,18 +351,98 @@ export class ChatScrollUiFlow {
     }
   }
 
-  private correctPendingIndexedScroll(animated: boolean): boolean {
+  private issuePendingIndexedFineTune(animated: boolean): boolean {
     if (!this.hasPendingIndexedScrollTarget()) {
+      return false
+    }
+    if (this.pendingIndexedScrollPhase !== ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE) {
       return false
     }
     if (!this.markPendingIndexedScrollCorrectionIssued()) {
       return false
     }
     if (!this.isPendingIndexedScrollTargetVisible()) {
-      return this.scrollPendingIndexedTarget(false, ScrollAlign.START)
+      return this.scrollPendingIndexedTarget(false, ScrollAlign.CENTER, false)
     }
-    this.pendingIndexedScrollCenteredOnce = true
-    return this.scrollPendingIndexedTarget(animated, this.pendingIndexedScrollAlign)
+    return this.scrollPendingIndexedTarget(animated, this.pendingIndexedScrollAlign, true)
+  }
+
+  private schedulePendingIndexedFineTuneClear(): void {
+    this.clearPendingIndexedScrollPhaseTimer()
+    const expectedTarget = this.pendingIndexedScrollTarget
+    this.pendingIndexedScrollPhaseTimerId = setTimeout(() => {
+      this.pendingIndexedScrollPhaseTimerId = -1
+      if (!this.hasPendingIndexedScrollTarget() ||
+        this.pendingIndexedScrollTarget !== expectedTarget ||
+        this.pendingIndexedScrollPhase !== ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE) {
+        return
+      }
+      this.clearPendingIndexedScrollTarget()
+    }, ChatScrollUiFlow.INDEXED_SCROLL_FINE_TUNE_WINDOW_MS)
+  }
+
+  private schedulePendingIndexedStableFallback(delayMs: number): void {
+    this.clearPendingIndexedScrollPhaseTimer()
+    const expectedTarget = this.pendingIndexedScrollTarget
+    this.pendingIndexedScrollPhaseTimerId = setTimeout(() => {
+      this.pendingIndexedScrollPhaseTimerId = -1
+      if (!this.hasPendingIndexedScrollTarget() ||
+        this.pendingIndexedScrollTarget !== expectedTarget ||
+        this.pendingIndexedScrollPhase !== ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_STABLE) {
+        return
+      }
+      this.startPendingIndexedFineTune(false)
+    }, delayMs)
+  }
+
+  private enterPendingIndexedWaitStable(measuredHeight: number = 0): void {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return
+    }
+    this.pendingIndexedScrollPhase = ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_STABLE
+    this.pendingIndexedTargetLastHeight = measuredHeight > 0 ? measuredHeight : 0
+    this.pendingIndexedTargetStableTickCount = 0
+    this.schedulePendingIndexedStableFallback(measuredHeight > 0 ?
+      ChatScrollUiFlow.INDEXED_SCROLL_WAIT_STABLE_TIMEOUT_MS :
+      ChatScrollUiFlow.INDEXED_SCROLL_UNMEASURED_FALLBACK_MS)
+  }
+
+  private startPendingIndexedFineTune(animated: boolean): boolean {
+    if (!this.hasPendingIndexedScrollTarget()) {
+      return false
+    }
+    this.clearPendingIndexedScrollPhaseTimer()
+    this.pendingIndexedScrollPhase = ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE
+    this.pendingIndexedScrollCorrectionCount = 0
+    this.pendingIndexedScrollCorrectionDeadline = Date.now() +
+      ChatScrollUiFlow.INDEXED_SCROLL_FINE_TUNE_WINDOW_MS
+    const didScroll = this.scrollPendingIndexedTarget(animated, this.pendingIndexedScrollAlign, true)
+    if (didScroll) {
+      this.schedulePendingIndexedFineTuneClear()
+    }
+    return didScroll
+  }
+
+  private handlePendingIndexedMeasuredHeight(measuredHeight: number): void {
+    if (measuredHeight <= 0) {
+      return
+    }
+    if (this.pendingIndexedTargetLastHeight <= 0) {
+      this.pendingIndexedTargetLastHeight = measuredHeight
+      this.pendingIndexedTargetStableTickCount = 0
+      this.schedulePendingIndexedStableFallback(ChatScrollUiFlow.INDEXED_SCROLL_WAIT_STABLE_TIMEOUT_MS)
+      return
+    }
+    const heightDelta = Math.abs(measuredHeight - this.pendingIndexedTargetLastHeight)
+    this.pendingIndexedTargetLastHeight = measuredHeight
+    if (heightDelta < ChatScrollUiFlow.INDEXED_SCROLL_STABLE_HEIGHT_DELTA_VP) {
+      this.pendingIndexedTargetStableTickCount++
+    } else {
+      this.pendingIndexedTargetStableTickCount = 0
+    }
+    if (this.pendingIndexedTargetStableTickCount >= ChatScrollUiFlow.INDEXED_SCROLL_STABLE_TICK_TARGET) {
+      this.startPendingIndexedFineTune(false)
+    }
   }
 
   private correctPendingBottomEdge(): boolean {
@@ -558,9 +661,11 @@ export class ChatScrollUiFlow {
     this.pendingIndexedScrollTarget = index
     this.pendingIndexedScrollAlign = align
     this.pendingIndexedScrollOffset = this.normalizeScrollOffset(offset)
-    this.pendingIndexedScrollCorrectionDeadline = Date.now() +
-      ChatScrollUiFlow.INDEXED_SCROLL_CORRECTION_WINDOW_MS
-    this.scrollPendingIndexedTarget(false, ScrollAlign.START)
+    this.pendingIndexedScrollPhase = ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_APPEAR
+    this.scrollPendingIndexedTarget(false, ScrollAlign.CENTER, false)
+    if (this.isPendingIndexedScrollTargetVisible()) {
+      this.enterPendingIndexedWaitStable()
+    }
   }
 
   public prepareForInteractiveContentResize(): void {
@@ -578,24 +683,45 @@ export class ChatScrollUiFlow {
     if (!this.hasPendingIndexedScrollTarget()) {
       return
     }
-    if (!this.isPendingIndexedScrollTargetVisible()) {
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_APPEAR &&
+      this.isPendingIndexedScrollTargetVisible()) {
+      this.enterPendingIndexedWaitStable()
       return
     }
-    if (this.pendingIndexedScrollCenteredOnce) {
-      return
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE &&
+      this.isPendingIndexedScrollTargetVisible()) {
+      this.issuePendingIndexedFineTune(false)
     }
-    this.correctPendingIndexedScroll(false)
   }
 
   public handleIndexedTargetItemReady(listIndex: number): void {
     if (!this.hasPendingIndexedScrollTarget() || listIndex !== this.pendingIndexedScrollTarget) {
       return
     }
-    if (!this.markPendingIndexedScrollCorrectionIssued()) {
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_APPEAR) {
+      this.enterPendingIndexedWaitStable()
       return
     }
-    this.pendingIndexedScrollCenteredOnce = true
-    this.scrollPendingIndexedTarget(false, this.pendingIndexedScrollAlign)
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE) {
+      this.issuePendingIndexedFineTune(false)
+    }
+  }
+
+  public handleIndexedTargetItemMeasured(listIndex: number, measuredHeight: number): void {
+    if (!this.hasPendingIndexedScrollTarget() || listIndex !== this.pendingIndexedScrollTarget) {
+      return
+    }
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_APPEAR) {
+      this.enterPendingIndexedWaitStable(measuredHeight)
+      return
+    }
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_STABLE) {
+      this.handlePendingIndexedMeasuredHeight(measuredHeight)
+      return
+    }
+    if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_FINE_TUNE) {
+      this.issuePendingIndexedFineTune(false)
+    }
   }
 
   handleScrollStart(): void {
@@ -603,13 +729,25 @@ export class ChatScrollUiFlow {
     if (this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_NONE) {
       return
     }
+    this.clearPendingIndexedScrollTarget()
     this.clearPinnedBottomAlignmentTimers()
     this.clearBottomLayoutPin()
   }
 
   handleScrollStop(): boolean {
     if (this.hasPendingIndexedScrollTarget()) {
-      this.correctPendingIndexedScroll(false)
+      if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_APPEAR) {
+        if (this.isPendingIndexedScrollTargetVisible()) {
+          this.enterPendingIndexedWaitStable()
+        } else {
+          this.scrollPendingIndexedTarget(false, ScrollAlign.CENTER, false)
+        }
+        return true
+      }
+      if (this.pendingIndexedScrollPhase === ChatScrollUiFlow.INDEXED_SCROLL_PHASE_WAIT_STABLE) {
+        return true
+      }
+      this.issuePendingIndexedFineTune(false)
       return true
     }
     if (this.pendingEdgeScrollTarget === ChatScrollUiFlow.EDGE_SCROLL_TARGET_TOP) {
@@ -628,11 +766,6 @@ export class ChatScrollUiFlow {
   }
 
   handleContentLayoutChanged(): void {
-    if (this.hasPendingIndexedScrollTarget() && this.pendingIndexedScrollCenteredOnce &&
-      this.isPendingIndexedScrollTargetVisible()) {
-      this.correctPendingIndexedScroll(false)
-      return
-    }
     if (this.interactiveContentResizePending &&
       this.pendingEdgeScrollTarget !== ChatScrollUiFlow.EDGE_SCROLL_TARGET_BOTTOM) {
       this.clearPinnedBottomAlignmentTimers()

@@ -134,6 +134,7 @@ class ProviderModelSelection {
 }
 
 const HDS_NAV_DESTINATION_MINI_TITLE_BAR_HEIGHT: number = 56
+const MESSAGE_MAP_JUMP_EXTRA_TOP_CLEARANCE: number = 36
 const HDS_NAV_TITLE_NATIVE_START_INSET: number = 56
 const HDS_NAV_TITLE_NATIVE_MENU_BUTTON_WIDTH: number = 56
 const HDS_NAV_TITLE_NATIVE_MENU_EDGE_INSET: number = 16
@@ -333,6 +334,7 @@ export struct ChatPage {
   @Local shareMessages: ChatMessage[] = []
   // 消息地图弹窗状态
   @Local showMessageMapSheet: boolean = false
+  private pendingMessageMapJumpMessageId: string = ''
   // 编辑消息相关状态（内联编辑模式）
   @Local isEditingMessage: boolean = false // 是否处于消息编辑模式
   @Local editingMessageId: string = '' // 正在编辑的消息ID
@@ -2109,6 +2111,11 @@ export struct ChatPage {
       this.getChatTitleBarMaskExtraHeight()
   }
 
+  private getMessageMapJumpTopClearance(): number {
+    // scrollToIndex extraOffset 使用 VP；在 HDS mini titleBar 下方再留出 20vp 视觉余量。
+    return HDS_NAV_DESTINATION_MINI_TITLE_BAR_HEIGHT + MESSAGE_MAP_JUMP_EXTRA_TOP_CLEARANCE
+  }
+
   private getStatusBarContentColor(): string {
     return this.isDarkMode ? '#F5F7FA' : '#1F2329'
   }
@@ -2395,8 +2402,8 @@ export struct ChatPage {
           onMessageItemAppear: (listIndex: number): void => {
             this.getScrollUiFlow().handleIndexedTargetItemReady(listIndex)
           },
-          onMessageItemLayoutChange: (listIndex: number): void => {
-            this.getScrollUiFlow().handleIndexedTargetItemReady(listIndex)
+          onMessageItemLayoutChange: (listIndex: number, measuredHeight: number): void => {
+            this.getScrollUiFlow().handleIndexedTargetItemMeasured(listIndex, measuredHeight)
           },
           onDidScroll: (scrollOffset: number, scrollState: ScrollState): void => {
             this.handleMessageListDidScroll(scrollOffset, scrollState)
@@ -2668,6 +2675,7 @@ export struct ChatPage {
           preferType: SheetType.BOTTOM,
           onDisappear: () => {
             this.showMessageMapSheet = false
+            this.performPendingMessageMapJump()
           }
         })
 
@@ -3224,22 +3232,29 @@ export struct ChatPage {
 
   private handleJumpToMessageFromMap(messageIndex: number): void {
     if (messageIndex < 0 || messageIndex >= this.messages.length) {
+      this.pendingMessageMapJumpMessageId = ''
       this.showMessageMapSheet = false
       return
     }
+    this.pendingMessageMapJumpMessageId = this.messages[messageIndex].id
     this.showMessageMapSheet = false
-    const targetMessageId = this.messages[messageIndex].id
-    setTimeout(() => {
-      const currentIndex = findMessageIndexById(this.messages, targetMessageId)
-      if (currentIndex < 0) {
-        return
-      }
-      this.getScrollUiFlow().scrollToIndexWithStabilization(
-        toListScrollIndexForMessage(currentIndex),
-        ScrollAlign.START,
-        this.getMessageListTopSpacerHeight()
-      )
-    }, 120)
+  }
+
+  private performPendingMessageMapJump(): void {
+    if (this.pendingMessageMapJumpMessageId === '') {
+      return
+    }
+    const targetMessageId = this.pendingMessageMapJumpMessageId
+    this.pendingMessageMapJumpMessageId = ''
+    const currentIndex = findMessageIndexById(this.messages, targetMessageId)
+    if (currentIndex < 0) {
+      return
+    }
+    this.getScrollUiFlow().scrollToIndexWithStabilization(
+      toListScrollIndexForMessage(currentIndex),
+      ScrollAlign.START,
+      this.getMessageMapJumpTopClearance()
+    )
   }
 
   private handleToolSelectionToggle(toolId: string, enabled: boolean): void {

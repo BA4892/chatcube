@@ -62,7 +62,8 @@ export struct ChatMessageListSection {
   @Event onContentLayoutChange: () => void = (): void => {}
   @Event onInteractiveContentResize: () => void = (): void => {}
   @Event onMessageItemAppear: (listIndex: number) => void = (_listIndex: number): void => {}
-  @Event onMessageItemLayoutChange: (listIndex: number) => void = (_listIndex: number): void => {}
+  @Event onMessageItemLayoutChange: (listIndex: number, measuredHeight: number) => void =
+    (_listIndex: number, _measuredHeight: number): void => {}
   @Event onDidScroll: (scrollOffset: number, scrollState: ScrollState) => void = (_scrollOffset: number,
     _scrollState: ScrollState): void => {}
   @Event onScrollIndex: (firstIndex: number, lastIndex: number) => void = (_firstIndex: number,
@@ -216,7 +217,7 @@ export struct ChatMessageListSection {
     this.rowLayoutWidths.set(rowId, width)
     this.rowLayoutHeights.set(rowId, height)
     this.onContentLayoutChange()
-    this.onMessageItemLayoutChange(listIndex)
+    this.onMessageItemLayoutChange(listIndex, height)
   }
 
   // 取消 @ReusableV2 复用: LazyForEach + 手动 DataSource 下精确订阅会失效, 复用瞬间 @Param 不刷新会
@@ -477,7 +478,6 @@ export struct ChatMessageListSection {
                     },
                     onContentLayoutChange: (): void => {
                       this.onContentLayoutChange()
-                      this.onMessageItemLayoutChange(_index + 1)
                     },
                     onInteractiveContentResize: (): void => {
                       this.onInteractiveContentResize()
