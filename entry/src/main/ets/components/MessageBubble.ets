@@ -11,7 +11,6 @@ import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
-import { getModelIconPath, buildIconResourcePath } from '../utils/ProviderIconUtils'
 import { shouldShowAssistantMessageToolbar } from '../utils/MessageBubbleDisplayUtils'
 import { AskUserCard } from './AskUserCard'
 import { HtmlPreviewCard } from './HtmlPreviewCard'
@@ -91,18 +90,6 @@ interface ToolSearchResultPayload {
   query?: string
   searchEngine?: string
   results?: ToolSearchResultItemPayload[]
-}
-
-interface ToolSearchArgumentPayload {
-  action?: string
-  type?: string
-  query?: string
-  queries?: string[]
-  q?: string
-  keyword?: string
-  keywords?: string
-  url?: string
-  tool?: string
 }
 
 interface HostedWebSearchDetailItem {
@@ -207,7 +194,6 @@ export struct MessageBubble {
   private translationRequestToken: number = 0
   // Reasoning 计时
   private reasoningStartAt: number = 0
-  private reasoningFinalMs: number = 0
   private reasoningTimerId: number = -1
   private reasoningShimmerTimerId: number = -1
   private searchStepPulseTimerId: number = -1
@@ -224,12 +210,7 @@ export struct MessageBubble {
   private cachedHasPreviewTextContent: boolean = false
   private cachedHasMessageTextContent: boolean = false
   private cachedHasToolbarPayload: boolean = false
-  private cachedCurrentMessageModelIconResourcePath: string = ''
-  private cachedReadonlyMessageContent: string = ''
-  private cachedReadonlyReasoningContent: string = ''
   private cachedReadonlyTranslatedText: string = ''
-  private cachedHasPreviewSegments: boolean = false
-  private cachedContentSegments: ContentSegment[] = []
   private cachedPreviewImageEntries: ImageAttachmentEntry[] = []
   private cachedMessageImageEntries: ImageAttachmentEntry[] = []
   private cachedMessageFileAttachments: MessageAttachment[] = []
@@ -273,31 +254,6 @@ export struct MessageBubble {
     { code: 'it', name: 'Italian', nativeName: 'Italiano' },
     { code: 'es', name: 'Spanish', nativeName: 'Español' }
   ]
-
-  // 获取当前消息模型图标文件名（空字符串表示无可用图标）
-  private getCurrentMessageModelIconPath(): string {
-    // 优先用 modelId → 回退到当前会话模型 ID → 最后回退到 modelName
-    let id = this.message.modelId
-    if (id === '' || id === undefined) {
-      id = this.currentModelId
-    }
-    if (id === '' || id === undefined) {
-      id = this.message.modelName
-    }
-    if (id === '' || id === undefined) {
-      return ''
-    }
-    return getModelIconPath(id, '', '')
-  }
-
-  // 获取当前消息模型图标资源路径（空字符串表示无可用图标）
-  private computeCurrentMessageModelIconResourcePath(): string {
-    const iconPath = this.getCurrentMessageModelIconPath()
-    if (iconPath === '') {
-      return ''
-    }
-    return buildIconResourcePath(iconPath)
-  }
 
   private getPrimaryTouchPoint(event: TouchEvent): TouchObject | null {
     if (event.changedTouches && event.changedTouches.length > 0) {
@@ -433,7 +389,6 @@ export struct MessageBubble {
     this.reasoningAutoPreview = false
     this.reasoningElapsedMs = 0
     this.reasoningStartAt = 0
-    this.reasoningFinalMs = 0
     this.reasoningShimmerAlpha = 1.0
     this.searchStepPulseScale = 1.0
     this.searchStepPulseOpacity = 1.0
@@ -482,9 +437,6 @@ export struct MessageBubble {
     }
     clearInterval(this.reasoningTimerId)
     this.reasoningTimerId = -1
-    if (this.reasoningStartAt > 0) {
-      this.reasoningFinalMs = Date.now() - this.reasoningStartAt
-    }
   }
 
   private startReasoningShimmer(): void {
@@ -647,12 +599,7 @@ export struct MessageBubble {
     this.cachedHasPreviewTextContent = this.cachedDisplayContent.length > 0
     this.cachedHasMessageTextContent = this.message.content.trim().length > 0
     this.cachedHasToolbarPayload = this.cachedHasMessageTextContent || this.message.hasAttachments()
-    this.cachedCurrentMessageModelIconResourcePath = this.computeCurrentMessageModelIconResourcePath()
-    this.cachedReadonlyMessageContent = this.getMarkdownRenderText(this.message.content)
-    this.cachedReadonlyReasoningContent = this.getMarkdownRenderText(this.message.reasoningContent)
     this.cachedReadonlyTranslatedText = this.convertTaskListToReadonly(this.translatedText)
-    this.cachedHasPreviewSegments = !this.message.isGenerating && this.hasPreviewableCodeBlocks(this.message.content)
-    this.cachedContentSegments = this.cachedHasPreviewSegments ? this.splitContentToSegments(this.message.content) : []
     this.cachedPreviewImageEntries = this.buildImageAttachmentEntries(this.previewAttachments)
     this.cachedMessageImageEntries = this.buildImageAttachmentEntries(this.message.attachments, true)
     this.cachedMessageFileAttachments = this.getFileAttachments(this.message.attachments)
@@ -970,6 +917,11 @@ export struct MessageBubble {
       this.partMarkdownControllerTexts.set(key, content)
     }
     return controller
+  }
+
+  // 生成中统一走 V2 单 Markdown 增量渲染; 终态仍走 V1 稳定路径。
+  private shouldUseStreamRendererV2(): boolean {
+    return this.message.isGenerating
   }
 
   @Monitor('themeRenderKey')
@@ -1463,31 +1415,6 @@ export struct MessageBubble {
     return this.cachedHasToolbarPayload
   }
 
-  private getCurrentMessageModelIconResourcePath(): string {
-    this.ensureDerivedRenderCaches()
-    return this.cachedCurrentMessageModelIconResourcePath
-  }
-
-  private hasPreviewSegments(): boolean {
-    this.ensureDerivedRenderCaches()
-    return this.cachedHasPreviewSegments
-  }
-
-  private getContentSegments(): ContentSegment[] {
-    this.ensureDerivedRenderCaches()
-    return this.cachedContentSegments
-  }
-
-  private getReadonlyMessageContent(): string {
-    this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyMessageContent
-  }
-
-  private getReadonlyReasoningContent(): string {
-    this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyReasoningContent
-  }
-
   private getReadonlyTranslatedText(): string {
     this.ensureDerivedRenderCaches()
     return this.cachedReadonlyTranslatedText
@@ -1542,19 +1469,6 @@ export struct MessageBubble {
       rows.push(i)
     }
     return rows
-  }
-
-  // 清空翻译
-  private clearTranslation(): void {
-    if (this.showTranslation) {
-      this.notifyInteractiveContentResize()
-    }
-    this.translationRequestToken++
-    this.showTranslation = false
-    this.translatedText = ''
-    this.isTranslating = false
-    this.isTranslationExpanded = true
-    this.currentTranslateLang = ''
   }
 
   // 将 hex 颜色向白色方向混合（用于多选选中态）
@@ -2877,37 +2791,6 @@ export struct MessageBubble {
     return []
   }
 
-  private extractToolStepSearchQuery(part: MessagePart): string {
-    try {
-      const result = JSON.parse(part.toolResult.trim()) as ToolSearchResultPayload
-      if (typeof result.query === 'string' && result.query.trim() !== '') {
-        return result.query.trim()
-      }
-    } catch (_e) {
-    }
-    try {
-      const args = JSON.parse(part.toolArguments.trim()) as ToolSearchArgumentPayload
-      const candidate = args.query ?? args.q ?? args.keyword ?? args.keywords
-      if (typeof candidate === 'string' && candidate.trim() !== '') {
-        return candidate.trim()
-      }
-      if (Array.isArray(args.queries) && args.queries.length > 0) {
-        const queries: string[] = []
-        for (let i = 0; i < args.queries.length; i++) {
-          const query = args.queries[i]
-          if (typeof query === 'string' && query.trim() !== '') {
-            queries.push(query.trim())
-          }
-        }
-        if (queries.length > 0) {
-          return queries.join('\n')
-        }
-      }
-    } catch (_e) {
-    }
-    return this.extractSearchQuery()
-  }
-
   private firstRefUrl(part: MessagePart): string {
     if (part.toolSearchReferences.length > 0 && part.toolSearchReferences[0].url.trim() !== '') {
       return part.toolSearchReferences[0].url.trim()
@@ -3016,7 +2899,9 @@ export struct MessageBubble {
 	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
 	      if (part.text.trim() !== '') {
-	        if (this.message.isGenerating && this.hasStreamingCodeFence(part.text)) {
+	        if (this.shouldUseStreamRendererV2()) {
+	          this.PartTextContentV2(part, blockIndex, partIndex)
+	        } else if (this.message.isGenerating && this.hasStreamingCodeFence(part.text)) {
 	          ForEach(this.splitStreamingContentToSegments(part.text),
 	            (segment: ContentSegment, index: number) => {
 	              if (segment.type === ContentSegmentType.CODE) {
@@ -3081,6 +2966,26 @@ export struct MessageBubble {
 	    }
 	    .width('100%')
 	  }
+
+  // ===== V2 流式渲染 =====
+  // PartTextContentV2 由 PartTextContent 在普通正文生成中分派进来.
+  // 注意: 父 Builder 已访问 part.text 建立 @Trace 依赖, 这里再访问一次以确保子 Builder 与之绑定不掉链.
+  @Builder
+  PartTextContentV2(part: MessagePart, blockIndex: number, partIndex: number) {
+    Column() {
+      // 触发 part.text @Trace 订阅
+      if (part.text.length > 0) {
+        // 单一 Markdown 渲染: 依赖 lv-markdown-in 的增量渲染能力
+        Markdown({
+          controller: this.getPartMarkdownController(blockIndex, partIndex, -1, part.text),
+          text: part.text
+        })
+          .width('100%')
+          .backgroundColor(Color.Transparent)
+      }
+    }
+    .width('100%')
+  }
 
   @Builder
   StreamingCodeBlock(segment: ContentSegment) {
@@ -3653,39 +3558,6 @@ export struct MessageBubble {
     return buildToolTitle(toolCall)
   }
 
-  // 当前 reasoning 卡片是否处于可见态(完整展开 or 预览)
-  private isReasoningCardVisible(): boolean {
-    return this.isReasoningExpanded || this.reasoningAutoPreview
-  }
-
-  // 点击标题栏切换展开:可见 → 完全收起;收起 → 完全展开
-  private toggleReasoningCard(): void {
-    this.notifyInteractiveContentResize()
-    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-      if (this.isReasoningCardVisible()) {
-        this.isReasoningExpanded = false
-        this.reasoningAutoPreview = false
-      } else {
-        this.isReasoningExpanded = true
-        this.reasoningAutoPreview = false
-      }
-    })
-  }
-
-  // 流式中标题:已思考 X.X 秒
-  private getReasoningThinkingLabel(): string {
-    const seconds = Math.max(0, this.reasoningElapsedMs / 1000)
-    return `深度思考中 · 已思考 ${seconds.toFixed(1)} 秒`
-  }
-
-  // 生成结束后标题:带总时长(若已记录)
-  private getReasoningFinishedLabel(): string {
-    if (this.reasoningFinalMs > 0) {
-      return `深度思考 · 用时 ${(this.reasoningFinalMs / 1000).toFixed(1)} 秒`
-    }
-    return '深度思考'
-  }
-
   /**
    * 将 Markdown 任务列表语法转换为只读字符
    * 避免 lv-markdown-in 渲染出可交互的 checkbox
@@ -3763,17 +3635,6 @@ export struct MessageBubble {
       return codeBlocks[parseInt(idx)]
     })
     return protected_
-  }
-
-  // 提取搜索查询内容
-  private extractSearchQuery(): string {
-    if (this.message.searchQuery !== '') {
-      return this.message.searchQuery
-    }
-    if (this.message.searchReferences.length > 0) {
-      return '搜索结果'
-    }
-    return ''
   }
 
   private shouldHideToolCallCard(toolCall: ToolCall): boolean {

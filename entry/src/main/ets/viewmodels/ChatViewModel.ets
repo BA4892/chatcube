@@ -31,7 +31,9 @@ import { PreferenceKeys } from '../services/PreferencesService'
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { setAppUiStateValue } from '../state/AppUiState'
 import { ChatSessionStore } from './ChatSessionStore'
-import { createThrottle, ThrottleUtil } from '../utils/ThrottleUtil'
+import { createThrottle, StreamFlusher } from '../utils/ThrottleUtil'
+import { TypewriterFlusher } from '../utils/DisplaySyncTypewriter'
+import { UIContext } from '@kit.ArkUI'
 import {
   buildCurrentTimeContext,
   renderSystemPromptTemplate,
@@ -157,6 +159,82 @@ export class ChatViewModel {
   // 历史附件懒加载配置
   private readonly MAX_HISTORY_ATTACHMENTS = 5
   private readonly MAX_HISTORY_ATTACHMENT_SIZE = 5 * 1024 * 1024 // 5MB
+
+  // V2 流式渲染: 由 ChatPage 在 aboutToAppear 时通过 setStreamingUIContext 注入
+  // DisplaySyncTypewriter.start() 必须包在 UIContext.runScopedTask 内, 所以 ChatViewModel 自己拿不到 ctx
+  // 拿不到 ctx 时 createStreamFlusher 自动降级到 createThrottle(150), 保证兜底可用
+  private streamingUIContext: UIContext | null = null
+
+  setStreamingUIContext(uiContext: UIContext | null): void {
+    this.streamingUIContext = uiContext
+  }
+
+  private createStreamFlusher(): StreamFlusher {
+    if (this.streamingUIContext !== null) {
+      return new TypewriterFlusher(this.streamingUIContext)
+    }
+    return createThrottle(150)
+  }
+
+  private resetStreamFlushers(
+    localFirstChunkThrottle: StreamFlusher,
+    localContentThrottle: StreamFlusher,
+    localReasoningThrottle: StreamFlusher
+  ): void {
+    localFirstChunkThrottle.reset()
+    if (localContentThrottle !== localFirstChunkThrottle) {
+      localContentThrottle.reset()
+    }
+    localReasoningThrottle.reset()
+  }
+
+  private throttleStreamContentChunk(
+    contentChunk: string,
+    localFirstChunkThrottle: StreamFlusher,
+    localContentThrottle: StreamFlusher,
+    getHasReceivedFirstChunk: () => boolean,
+    setHasReceivedFirstChunk: (value: boolean) => void,
+    shouldSkip: () => boolean,
+    appendContent: (content: string) => void
+  ): void {
+    if (shouldSkip()) {
+      return
+    }
+    const isFirstChunk = !getHasReceivedFirstChunk()
+    const flusher = isFirstChunk ? localFirstChunkThrottle : localContentThrottle
+    flusher.throttle(contentChunk, (throttledContent: string) => {
+      if (shouldSkip()) {
+        return
+      }
+      appendContent(throttledContent)
+      if (isFirstChunk) {
+        setHasReceivedFirstChunk(true)
+      }
+    })
+  }
+
+  private flushStreamContentFlushers(
+    localFirstChunkThrottle: StreamFlusher,
+    localContentThrottle: StreamFlusher,
+    shouldSkip: () => boolean,
+    appendContent: (content: string) => void
+  ): void {
+    localFirstChunkThrottle.flush((throttledContent: string) => {
+      if (shouldSkip()) {
+        return
+      }
+      appendContent(throttledContent)
+    })
+    if (localContentThrottle === localFirstChunkThrottle) {
+      return
+    }
+    localContentThrottle.flush((throttledContent: string) => {
+      if (shouldSkip()) {
+        return
+      }
+      appendContent(throttledContent)
+    })
+  }
 
   constructor() {
     this.databaseService = getDatabaseService()
@@ -879,7 +957,7 @@ export class ChatViewModel {
   }
 
   private flushPendingReasoningBeforeContent(
-    localReasoningThrottle: ThrottleUtil,
+    localReasoningThrottle: StreamFlusher,
     shouldSkip: () => boolean,
     aiMessage: ChatMessage,
     onAIMessageUpdated: (message: ChatMessage) => void
@@ -1388,9 +1466,9 @@ export class ChatViewModel {
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localContentThrottle = createThrottle(150)
+    const localContentThrottle = this.createStreamFlusher()
     const localFirstChunkThrottle = localContentThrottle
-    const localReasoningThrottle = createThrottle(150)
+    const localReasoningThrottle = this.createStreamFlusher()
     const requestId = this.generateId()
     const pendingImageSaves: Promise<void>[] = []
 
@@ -1406,14 +1484,14 @@ export class ChatViewModel {
       requestMessages,
       modelId,
       (contentChunk: string) => {
-        if (cancelled) {
-          return
-        }
-        if (!hasReceivedFirstChunk) {
-          localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
+        this.throttleStreamContentChunk(
+          contentChunk,
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => hasReceivedFirstChunk,
+          (value: boolean) => { hasReceivedFirstChunk = value },
+          () => cancelled,
+          (throttledContent: string) => {
             this.flushPendingReasoningBeforeContent(
               localReasoningThrottle,
               () => cancelled,
@@ -1421,22 +1499,8 @@ export class ChatViewModel {
               onAIMessageUpdated
             )
             this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-            hasReceivedFirstChunk = true
-          })
-        } else {
-          localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
-            this.flushPendingReasoningBeforeContent(
-              localReasoningThrottle,
-              () => cancelled,
-              aiMessage,
-              onAIMessageUpdated
-            )
-            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-          })
-        }
+          }
+        )
       },
       async () => {
         if (cancelled) {
@@ -1449,30 +1513,20 @@ export class ChatViewModel {
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
 
         await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
@@ -1493,6 +1547,7 @@ export class ChatViewModel {
         } catch (persistError) {
           console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
         } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
           this.unregisterActiveRequest(requestId)
           onComplete()
         }
@@ -1507,42 +1562,36 @@ export class ChatViewModel {
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
 
-        if (userCancelled) {
-          console.info('ChatViewModel', 'Request cancelled by user')
-          onComplete()
-        } else {
-          onError(error)
+        try {
+          if (userCancelled) {
+            console.info('ChatViewModel', 'Request cancelled by user')
+            onComplete()
+          } else {
+            onError(error)
+          }
+        } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
+          this.clearPendingAIMessageIfMatches(aiMessage.id)
+          this.unregisterActiveRequest(requestId)
         }
-        this.clearPendingAIMessageIfMatches(aiMessage.id)
-        this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
       effectiveMaxOutputTokens,
@@ -1593,9 +1642,7 @@ export class ChatViewModel {
     this.registerActiveRequest(requestId, httpRequest, () => {
       cancelled = true
       userCancelled = true
-      localFirstChunkThrottle.reset()
-      localContentThrottle.reset()
-      localReasoningThrottle.reset()
+      this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
     }, snapshotSessionId)
   }
 
@@ -1723,9 +1770,9 @@ ${webContext.content}
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localContentThrottle = createThrottle(150)
+    const localContentThrottle = this.createStreamFlusher()
     const localFirstChunkThrottle = localContentThrottle
-    const localReasoningThrottle = createThrottle(150)
+    const localReasoningThrottle = this.createStreamFlusher()
     const requestId = this.generateId()
     const pendingImageSaves: Promise<void>[] = []
 
@@ -1739,14 +1786,14 @@ ${webContext.content}
       requestMessages,
       modelId,
       (contentChunk: string) => {
-        if (cancelled) {
-          return
-        }
-        if (!hasReceivedFirstChunk) {
-          localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
+        this.throttleStreamContentChunk(
+          contentChunk,
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => hasReceivedFirstChunk,
+          (value: boolean) => { hasReceivedFirstChunk = value },
+          () => cancelled,
+          (throttledContent: string) => {
             this.flushPendingReasoningBeforeContent(
               localReasoningThrottle,
               () => cancelled,
@@ -1754,22 +1801,8 @@ ${webContext.content}
               onAIMessageUpdated
             )
             this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-            hasReceivedFirstChunk = true
-          })
-        } else {
-          localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
-            this.flushPendingReasoningBeforeContent(
-              localReasoningThrottle,
-              () => cancelled,
-              aiMessage,
-              onAIMessageUpdated
-            )
-            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-          })
-        }
+          }
+        )
       },
       async () => {
         if (cancelled) {
@@ -1781,30 +1814,20 @@ ${webContext.content}
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
         await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
@@ -1822,6 +1845,7 @@ ${webContext.content}
         } catch (persistError) {
           console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
         } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
           this.unregisterActiveRequest(requestId)
           onComplete()
         }
@@ -1836,42 +1860,36 @@ ${webContext.content}
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
 
-        if (userCancelled) {
-          console.info('ChatViewModel', 'Request cancelled by user')
-          onComplete()
-        } else {
-          onError(error)
+        try {
+          if (userCancelled) {
+            console.info('ChatViewModel', 'Request cancelled by user')
+            onComplete()
+          } else {
+            onError(error)
+          }
+        } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
+          this.clearPendingAIMessageIfMatches(aiMessage.id)
+          this.unregisterActiveRequest(requestId)
         }
-        this.clearPendingAIMessageIfMatches(aiMessage.id)
-        this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
       await this.resolveEffectiveMaxOutputTokens(),
@@ -1901,9 +1919,7 @@ ${webContext.content}
     this.registerActiveRequest(requestId, httpRequest, () => {
       cancelled = true
       userCancelled = true
-      localFirstChunkThrottle.reset()
-      localContentThrottle.reset()
-      localReasoningThrottle.reset()
+      this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
     }, snapshotSessionId)
   }
 
@@ -2064,9 +2080,9 @@ ${limitedSearchContext}
     let cancelled = false
     let userCancelled = false
     let hasReceivedFirstChunk = false
-    const localContentThrottle = createThrottle(150)
+    const localContentThrottle = this.createStreamFlusher()
     const localFirstChunkThrottle = localContentThrottle
-    const localReasoningThrottle = createThrottle(150)
+    const localReasoningThrottle = this.createStreamFlusher()
     const requestId = this.generateId()
     const pendingImageSaves: Promise<void>[] = []
 
@@ -2080,14 +2096,14 @@ ${limitedSearchContext}
       requestMessages,
       modelId,
       (contentChunk: string) => {
-        if (cancelled) {
-          return
-        }
-        if (!hasReceivedFirstChunk) {
-          localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
+        this.throttleStreamContentChunk(
+          contentChunk,
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => hasReceivedFirstChunk,
+          (value: boolean) => { hasReceivedFirstChunk = value },
+          () => cancelled,
+          (throttledContent: string) => {
             this.flushPendingReasoningBeforeContent(
               localReasoningThrottle,
               () => cancelled,
@@ -2095,22 +2111,8 @@ ${limitedSearchContext}
               onAIMessageUpdated
             )
             this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-            hasReceivedFirstChunk = true
-          })
-        } else {
-          localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
-            if (cancelled) {
-              return
-            }
-            this.flushPendingReasoningBeforeContent(
-              localReasoningThrottle,
-              () => cancelled,
-              aiMessage,
-              onAIMessageUpdated
-            )
-            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-          })
-        }
+          }
+        )
       },
       async () => {
         if (cancelled) {
@@ -2122,30 +2124,20 @@ ${limitedSearchContext}
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
         await this.waitForAIGeneratedImageSaves(pendingImageSaves)
         this.fillEmptyAIContentPlaceholder(aiMessage)
         aiMessage.isGenerating = false
@@ -2163,6 +2155,7 @@ ${limitedSearchContext}
         } catch (persistError) {
           console.error('ChatViewModel', `Failed to persist AI message on complete: ${JSON.stringify(persistError)}`)
         } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
           this.unregisterActiveRequest(requestId)
           onComplete()
         }
@@ -2177,42 +2170,36 @@ ${limitedSearchContext}
           aiMessage,
           onAIMessageUpdated
         )
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          () => cancelled,
+          (throttledContent: string) => {
+            this.flushPendingReasoningBeforeContent(
+              localReasoningThrottle,
+              () => cancelled,
+              aiMessage,
+              onAIMessageUpdated
+            )
+            this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
           }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (cancelled) {
-            return
-          }
-          this.flushPendingReasoningBeforeContent(
-            localReasoningThrottle,
-            () => cancelled,
-            aiMessage,
-            onAIMessageUpdated
-          )
-          this.appendStreamedContent(aiMessage, throttledContent, onAIMessageUpdated)
-        })
+        )
         this.fillEmptyAIContentPlaceholder(aiMessage, error)
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
 
-        if (userCancelled) {
-          console.info('ChatViewModel', 'Request cancelled by user')
-          onComplete()
-        } else {
-          onError(error)
+        try {
+          if (userCancelled) {
+            console.info('ChatViewModel', 'Request cancelled by user')
+            onComplete()
+          } else {
+            onError(error)
+          }
+        } finally {
+          this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
+          this.clearPendingAIMessageIfMatches(aiMessage.id)
+          this.unregisterActiveRequest(requestId)
         }
-        this.clearPendingAIMessageIfMatches(aiMessage.id)
-        this.unregisterActiveRequest(requestId)
       },
 	      requestTemperature,
       await this.resolveEffectiveMaxOutputTokens(),
@@ -2244,9 +2231,7 @@ ${limitedSearchContext}
     this.registerActiveRequest(requestId, httpRequest, () => {
       cancelled = true
       userCancelled = true
-      localFirstChunkThrottle.reset()
-      localContentThrottle.reset()
-      localReasoningThrottle.reset()
+      this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
     }, snapshotSessionId)
   }
 
@@ -2416,9 +2401,9 @@ ${limitedSearchContext}
     let userCancelled = false
     let toolExecutionCancelled = false
     let hasReceivedFirstChunk = false
-    const localContentThrottle = createThrottle(150)
+    const localContentThrottle = this.createStreamFlusher()
     const localFirstChunkThrottle = localContentThrottle
-    const localReasoningThrottle = createThrottle(150)
+    const localReasoningThrottle = this.createStreamFlusher()
     const requestId = this.generateId()
 
 	    if (this.isCancelled(cancelSnapshot)) {
@@ -2435,9 +2420,7 @@ ${limitedSearchContext}
       cancelled = true
       userCancelled = true
       toolExecutionCancelled = true
-      localFirstChunkThrottle.reset()
-      localContentThrottle.reset()
-      localReasoningThrottle.reset()
+      this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
     }, snapshotSessionId)
 
     // 开始工具调用循环
@@ -3292,9 +3275,9 @@ ${limitedSearchContext}
     setUserCancelled: (v: boolean) => void,
     getHasReceivedFirstChunk: () => boolean,
     setHasReceivedFirstChunk: (v: boolean) => void,
-    localFirstChunkThrottle: ThrottleUtil,
-    localContentThrottle: ThrottleUtil,
-    localReasoningThrottle: ThrottleUtil,
+    localFirstChunkThrottle: StreamFlusher,
+    localContentThrottle: StreamFlusher,
+    localReasoningThrottle: StreamFlusher,
     builtInResponsesTools?: BuiltInResponsesToolSpec[],
     builtInResponsesToolChoice?: OpenAIResponsesToolChoice
   ): Promise<void> {
@@ -3395,24 +3378,19 @@ ${limitedSearchContext}
       }
 
       const flushPendingRoundContent = (): void => {
-        localFirstChunkThrottle.flush((throttledContent: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundContent(throttledContent)
-        })
-        localContentThrottle.flush((throttledContent: string) => {
-          if (isCancelledFn()) {
-            return
-          }
-          appendRoundContent(throttledContent)
-        })
+        this.flushStreamContentFlushers(
+          localFirstChunkThrottle,
+          localContentThrottle,
+          isCancelledFn,
+          appendRoundContent
+        )
       }
 
       if (isToolCancelledFn()) {
         console.info('ChatViewModel', 'Tool execution cancelled by user')
         aiMessage.isGenerating = false
         onAIMessageUpdated(aiMessage)
+        this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
         onComplete()
         // 必须释放占位 / 上一轮残留的 httpRequest, 否则取消后 native 句柄留挂在 activeRequests
         this.unregisterActiveRequest(requestId)
@@ -3434,25 +3412,15 @@ ${limitedSearchContext}
           requestMessages,
           modelId,
           (contentChunk: string) => {
-            if (isCancelledFn()) {
-              return
-            }
-            if (!getHasReceivedFirstChunk()) {
-              localFirstChunkThrottle.throttle(contentChunk, (throttledContent: string) => {
-                if (isCancelledFn()) {
-                  return
-                }
-                appendRoundContent(throttledContent)
-                setHasReceivedFirstChunk(true)
-              })
-            } else {
-              localContentThrottle.throttle(contentChunk, (throttledContent: string) => {
-                if (isCancelledFn()) {
-                  return
-                }
-                appendRoundContent(throttledContent)
-              })
-            }
+            this.throttleStreamContentChunk(
+              contentChunk,
+              localFirstChunkThrottle,
+              localContentThrottle,
+              getHasReceivedFirstChunk,
+              setHasReceivedFirstChunk,
+              isCancelledFn,
+              appendRoundContent
+            )
           },
           (toolCalls: ToolCall[]) => {
             if (isCancelledFn()) {
@@ -3491,18 +3459,7 @@ ${limitedSearchContext}
               return
             }
             flushPendingRoundReasoning()
-            localFirstChunkThrottle.flush((throttledContent: string) => {
-              if (isCancelledFn()) {
-                return
-              }
-              appendRoundContent(throttledContent)
-            })
-            localContentThrottle.flush((throttledContent: string) => {
-              if (isCancelledFn()) {
-                return
-              }
-              appendRoundContent(throttledContent)
-            })
+            flushPendingRoundContent()
             resolve({
               toolCalls: [],
               toolContinuationContent: '',
@@ -3601,6 +3558,7 @@ ${limitedSearchContext}
         aiMessage.isGenerating = false
         aiMessage.isSearching = false
         onAIMessageUpdated(aiMessage)
+        this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
         this.clearPendingAIMessageIfMatches(aiMessage.id)
         this.unregisterActiveRequest(requestId)
         if (isUserCancelledFn()) {
@@ -3619,6 +3577,7 @@ ${limitedSearchContext}
         if (toolCalls.length > 0) {
           console.warn('ChatViewModel', `Ignored ${toolCalls.length} tool calls because tool round limit is reached`)
         }
+        this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
         await this.finalizeAIMessage(
           aiMessage,
           onAIMessageUpdated,
@@ -3720,6 +3679,7 @@ ${limitedSearchContext}
         }
         onAIMessageUpdated(aiMessage)
         await this.persistToolEvents(snapshotSessionId, snapshotSession, aiMessage, toolCalls, toolResults)
+        this.resetStreamFlushers(localFirstChunkThrottle, localContentThrottle, localReasoningThrottle)
         await this.failAIMessage(
           aiMessage,
           onAIMessageUpdated,

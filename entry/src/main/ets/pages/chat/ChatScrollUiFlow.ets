@@ -45,6 +45,9 @@ export class ChatScrollUiFlow {
   private static readonly BOTTOM_EDGE_PRELOAD_ITEM_COUNT: number = 3
   private static readonly BOTTOM_EDGE_PRELOAD_SETTLE_MS: number = 50
   private static readonly BOTTOM_EDGE_ANIMATION_DURATION_MS: number = 320
+  // 流式跟随到底的动画时长. 比 BOTTOM_EDGE_ANIMATION_DURATION_MS 短, 因为这条路径在每个 chunk 都可能触发,
+  // 单次动画太长容易堆叠抖动; 200ms 与 ChatGPT 网页端的滚动跟随节奏相近
+  private static readonly PIN_BOTTOM_ALIGNMENT_ANIMATION_DURATION_MS: number = 200
   private static readonly INDEXED_SCROLL_TARGET_NONE: number = -1
   private static readonly INDEXED_SCROLL_CORRECTION_MAX_COUNT: number = 8
   private static readonly INDEXED_SCROLL_CORRECTION_WINDOW_MS: number = 1800
@@ -407,7 +410,11 @@ export class ChatScrollUiFlow {
           this.clearPinnedBottomAlignmentTimers()
           return
         }
-        this.scrollBottomEdge()
+        // V2 流式跟随用 animateTo 包裹, 避免 scrollEdge 瞬移产生的"跳动感";
+        // pendingPinnedBottomAlignment 防抖保证同时间只有一组动画在跑
+        this.deps.onAnimate(ChatScrollUiFlow.PIN_BOTTOM_ALIGNMENT_ANIMATION_DURATION_MS, Curve.EaseOut, () => {
+          this.scrollBottomEdge()
+        })
         this.captureBottomScrollBaseline()
       }, delays[i])
       this.pinnedBottomAlignmentTimerIds.push(timerId)

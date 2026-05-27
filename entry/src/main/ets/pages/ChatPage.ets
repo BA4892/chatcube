@@ -407,6 +407,9 @@ export struct ChatPage {
     if (this.toolExecutionApprovalArgumentSummary === '') {
       this.toolExecutionApprovalArgumentSummary = this.getNoToolArgumentsText()
     }
+    // V2 流式渲染需要 UIContext 在 displaySync 帧回调中正确启动;
+    // ChatViewModel 是数据层拿不到 UIContext, 通过 setter 注入。
+    this.chatViewModel.setStreamingUIContext(this.getUIContext())
     this.registerAppUiStateObservers()
     // 设置键盘避让模式
     this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE)
@@ -545,6 +548,8 @@ export struct ChatPage {
     this.resetDocumentParseQueue()
     // 释放TTS资源
     this.ttsService.destroy()
+    // 解绑 UIContext 防止 ChatPage 销毁后 typewriter 仍持有过期引用
+    this.chatViewModel.setStreamingUIContext(null)
     this.clearInitialAlignmentTimers()
     this.clearPendingToolInteractionSyncTimer()
     this.clearRuntimeStateWatchdog()
