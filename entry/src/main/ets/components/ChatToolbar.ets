@@ -125,7 +125,7 @@ export struct ChatToolbar {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .constraintSize({ maxWidth: this.chipLabelMaxWidth })
 
-            SymbolGlyph($r('sys.symbol.chevron_down'))
+            SymbolGlyph($r('sys.symbol.chevron_up'))
               .fontSize(12)
               .fontColor([this.webSearchEnabled ? this.themePrimary : $r('app.color.text_secondary')])
               .margin({ left: 2 })
