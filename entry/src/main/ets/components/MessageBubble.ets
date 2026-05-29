@@ -41,6 +41,7 @@ import {
 import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { fingerprintLongString } from '../utils/MessageSignatureUtils'
+import { buildToolArgumentsPreview, buildToolResultPreview } from '../utils/ToolPayloadSummaryUtils'
 import { image } from '@kit.ImageKit'
 import { fileIo } from '@kit.CoreFileKit'
 import { fileUri } from '@kit.CoreFileKit'
@@ -109,6 +110,9 @@ interface AskUserTimelineAnswer {
   answer: string
   skipped: boolean
 }
+
+const TOOL_ARGUMENT_DETAIL_MAX_LENGTH = 1200
+const TOOL_RESULT_DETAIL_MAX_LENGTH = 1800
 
 @ComponentV2
 export struct MessageBubble {
@@ -485,8 +489,25 @@ export struct MessageBubble {
     this.searchStepPulseOpacity = 1.0
   }
 
+  private getToolStepApprovalState(part: MessagePart): string {
+    for (let i = 0; i < this.message.toolCalls.length; i++) {
+      if (this.message.toolCalls[i].id === part.toolCallId) {
+        return this.message.toolCalls[i].approvalState
+      }
+    }
+    if (part.toolApprovalState !== '') {
+      return part.toolApprovalState
+    }
+    return ''
+  }
+
+  private isToolStepAwaitingApproval(part: MessagePart): boolean {
+    return this.getToolStepApprovalState(part) === 'pending'
+  }
+
   private isSearchToolStepInProgress(part: MessagePart): boolean {
     return isSearchWebFunctionName(part.toolName) &&
+      !this.isToolStepAwaitingApproval(part) &&
       (part.toolStatus === ToolPartStatus.PENDING || part.toolStatus === ToolPartStatus.RUNNING)
   }
 
@@ -1994,7 +2015,7 @@ export struct MessageBubble {
           Column() {
             if (this.shouldRenderParts()) {
               // 新版统一渲染: 按 parts 的真实生成顺序渲染 text / reasoning / tool,
-              // 跳过原本的聚合正文、ToolCallCard 列表和 ReasoningSection, 避免顺序错乱或重复渲染
+              // 跳过原本的聚合正文和 ReasoningSection, 避免顺序错乱或重复渲染
               this.OrderedPartsTimeline()
               // ask_user 待答时保留独立交互卡片;提交后收缩到 timeline step 内。
               if (this.message.hasToolCalls()) {
@@ -2412,30 +2433,29 @@ export struct MessageBubble {
 
   // ===== tool step 点击行为 =====
   // 优先级:
-  //  1. 抓取类 (scrape_web 等) → 直接 onOpenLink 打开 URL, 不弹中间 sheet
-  //  2. OpenAI hosted web_search → 展开查看本次 action/request 和可归属引用
-  //  3. 搜索类 (search_web 等) 且成功 → 弹 sheet 列本次引用
-  //  4. 老消息: 仅当整条消息只有一个成功搜索 step 时,才允许降级用聚合 message.searchReferences
-  //  5. 其它工具但 toolArguments 能解析出 url → 直接 onOpenLink
-  //  6. 其它 → 不可点击
+  //  1. OpenAI hosted web_search → 展开查看本次 action/request 和可归属引用
+  //  2. 搜索类 (search_web 等) 且成功 → 展开列本次引用
+  //  3. 已持久化参数/结果的普通工具 → 展开查看请求参数和响应结果
+  //  4. 抓取类/其它工具但 toolArguments 能解析出 url → 直接 onOpenLink
+  //  5. 其它 → 不可点击
   private isToolStepClickable(part: MessagePart): boolean {
     if (isAskUserFunctionName(part.toolName)) {
       return false
     }
-    if (isScrapeWebFunctionName(part.toolName)) {
-      // 抓取类只要能取到 url 就可点
-      return this.extractToolStepUrl(part) !== '' || this.firstRefUrl(part) !== ''
-    }
     if (isSearchWebFunctionName(part.toolName)) {
       if (this.isHostedOpenAIWebSearchStep(part)) {
-        return this.hasHostedWebSearchDetails(part) || this.resolveToolStepSearchReferences(part).length > 0
+        return this.hasHostedWebSearchDetails(part) || this.resolveToolStepSearchReferences(part).length > 0 ||
+          this.hasToolStepStoredPayload(part)
       }
       if (!this.isSuccessfulToolStep(part)) {
-        return false
+        return this.hasToolStepStoredPayload(part)
       }
-      return this.resolveToolStepSearchReferences(part).length > 0
+      return this.resolveToolStepSearchReferences(part).length > 0 || this.hasToolStepStoredPayload(part)
     }
-    return this.extractToolStepUrl(part) !== ''
+    if (this.shouldExpandGenericToolStep(part)) {
+      return true
+    }
+    return this.hasToolStepOpenTarget(part)
   }
 
   private isSuccessfulToolStep(part: MessagePart): boolean {
@@ -2450,6 +2470,38 @@ export struct MessageBubble {
   private hasHostedWebSearchDetails(part: MessagePart): boolean {
     return this.isHostedOpenAIWebSearchStep(part) && part.toolArguments.trim() !== '' &&
       part.toolArguments.trim() !== '{}'
+  }
+
+  private hasToolStepStoredPayload(part: MessagePart): boolean {
+    return part.toolArguments.trim() !== '' || part.toolResult.trim() !== ''
+  }
+
+  private shouldExpandGenericToolStep(part: MessagePart): boolean {
+    return !isAskUserFunctionName(part.toolName) && !isSearchWebFunctionName(part.toolName) &&
+      this.hasToolStepStoredPayload(part)
+  }
+
+  private hasToolStepOpenTarget(part: MessagePart): boolean {
+    if (isScrapeWebFunctionName(part.toolName)) {
+      return this.extractToolStepUrl(part) !== '' || this.firstRefUrl(part) !== ''
+    }
+    return this.extractToolStepUrl(part) !== ''
+  }
+
+  private getToolArgumentsDetailText(part: MessagePart): string {
+    return buildToolArgumentsPreview(part.toolArguments, 4, TOOL_ARGUMENT_DETAIL_MAX_LENGTH).rawPreview
+  }
+
+  private getToolResultDetailText(part: MessagePart): string {
+    return buildToolResultPreview(part.toolResult, 4, TOOL_RESULT_DETAIL_MAX_LENGTH).rawPreview
+  }
+
+  private isToolArgumentsDetailTruncated(part: MessagePart): boolean {
+    return buildToolArgumentsPreview(part.toolArguments, 4, TOOL_ARGUMENT_DETAIL_MAX_LENGTH).rawTruncated
+  }
+
+  private isToolResultDetailTruncated(part: MessagePart): boolean {
+    return buildToolResultPreview(part.toolResult, 4, TOOL_RESULT_DETAIL_MAX_LENGTH).rawTruncated
   }
 
   private getToolStepKey(part: MessagePart): string {
@@ -2500,7 +2552,7 @@ export struct MessageBubble {
   }
 
   private shouldRenderAskUserInteractionCard(toolCall: ToolCall, index: number): boolean {
-    if (!isAskUserFunctionName(toolCall.functionName) || this.shouldHideToolCallCard(toolCall)) {
+    if (!isAskUserFunctionName(toolCall.functionName) || this.shouldHideToolInteractionCard(toolCall)) {
       return false
     }
     return !this.isAskUserToolCallAnswered(toolCall, index)
@@ -3192,18 +3244,19 @@ export struct MessageBubble {
         .fontSize(13)
         .fontColor([$r('app.color.status_error')])
     } else if (step.toolStatus === ToolPartStatus.PENDING) {
-      Text('待确认')
+      Text(this.isToolStepAwaitingApproval(step) ? '待确认' : '进行中')
         .fontSize(10)
         .fontColor(Color.White)
         .backgroundColor(this.themePrimary)
         .padding({ left: 6, right: 6, top: 2, bottom: 2 })
         .borderRadius(6)
     } else if (step.toolStatus === ToolPartStatus.RUNNING) {
-      Column()
-        .width(8)
-        .height(8)
-        .borderRadius(4)
+      Text('进行中')
+        .fontSize(10)
+        .fontColor(Color.White)
         .backgroundColor(this.themePrimary)
+        .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        .borderRadius(6)
     }
   }
 
@@ -3231,6 +3284,85 @@ export struct MessageBubble {
     .padding(10)
     .borderRadius(10)
     .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '14' : '0D'))
+  }
+
+  @Builder
+  ToolStepPayloadDetails(step: MessagePart) {
+    Column({ space: 8 }) {
+      if (step.toolArguments.trim() !== '') {
+        this.ToolStepPayloadSection(
+          '请求参数',
+          this.getToolArgumentsDetailText(step),
+          this.isToolArgumentsDetailTruncated(step),
+          `仅展示前 ${TOOL_ARGUMENT_DETAIL_MAX_LENGTH} 个字符`
+        )
+      }
+
+      if (step.toolResult.trim() !== '') {
+        this.ToolStepPayloadSection(
+          '响应结果',
+          this.getToolResultDetailText(step),
+          this.isToolResultDetailTruncated(step),
+          `仅展示前 ${TOOL_RESULT_DETAIL_MAX_LENGTH} 个字符`
+        )
+      }
+    }
+    .width('100%')
+    .margin({ top: 8 })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+  }
+
+  @Builder
+  ToolStepPayloadSection(title: string, body: string, truncated: boolean, truncatedHint: string) {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text(title)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_secondary'))
+          .layoutWeight(1)
+
+        if (truncated) {
+          Text('已截断')
+            .fontSize(10)
+            .fontColor($r('app.color.text_tertiary'))
+        }
+
+        SymbolGlyph($r('sys.symbol.checkmark_square_on_square'))
+          .fontSize(13)
+          .fontColor([$r('app.color.text_tertiary')])
+          .onClick(() => {
+            this.copyToClipboard(body)
+          })
+      }
+      .width('100%')
+
+      Scroll() {
+        Text(body)
+          .width('100%')
+          .fontSize(11)
+          .lineHeight(16)
+          .fontFamily('monospace')
+          .fontColor($r('app.color.text_secondary'))
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: 180 })
+      .padding(10)
+      .borderRadius(10)
+      .backgroundColor(this.isDarkMode ? '#14171F' : '#F6F8FC')
+
+      if (truncated && truncatedHint !== '') {
+        Text(truncatedHint)
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .borderRadius(10)
+    .backgroundColor($r('app.color.surface'))
   }
 
   // tool step 内容: 状态徽标在左, 标题中间(允许换行), 右侧 chevron 暗示可点
@@ -3314,6 +3446,10 @@ export struct MessageBubble {
                 this.onOpenLink(ref.title, ref.url)
               })
             }, (ref: SearchReference, index: number) => `${ref.id}_${index}`)
+
+            if (this.resolveToolStepSearchReferences(step).length === 0 && this.hasToolStepStoredPayload(step)) {
+              this.ToolStepPayloadDetails(step)
+            }
           }
           .width('100%')
           .margin({ top: 8 })
@@ -3323,30 +3459,41 @@ export struct MessageBubble {
       .width('100%')
       .alignItems(HorizontalAlign.Start)
     } else {
-      Row({ space: 6 }) {
-        if (!this.isSearchToolStepInProgress(step)) {
-          this.ToolStepStatusIndicator(step)
+      Column() {
+        Row({ space: 6 }) {
+          if (!this.isSearchToolStepInProgress(step)) {
+            this.ToolStepStatusIndicator(step)
+          }
+
+          Text(this.buildToolStepTitle(step))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          if (this.isToolStepClickable(step)) {
+            SymbolGlyph($r('sys.symbol.chevron_down'))
+              .fontSize(12)
+              .fontColor([$r('app.color.text_tertiary')])
+              .rotate({ angle: this.shouldExpandGenericToolStep(step) && this.isToolStepExpanded(step) ? 0 : -90 })
+              .animation({ duration: 200, curve: Curve.EaseOut })
+          }
         }
+        .width('100%')
+        .onClick(() => {
+          if (this.shouldExpandGenericToolStep(step)) {
+            this.toggleToolStep(step)
+          } else if (this.hasToolStepOpenTarget(step)) {
+            this.handleToolStepClick(step)
+          }
+        })
 
-        Text(this.buildToolStepTitle(step))
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        if (this.isToolStepClickable(step)) {
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(12)
-            .fontColor([$r('app.color.text_tertiary')])
-            .rotate({ angle: -90 })
+        if (this.shouldExpandGenericToolStep(step) && this.isToolStepExpanded(step)) {
+          this.ToolStepPayloadDetails(step)
         }
       }
       .width('100%')
-      .onClick(() => {
-        if (this.isToolStepClickable(step)) {
-          this.handleToolStepClick(step)
-        }
-      })
+      .alignItems(HorizontalAlign.Start)
     }
   }
 
@@ -3637,7 +3784,7 @@ export struct MessageBubble {
     return protected_
   }
 
-  private shouldHideToolCallCard(toolCall: ToolCall): boolean {
+  private shouldHideToolInteractionCard(toolCall: ToolCall): boolean {
     return this.message.hasSearchReferences() && this.isWebSearchToolCall(toolCall)
   }
 

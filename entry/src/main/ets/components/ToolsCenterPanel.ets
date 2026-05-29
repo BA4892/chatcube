@@ -3,7 +3,15 @@ import {
   SearchEngine,
   normalizeToolApprovalPolicy
 } from '../models/ChatModels'
-import { McpAuthType, McpServerConfig, McpToolEntry } from '../models/McpModels'
+import {
+  MCP_DEFAULT_CALL_TIMEOUT_MS,
+  MCP_MAX_CALL_TIMEOUT_MS,
+  MCP_MIN_CALL_TIMEOUT_MS,
+  McpAuthType,
+  McpServerConfig,
+  McpToolEntry,
+  normalizeMcpCallTimeoutMs
+} from '../models/McpModels'
 import { ToolRegistry } from '../services/ToolRegistry'
 import { McpService } from '../services/McpService'
 import { ServiceRegistry } from '../services/ServiceRegistry'
@@ -80,6 +88,7 @@ export struct ToolsCenterPanel {
   @Local mcpAuthTypeSelectedIndex: number = 0
   @Local mcpFormToolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Local mcpToolApprovalPolicySelectedIndex: number = 0
+  @Local mcpFormCallTimeoutSeconds: string = '30'
   @Local isSavingMcpServer: boolean = false
   @Local showMcpServerDetailSheet: boolean = false
   @Local detailServerId: string = ''
@@ -176,6 +185,7 @@ export struct ToolsCenterPanel {
     target.customHeadersJson = source.customHeadersJson
     target.toolApprovalPolicy = normalizeToolApprovalPolicy(source.toolApprovalPolicy)
     target.tools = source.tools
+    target.callTimeoutMs = normalizeMcpCallTimeoutMs(source.callTimeoutMs)
   }
 
   private applyMcpServerConfigsToLocal(configs: McpServerConfig[]): void {
@@ -639,6 +649,7 @@ export struct ToolsCenterPanel {
     this.mcpAuthTypeSelectedIndex = 0
     this.mcpFormToolApprovalPolicy = ToolApprovalPolicy.UNCONFIGURED
     this.mcpToolApprovalPolicySelectedIndex = 0
+    this.mcpFormCallTimeoutSeconds = `${this.getDefaultMcpCallTimeoutSeconds()}`
     this.isSavingMcpServer = false
   }
 
@@ -660,6 +671,7 @@ export struct ToolsCenterPanel {
     this.mcpAuthTypeSelectedIndex = server.authType === McpAuthType.BEARER ? 1 : 0
     this.mcpFormToolApprovalPolicy = normalizeToolApprovalPolicy(server.toolApprovalPolicy)
     this.mcpToolApprovalPolicySelectedIndex = this.getMcpToolApprovalPolicyIndex(this.mcpFormToolApprovalPolicy)
+    this.mcpFormCallTimeoutSeconds = `${this.getMcpTimeoutSecondsFromMs(server.callTimeoutMs)}`
     this.showMcpServerSheet = true
   }
 
@@ -901,6 +913,80 @@ export struct ToolsCenterPanel {
     this.syncMcpCustomHeadersJsonFromEntries()
   }
 
+  private updateMcpCallTimeoutSeconds(value: string): void {
+    let digits = ''
+    for (let i = 0; i < value.length && digits.length < 4; i++) {
+      const code = value.charCodeAt(i)
+      if (code >= 0x30 && code <= 0x39) {
+        digits += value.charAt(i)
+      }
+    }
+    this.mcpFormCallTimeoutSeconds = digits
+  }
+
+  private getDefaultMcpCallTimeoutSeconds(): number {
+    return Math.round(MCP_DEFAULT_CALL_TIMEOUT_MS / 1000)
+  }
+
+  private getMinMcpCallTimeoutSeconds(): number {
+    return Math.ceil(MCP_MIN_CALL_TIMEOUT_MS / 1000)
+  }
+
+  private getMaxMcpCallTimeoutSeconds(): number {
+    return Math.floor(MCP_MAX_CALL_TIMEOUT_MS / 1000)
+  }
+
+  private getMcpTimeoutSecondsFromMs(timeoutMs: number): number {
+    return Math.round(normalizeMcpCallTimeoutMs(timeoutMs) / 1000)
+  }
+
+  private validateMcpCallTimeoutSeconds(value: string): string {
+    const trimmed = value.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    const seconds = Number.parseInt(trimmed)
+    const minSeconds = this.getMinMcpCallTimeoutSeconds()
+    const maxSeconds = this.getMaxMcpCallTimeoutSeconds()
+    if (isNaN(seconds) || seconds < minSeconds || seconds > maxSeconds) {
+      return pickLocalizedText(
+        `MCP 调用超时时间需在 ${minSeconds}-${maxSeconds} 秒之间`,
+        `MCP call timeout must be between ${minSeconds}-${maxSeconds} seconds`
+      )
+    }
+    return ''
+  }
+
+  private getMcpCallTimeoutMsFromForm(): number {
+    const trimmed = this.mcpFormCallTimeoutSeconds.trim()
+    if (trimmed === '') {
+      return MCP_DEFAULT_CALL_TIMEOUT_MS
+    }
+    const seconds = Number.parseInt(trimmed)
+    if (isNaN(seconds)) {
+      return MCP_DEFAULT_CALL_TIMEOUT_MS
+    }
+    return normalizeMcpCallTimeoutMs(seconds * 1000)
+  }
+
+  private getMcpCallTimeoutValueText(timeoutMs: number): string {
+    const seconds = this.getMcpTimeoutSecondsFromMs(timeoutMs)
+    if (seconds >= 60 && seconds % 60 === 0) {
+      const minutes = Math.floor(seconds / 60)
+      return pickLocalizedText(`${minutes} 分钟`, `${minutes} min`)
+    }
+    return pickLocalizedText(`${seconds} 秒`, `${seconds}s`)
+  }
+
+  private getMcpCallTimeoutLabel(timeoutMs: number): string {
+    const seconds = this.getMcpTimeoutSecondsFromMs(timeoutMs)
+    if (seconds >= 60 && seconds % 60 === 0) {
+      const minutes = Math.floor(seconds / 60)
+      return pickLocalizedText(`超时 ${minutes} 分钟`, `Timeout ${minutes} min`)
+    }
+    return pickLocalizedText(`超时 ${seconds} 秒`, `Timeout ${seconds}s`)
+  }
+
   private normalizeMcpBaseUrl(raw: string): string {
     const trimmed = raw.trim()
     if (trimmed.endsWith('/')) {
@@ -956,6 +1042,7 @@ export struct ToolsCenterPanel {
     const name = this.mcpFormName.trim()
     const baseUrl = this.normalizeMcpBaseUrl(this.mcpFormBaseUrl)
     const customHeadersError = this.validateMcpHeaderEntries()
+    const callTimeoutError = this.validateMcpCallTimeoutSeconds(this.mcpFormCallTimeoutSeconds)
     if (name === '') {
       this.showToolsSnack(pickLocalizedText('MCP Server 名称不能为空', 'MCP server name is required'),
         2000, SnackBarTone.ERROR)
@@ -973,7 +1060,12 @@ export struct ToolsCenterPanel {
       this.showToolsSnack(customHeadersError, 2500, SnackBarTone.ERROR)
       return
     }
+    if (callTimeoutError !== '') {
+      this.showToolsSnack(callTimeoutError, 2500, SnackBarTone.ERROR)
+      return
+    }
     const customHeadersJson = this.buildMcpCustomHeadersJson()
+    const callTimeoutMs = this.getMcpCallTimeoutMsFromForm()
     this.isSavingMcpServer = true
     let configSaved = false
     try {
@@ -1013,9 +1105,11 @@ export struct ToolsCenterPanel {
       targetServer.authToken = this.mcpFormAuthToken.trim()
       targetServer.customHeadersJson = customHeadersJson
       targetServer.toolApprovalPolicy = normalizeToolApprovalPolicy(this.mcpFormToolApprovalPolicy)
+      targetServer.callTimeoutMs = callTimeoutMs
       this.mcpFormBaseUrl = baseUrl
       this.mcpFormAuthToken = targetServer.authToken
       this.mcpFormCustomHeadersJson = customHeadersJson
+      this.mcpFormCallTimeoutSeconds = `${this.getMcpTimeoutSecondsFromMs(callTimeoutMs)}`
 
       await this.mcpService.saveServerConfigs(configs)
       configSaved = true
@@ -1274,6 +1368,14 @@ export struct ToolsCenterPanel {
                   : getAppUiState().themeBackground)
 
               Text(formatLocalizedCount(this.getDetailServer()!.tools.length, '个工具', 'tool', 'tools'))
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                .borderRadius(999)
+                .backgroundColor(getAppUiState().themeBackground)
+
+              Text(this.getMcpCallTimeoutLabel(this.getDetailServer()!.callTimeoutMs))
                 .fontSize(11)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_secondary'))
@@ -1718,6 +1820,14 @@ export struct ToolsCenterPanel {
                 .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                 .borderRadius(999)
                 .backgroundColor(getAppUiState().themeBackground)
+
+              Text(this.getMcpCallTimeoutLabel(this.getMcpCallTimeoutMsFromForm()))
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                .borderRadius(999)
+                .backgroundColor(getAppUiState().themeBackground)
             }
             .width('100%')
           }
@@ -1787,6 +1897,38 @@ export struct ToolsCenterPanel {
                 .padding({ left: 14, right: 14 })
 
               Text(pickLocalizedText('请输入完整的 HTTP/HTTPS 地址。', 'Enter the full HTTP or HTTPS URL.'))
+                .fontSize(11)
+                .lineHeight(16)
+                .fontColor($r('app.color.text_tertiary'))
+                .width('100%')
+            }
+            .width('100%')
+
+            Column({ space: 6 }) {
+              Text(pickLocalizedText('调用超时（秒）', 'Call Timeout (seconds)'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+
+              TextInput({ text: this.mcpFormCallTimeoutSeconds, placeholder: `${this.getDefaultMcpCallTimeoutSeconds()}` })
+                .onChange((value: string) => {
+                  this.updateMcpCallTimeoutSeconds(value)
+                })
+                .type(InputType.Number)
+                .maxLength(4)
+                .fontSize(14)
+                .width('100%')
+                .height(46)
+                .borderRadius(14)
+                .backgroundColor(getAppUiState().themeBackground)
+                .border({ width: 1, color: $r('app.color.divider') })
+                .padding({ left: 14, right: 14 })
+
+              Text(pickLocalizedText(
+                `用于 MCP 初始化、工具发现和工具调用，范围 ${this.getMinMcpCallTimeoutSeconds()}-${this.getMaxMcpCallTimeoutSeconds()} 秒，留空默认 ${this.getDefaultMcpCallTimeoutSeconds()} 秒。`,
+                `Used for MCP init, discovery, and tool calls. Range ${this.getMinMcpCallTimeoutSeconds()}-${this.getMaxMcpCallTimeoutSeconds()}s; empty uses ${this.getDefaultMcpCallTimeoutSeconds()}s.`
+              ))
                 .fontSize(11)
                 .lineHeight(16)
                 .fontColor($r('app.color.text_tertiary'))
@@ -2385,6 +2527,7 @@ export struct ToolsCenterPanel {
                     serverBaseUrl: server.baseUrl,
                     serverEnabled: server.enabled,
                     toolCount: server.tools.length,
+                    callTimeoutLabel: this.getMcpCallTimeoutValueText(server.callTimeoutMs),
                     onToggleEnabled: (value: boolean) => {
                       this.handleMcpServerEnabledChanged(server.id, value)
                     },
@@ -2610,6 +2753,7 @@ struct McpServerCardItem {
   @Param serverBaseUrl: string = ''
   @Param serverEnabled: boolean = false
   @Param toolCount: number = 0
+  @Param callTimeoutLabel: string = ''
   @Event onToggleEnabled: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Event onTap: () => void = () => {}
 
@@ -2656,10 +2800,20 @@ struct McpServerCardItem {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
-        Text(formatLocalizedCount(this.toolCount, '个工具', 'tool', 'tools'))
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-          .width('100%')
+        Row({ space: 8 }) {
+          Text(formatLocalizedCount(this.toolCount, '个工具', 'tool', 'tools'))
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+
+          if (this.callTimeoutLabel !== '') {
+            Text(pickLocalizedText(`超时 ${this.callTimeoutLabel}`, `Timeout ${this.callTimeoutLabel}`))
+              .fontSize(11)
+              .fontColor($r('app.color.text_tertiary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+        }
+        .width('100%')
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)

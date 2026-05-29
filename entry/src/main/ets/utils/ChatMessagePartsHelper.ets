@@ -30,6 +30,7 @@ export function createToolPart(toolCall: ToolCall, result: ToolResult | null): M
   part.toolSourceType = toolCall.sourceType
   part.toolSourceLabel = toolCall.sourceLabel
   part.toolPermissionLevel = toolCall.permissionLevel
+  part.toolApprovalState = toolCall.approvalState
   part.toolApprovalReason = toolCall.approvalReason
   if (result !== null) {
     part.toolResult = result.content

@@ -121,6 +121,7 @@ function buildMessagePartSignature(part: MessagePart): string {
     encodeValue(part.toolSourceType),
     encodeValue(part.toolSourceLabel),
     encodeValue(part.toolPermissionLevel),
+    encodeValue(part.toolApprovalState),
     encodeValue(part.toolApprovalReason),
     buildSearchReferenceListSignature(part.toolSearchReferences),
     encodeValue(part.mediaUrl),

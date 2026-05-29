@@ -11,13 +11,15 @@ import {
   normalizeToolApprovalPolicy
 } from '../models/ChatModels'
 import {
+  MCP_DEFAULT_CALL_TIMEOUT_MS,
   McpAuthType,
   McpDiscoveredTool,
   McpServerConfig,
   McpToolAnnotations,
   McpToolCallResponse,
   McpToolDescriptor,
-  McpToolEntry
+  McpToolEntry,
+  normalizeMcpCallTimeoutMs
 } from '../models/McpModels'
 import { HttpService } from './HttpService'
 import { getPreferencesService, PreferenceKeys, PreferencesService } from './PreferencesService'
@@ -25,7 +27,6 @@ import { getToolRegistry, RegisteredTool, ToolExecutor, ToolRegistry } from './T
 import { isSearchToolId } from '../utils/SearchToolIdentityUtils'
 
 const MCP_PROTOCOL_VERSION = '2025-06-18'
-const MCP_DEFAULT_TIMEOUT_MS = 30000
 const MCP_CLIENT_NAME = 'ChatBox'
 const MCP_CLIENT_VERSION = '1.1.3'
 
@@ -90,6 +91,7 @@ class McpServerConfigJson {
   customHeadersJson: string = ''
   toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   tools: McpToolEntryJson[] = []
+  callTimeoutMs: number = MCP_DEFAULT_CALL_TIMEOUT_MS
 }
 
 class McpToolEntryJson {
@@ -196,7 +198,8 @@ export class McpService {
           this.readString(item, 'authToken'),
           this.readString(item, 'customHeadersJson'),
           this.readMcpToolApprovalPolicy(item),
-          this.readToolEntries(item)
+          this.readToolEntries(item),
+          this.readNumber(item, 'callTimeoutMs', MCP_DEFAULT_CALL_TIMEOUT_MS)
         ))
       }
       return result
@@ -219,6 +222,7 @@ export class McpService {
       item.customHeadersJson = configs[i].customHeadersJson
       item.toolApprovalPolicy = normalizeToolApprovalPolicy(configs[i].toolApprovalPolicy)
       item.tools = this.serializeToolEntries(configs[i].tools)
+      item.callTimeoutMs = normalizeMcpCallTimeoutMs(configs[i].callTimeoutMs)
       serialized.push(item)
     }
     await this.preferencesService.setString(
@@ -788,7 +792,7 @@ export class McpService {
           header: this.buildHeaders(server, includeSessionHeader),
           extraData: body,
           connectTimeout: 15000,
-          readTimeout: MCP_DEFAULT_TIMEOUT_MS,
+          readTimeout: normalizeMcpCallTimeoutMs(server.callTimeoutMs),
           expectDataType: http.HttpDataType.ARRAY_BUFFER
         }
 
@@ -1002,6 +1006,11 @@ export class McpService {
   private readBoolean(data: Record<string, Object>, key: string, defaultValue: boolean = false): boolean {
     const value = data[key]
     return typeof value === 'boolean' ? value : defaultValue
+  }
+
+  private readNumber(data: Record<string, Object>, key: string, defaultValue: number): number {
+    const value = data[key]
+    return typeof value === 'number' ? value : defaultValue
   }
 
   private readObject(data: Record<string, Object>, key: string): object {

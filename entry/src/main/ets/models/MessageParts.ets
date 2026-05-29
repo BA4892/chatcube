@@ -30,7 +30,7 @@ export enum MessagePartKind {
 }
 
 export enum ToolPartStatus {
-  // 工具调用已发起,尚未执行(还在流式累积参数 / 等待外部审批)
+  // 工具调用已发起,尚未执行(还在流式累积参数 / 等待执行队列)
   PENDING = 'pending',
   // 工具执行中
   RUNNING = 'running',
@@ -73,6 +73,7 @@ export class MessagePart {
   @Trace toolSourceType: string = ''
   @Trace toolSourceLabel: string = ''
   @Trace toolPermissionLevel: string = ''
+  @Trace toolApprovalState: string = '' // ToolCall.approvalState 的快照,仅用于区分真正待确认与普通进行中
   @Trace toolApprovalReason: string = '' // 人工拒绝时的原因/答复
   // 该 tool 调用对应的搜索引用切片 (仅搜索类工具有值, 其它工具为空数组)
   // 用于 timeline 模式下点击单条搜索 step 时, 只展示这一次返回的 references, 不再依赖聚合的 message.searchReferences
@@ -123,6 +124,7 @@ export interface MessagePartJson {
   toolSourceType?: string
   toolSourceLabel?: string
   toolPermissionLevel?: string
+  toolApprovalState?: string
   toolApprovalReason?: string
   toolSearchReferences?: SearchReferenceJson[]
   mediaUrl?: string
@@ -185,6 +187,9 @@ export function messagePartToJson(part: MessagePart): MessagePartJson {
   }
   if (part.toolPermissionLevel !== '') {
     json.toolPermissionLevel = part.toolPermissionLevel
+  }
+  if (part.toolApprovalState !== '') {
+    json.toolApprovalState = part.toolApprovalState
   }
   if (part.toolApprovalReason !== '') {
     json.toolApprovalReason = part.toolApprovalReason
@@ -251,6 +256,7 @@ export function messagePartFromJson(json: MessagePartJson): MessagePart {
   part.toolSourceType = json.toolSourceType ?? ''
   part.toolSourceLabel = json.toolSourceLabel ?? ''
   part.toolPermissionLevel = json.toolPermissionLevel ?? ''
+  part.toolApprovalState = json.toolApprovalState ?? ''
   part.toolApprovalReason = json.toolApprovalReason ?? ''
   if (json.toolSearchReferences !== undefined) {
     const refs: SearchReference[] = []

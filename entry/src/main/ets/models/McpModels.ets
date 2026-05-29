@@ -1,5 +1,23 @@
 import { ToolApprovalPolicy, ToolPermissionLevel, normalizeToolApprovalPolicy } from './ChatModels'
 
+export const MCP_DEFAULT_CALL_TIMEOUT_MS: number = 30000
+export const MCP_MIN_CALL_TIMEOUT_MS: number = 5000
+export const MCP_MAX_CALL_TIMEOUT_MS: number = 1800000
+
+export function normalizeMcpCallTimeoutMs(value: number): number {
+  if (isNaN(value) || value <= 0) {
+    return MCP_DEFAULT_CALL_TIMEOUT_MS
+  }
+  const rounded = Math.round(value)
+  if (rounded < MCP_MIN_CALL_TIMEOUT_MS) {
+    return MCP_MIN_CALL_TIMEOUT_MS
+  }
+  if (rounded > MCP_MAX_CALL_TIMEOUT_MS) {
+    return MCP_MAX_CALL_TIMEOUT_MS
+  }
+  return rounded
+}
+
 export enum McpAuthType {
   NONE = 'none',
   BEARER = 'bearer'
@@ -42,6 +60,7 @@ export class McpServerConfig {
   @Trace customHeadersJson: string = ''
   @Trace toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED
   @Trace tools: McpToolEntry[] = []
+  @Trace callTimeoutMs: number = MCP_DEFAULT_CALL_TIMEOUT_MS
 
   constructor(
     id: string = '',
@@ -52,7 +71,8 @@ export class McpServerConfig {
     authToken: string = '',
     customHeadersJson: string = '',
     toolApprovalPolicy: string = ToolApprovalPolicy.UNCONFIGURED,
-    tools: McpToolEntry[] = []
+    tools: McpToolEntry[] = [],
+    callTimeoutMs: number = MCP_DEFAULT_CALL_TIMEOUT_MS
   ) {
     this.id = id
     this.name = name
@@ -63,6 +83,7 @@ export class McpServerConfig {
     this.customHeadersJson = customHeadersJson
     this.toolApprovalPolicy = normalizeToolApprovalPolicy(toolApprovalPolicy)
     this.tools = tools
+    this.callTimeoutMs = normalizeMcpCallTimeoutMs(callTimeoutMs)
   }
 }
 

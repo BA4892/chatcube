@@ -888,6 +888,7 @@ export class ChatViewModel {
     part.toolSourceType = toolCall.sourceType
     part.toolSourceLabel = toolCall.sourceLabel
     part.toolPermissionLevel = toolCall.permissionLevel
+    part.toolApprovalState = toolCall.approvalState
     part.toolApprovalReason = toolCall.approvalReason
   }
 
@@ -1027,6 +1028,7 @@ export class ChatViewModel {
       part.toolSourceLabel,
       part.toolPermissionLevel
     )
+    toolCall.approvalState = part.toolApprovalState
     toolCall.approvalReason = part.toolApprovalReason
     return toolCall
   }
