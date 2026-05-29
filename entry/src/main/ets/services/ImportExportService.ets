@@ -23,7 +23,8 @@ import {
   MessageRole,
   SearchReference,
   ToolCall,
-  ToolResult
+  ToolResult,
+  SessionTitleSource
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID } from '../models/AssistantModels'
 import { deserializeMessageParts, MessagePartKind, serializeMessageParts } from '../models/MessageParts'
@@ -233,6 +234,7 @@ interface SessionData {
   modelId: string
   providerId: string
   assistantId?: string
+  titleSource?: string
   createdAt: number
   updatedAt: number
   isFavorite: boolean
@@ -701,6 +703,7 @@ export class ImportExportService {
         modelId: s.modelId,
         providerId: s.providerId,
         assistantId: s.assistantId !== '' ? s.assistantId : DEFAULT_ASSISTANT_ID,
+        titleSource: s.titleSource,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         isFavorite: s.isFavorite,
@@ -1110,6 +1113,10 @@ export class ImportExportService {
       session.isFavorite = sessionData.isFavorite || false
       session.lastMessagePreview = sessionData.lastMessagePreview || ''
       session.messageCount = sessionData.messageCount || 0
+      session.titleSource =
+        sessionData.titleSource === SessionTitleSource.PLACEHOLDER ||
+        sessionData.titleSource === SessionTitleSource.AI ?
+          sessionData.titleSource as SessionTitleSource : SessionTitleSource.MANUAL
       session.syncVersion = sessionData.syncVersion
       session.lastModified = sessionData.lastModified
       session.syncStatus = sessionData.syncStatus as 'synced' | 'pending' | 'conflict'

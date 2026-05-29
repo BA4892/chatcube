@@ -1,4 +1,4 @@
-import { ChatMessage, ChatSession, ToolCall, ToolResult } from '../models/ChatModels'
+import { ChatMessage, ChatSession, SessionTitleSource, ToolCall, ToolResult } from '../models/ChatModels'
 import { serializeMessageParts } from '../models/MessageParts'
 import { DatabaseService, ToolEventData } from '../services/DatabaseService'
 import { ensureMessageParts } from '../utils/ChatMessagePartsHelper'
@@ -43,6 +43,9 @@ export class ChatSessionStore {
     const sessionTitle = title !== '' ? title : this.defaultTitle
 
     const session = new ChatSession(sessionId, sessionTitle, modelId, providerId, assistantId)
+    if (title !== '') {
+      session.titleSource = SessionTitleSource.MANUAL
+    }
     await this.databaseService.createSession(session)
     this.currentSession = session
     this.onSessionListChanged()
@@ -61,6 +64,9 @@ export class ChatSessionStore {
     const sessionTitle = title !== '' ? title : this.defaultTitle
 
     const session = new ChatSession(sessionId, sessionTitle, modelId, providerId, assistantId)
+    if (title !== '') {
+      session.titleSource = SessionTitleSource.MANUAL
+    }
     this.pendingSession = session
     this.currentSession = session
     return session
@@ -194,7 +200,8 @@ export class ChatSessionStore {
     }
 
     this.currentSession.title = title
-    await this.databaseService.updateSessionTitle(this.currentSession.id, title)
+    this.currentSession.titleSource = SessionTitleSource.MANUAL
+    await this.databaseService.updateSessionTitle(this.currentSession.id, title, SessionTitleSource.MANUAL)
     this.onSessionListChanged()
     return true
   }

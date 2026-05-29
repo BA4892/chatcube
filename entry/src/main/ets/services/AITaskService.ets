@@ -14,6 +14,14 @@ export interface AITaskResult {
   errorMessage: string
 }
 
+export interface AITitleGenerationResult {
+  success: boolean
+  title: string
+  usedFallback: boolean
+  errorMessage: string
+  retryable: boolean
+}
+
 // AI 任务服务 - 单例模式
 export class AITaskService {
   private static instance: AITaskService | null = null
@@ -145,6 +153,30 @@ export class AITaskService {
     return true
   }
 
+  private isRetryableTitleError(message: string): boolean {
+    const normalized = message.toLowerCase()
+    return !normalized.includes('api key') &&
+      !normalized.includes('未配置') &&
+      !normalized.includes('not configured') &&
+      !normalized.includes('provider not found') &&
+      !normalized.includes('model not configured')
+  }
+
+  private buildTitleFailureResult(
+    conversationContent: string,
+    locale: string,
+    errorMessage: string,
+    retryable: boolean
+  ): AITitleGenerationResult {
+    return {
+      success: false,
+      title: this.extractFallbackTitle(conversationContent, locale),
+      usedFallback: true,
+      errorMessage: errorMessage,
+      retryable: retryable
+    }
+  }
+
   // 降级方案：从用户消息提取标题（提取关键词而非原样截取）
   private extractFallbackTitle(content: string, locale: string): string {
     // 提取第一条用户消息
@@ -212,30 +244,33 @@ export class AITaskService {
     return title
   }
 
-  // 生成对话标题
-  async generateTitle(conversationContent: string, locale?: string): Promise<string> {
+  async generateTitleResult(conversationContent: string, locale?: string): Promise<AITitleGenerationResult> {
     const titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
+    const truncatedContent = this.truncateContentForTitle(conversationContent)
+    const effectiveLocale = locale !== undefined && locale !== '' ? locale : this.getTitleLocale(truncatedContent)
+
+    if (!titleModel.isConfigured()) {
+      const message = 'Title model not configured'
+      console.error('AITaskService', message)
+      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
+    }
 
     // 获取供应商信息（使用异步方法，确保缓存已加载）
     const provider = await this.providerViewModel.getProviderByIdAsync(titleModel.providerId)
 
     if (provider === null) {
-      console.error('AITaskService', 'Provider not found: ' + titleModel.providerId)
-      return this.extractFallbackTitle(conversationContent, locale || 'Chinese')
+      const message = 'Provider not found: ' + titleModel.providerId
+      console.error('AITaskService', message)
+      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
     }
 
     // 获取有效的 API Key（优先用户配置，其次预设）
     const effectiveApiKey = getEffectiveApiKey(provider.id, provider.apiKey)
     if (effectiveApiKey === '') {
-      console.error('AITaskService', 'No API Key configured for provider: ' + provider.id)
-      return this.extractFallbackTitle(conversationContent, locale || 'Chinese')
+      const message = 'No API Key configured for provider: ' + provider.id
+      console.error('AITaskService', message)
+      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
     }
-
-    // 截断内容
-    const truncatedContent = this.truncateContentForTitle(conversationContent)
-
-    // 自动检测语言（如果未指定）
-    const effectiveLocale = locale !== undefined && locale !== '' ? locale : this.getTitleLocale(truncatedContent)
 
     // 构建 API 配置
     const apiConfig: AIApiConfig = {
@@ -256,13 +291,13 @@ export class AITaskService {
       }
     }
 
-    // 构建 Prompt（使用 system + user 双消息模式）
-    const systemPrompt = this.defaultModelService.getTitleSystemPrompt(effectiveLocale)
-    const userPrompt = this.defaultModelService.getTitleUserPrompt(truncatedContent)
-    const messages: RequestMessage[] = [
-      new RequestMessage('system', systemPrompt),
-      new RequestMessage('user', userPrompt)
-    ]
+    const messages: RequestMessage[] = []
+    if (this.defaultModelService.isDefaultTitlePrompt()) {
+      messages.push(new RequestMessage('system', this.defaultModelService.getTitleSystemPrompt(effectiveLocale)))
+      messages.push(new RequestMessage('user', this.defaultModelService.getTitleUserPrompt(truncatedContent)))
+    } else {
+      messages.push(new RequestMessage('user', this.defaultModelService.getTitlePrompt(truncatedContent, effectiveLocale)))
+    }
 
     try {
       const result = await this.aiApiService.sendChatRequest(
@@ -283,19 +318,42 @@ export class AITaskService {
 
         // 验证标题有效性
         if (this.isValidTitle(title)) {
-          return title
+          return {
+            success: true,
+            title: title,
+            usedFallback: false,
+            errorMessage: '',
+            retryable: false
+          }
         } else {
           console.warn('AITaskService', 'Generated title invalid, using fallback: ' + title)
-          return this.extractFallbackTitle(conversationContent, effectiveLocale)
+          return this.buildTitleFailureResult(conversationContent, effectiveLocale, 'Generated title invalid', false)
         }
       } else {
         console.error('AITaskService', 'Failed to generate title: ' + result.errorMessage)
-        return this.extractFallbackTitle(conversationContent, effectiveLocale)
+        return this.buildTitleFailureResult(
+          conversationContent,
+          effectiveLocale,
+          result.errorMessage,
+          this.isRetryableTitleError(result.errorMessage)
+        )
       }
     } catch (error) {
-      console.error('AITaskService', 'Error generating title: ' + JSON.stringify(error))
-      return this.extractFallbackTitle(conversationContent, effectiveLocale)
+      const message = JSON.stringify(error)
+      console.error('AITaskService', 'Error generating title: ' + message)
+      return this.buildTitleFailureResult(
+        conversationContent,
+        effectiveLocale,
+        message,
+        this.isRetryableTitleError(message)
+      )
     }
+  }
+
+  // 生成对话标题（兼容旧调用方，仅返回最终标题文本）
+  async generateTitle(conversationContent: string, locale?: string): Promise<string> {
+    const result = await this.generateTitleResult(conversationContent, locale)
+    return result.title
   }
 
   // 翻译文本

@@ -7,7 +7,8 @@ import {
   ModelProvider,
   MessageAttachment,
   AttachmentType,
-  SearchReference
+  SearchReference,
+  SessionTitleSource
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID, createDefaultAssistant } from '../models/AssistantModels'
 import { GeneratedMedia } from '../models/ImageGenerationModels'
@@ -185,6 +186,7 @@ export class DatabaseService {
         message_count INTEGER DEFAULT 0,
         draft_text TEXT DEFAULT '',
         draft_attachments_json TEXT DEFAULT '',
+        title_source TEXT DEFAULT 'manual',
         sync_version INTEGER DEFAULT 0,
         last_modified INTEGER DEFAULT 0,
         sync_status TEXT DEFAULT 'synced',
@@ -351,6 +353,7 @@ export class DatabaseService {
 	      // 尝试添加草稿字段（用于会话级草稿恢复）
 	      await this.addSessionDraftColumnsIfNeeded()
 	      await this.addSessionAssistantColumnIfNeeded()
+      await this.addSessionTitleSourceColumnIfNeeded()
 	      // 尝试添加搜索引用相关字段（用于联网搜索）
 	      await this.addSearchColumnsIfNeeded()
       // 尝试添加工具事件元数据字段（用于通用 tools/MCP）
@@ -717,7 +720,20 @@ export class DatabaseService {
 	    } catch (error) {
 	      console.info('DatabaseService', 'assistant_id backfill skipped')
 	    }
-	  }
+		  }
+
+  private async addSessionTitleSourceColumnIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(
+        `ALTER TABLE ${TableNames.SESSIONS} ADD COLUMN title_source TEXT DEFAULT '${SessionTitleSource.MANUAL}'`
+      )
+    } catch (error) {
+      console.info('DatabaseService', 'title_source column may already exist')
+    }
+  }
 
   private async addAttachmentParseColumnsIfNeeded(): Promise<void> {
     if (this.rdbStore === null) {
@@ -1059,6 +1075,16 @@ export class DatabaseService {
     }
   }
 
+  private normalizeSessionTitleSource(value: string): SessionTitleSource {
+    if (value === SessionTitleSource.PLACEHOLDER) {
+      return SessionTitleSource.PLACEHOLDER
+    }
+    if (value === SessionTitleSource.AI) {
+      return SessionTitleSource.AI
+    }
+    return SessionTitleSource.MANUAL
+  }
+
   private async getMessageSessionId(messageId: string): Promise<string> {
     if (this.rdbStore === null) {
       return ''
@@ -1383,7 +1409,8 @@ export class DatabaseService {
       last_message_preview: session.lastMessagePreview,
       message_count: session.messageCount,
       draft_text: session.draftText,
-      draft_attachments_json: this.serializeDraftAttachments(session.draftAttachments)
+      draft_attachments_json: this.serializeDraftAttachments(session.draftAttachments),
+      title_source: session.titleSource
     }
     try {
       await this.rdbStore.insert(TableNames.SESSIONS, valueBucket)
@@ -1400,10 +1427,11 @@ export class DatabaseService {
     }
     const valueBucket: relationalStore.ValuesBucket = {
 	      title: session.title,
-	      model_id: session.modelId,
-	      provider_id: session.providerId,
-	      assistant_id: session.assistantId !== '' ? session.assistantId : DEFAULT_ASSISTANT_ID,
-	      updated_at: Date.now()
+		      model_id: session.modelId,
+		      provider_id: session.providerId,
+		      assistant_id: session.assistantId !== '' ? session.assistantId : DEFAULT_ASSISTANT_ID,
+		      updated_at: Date.now(),
+          title_source: session.titleSource
     }
     const predicates = new relationalStore.RdbPredicates(TableNames.SESSIONS)
     predicates.equalTo('id', session.id)
@@ -1484,13 +1512,18 @@ export class DatabaseService {
   }
 
   // 仅更新会话标题（不修改 updated_at，避免改变会话时间排序）
-  async updateSessionTitle(sessionId: string, title: string): Promise<void> {
+  async updateSessionTitle(
+    sessionId: string,
+    title: string,
+    titleSource: SessionTitleSource = SessionTitleSource.MANUAL
+  ): Promise<void> {
     await this.waitForInitialization()
     if (this.rdbStore === null) {
       return
     }
     const valueBucket: relationalStore.ValuesBucket = {
-      title: title
+      title: title,
+      title_source: titleSource
     }
     const predicates = new relationalStore.RdbPredicates(TableNames.SESSIONS)
     predicates.equalTo('id', sessionId)
@@ -1508,6 +1541,7 @@ export class DatabaseService {
     }
 
     let messageCount = 0
+    let titleSource = SessionTitleSource.MANUAL
     const queryPredicates = new relationalStore.RdbPredicates(TableNames.SESSIONS)
     queryPredicates.equalTo('id', sessionId)
     try {
@@ -1518,6 +1552,9 @@ export class DatabaseService {
         } catch (e) {
           messageCount = 0
         }
+        titleSource = this.normalizeSessionTitleSource(
+          this.safeGetString(resultSet, 'title_source', SessionTitleSource.MANUAL)
+        )
       }
       resultSet.close()
     } catch (error) {
@@ -1529,8 +1566,9 @@ export class DatabaseService {
       draft_text: draftText,
       draft_attachments_json: this.serializeDraftAttachments(draftAttachments)
     }
-    if (messageCount === 0) {
+    if (messageCount === 0 && titleSource !== SessionTitleSource.MANUAL) {
       valueBucket.title = this.buildDraftTitle(draftText)
+      valueBucket.title_source = SessionTitleSource.PLACEHOLDER
       valueBucket.last_message_preview = this.buildDraftPreview(draftText, draftAttachments)
       valueBucket.updated_at = Date.now()
     }
@@ -1684,6 +1722,9 @@ export class DatabaseService {
         } catch (e) {
           session.draftAttachments = []
         }
+        session.titleSource = this.normalizeSessionTitleSource(
+          this.safeGetString(resultSet, 'title_source', SessionTitleSource.MANUAL)
+        )
         sessions.push(session)
       }
       resultSet.close()
@@ -1764,6 +1805,9 @@ export class DatabaseService {
         } catch (e) {
           session.draftAttachments = []
         }
+        session.titleSource = this.normalizeSessionTitleSource(
+          this.safeGetString(resultSet, 'title_source', SessionTitleSource.MANUAL)
+        )
         resultSet.close()
         return session
       }

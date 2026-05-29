@@ -20,7 +20,7 @@ import { getAttachmentStorageService, AttachmentStorageService } from '../servic
 import { getToolExecutionService, ToolExecutionService, ToolExecutionContext, isCancelledToolResult, CancelledToolResultInfo } from '../services/ToolExecutionService'
 import { getProviderViewModel, ProviderViewModel } from './ProviderViewModel'
 import { getAssistantService, AssistantService, AssistantRuntimeConfig } from '../services/AssistantService'
-import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport, ToolSourceType, ToolPermissionLevel } from '../models/ChatModels'
+import { ChatMessage, ChatSession, MessageRole, ProviderType, ApiStyle, MessageAttachment, AttachmentType, ReasoningLevel, ToolDefinition, ToolCall, ToolResult, SearchReference, OpenAITransport, ToolSourceType, ToolPermissionLevel, SessionTitleSource } from '../models/ChatModels'
 import { AIGeneratedImageFileResult, AIGeneratedImageFileSink } from '../models/AIGeneratedImageFileModels'
 import { WebSearchResult, SearchResult } from '../services/WebSearchService'
 import { http } from '@kit.NetworkKit'
@@ -443,8 +443,37 @@ export class ChatViewModel {
     return attachments[0].name !== '' ? attachments[0].name : ''
   }
 
-  private isFirstRoundSession(session: ChatSession | null): boolean {
-    return session !== null && session.messages.length === 0
+  private isCurrentSessionId(sessionId: string): boolean {
+    const current = this.sessionStore.getCurrentSession()
+    return current !== null && current.id === sessionId
+  }
+
+  private shouldAutoGenerateTitleForSession(session: ChatSession | null): boolean {
+    return session !== null &&
+      (session.titleSource === SessionTitleSource.PLACEHOLDER || session.title.trim() === '')
+  }
+
+  private async applyPlaceholderTitleIfNeeded(
+    sessionId: string,
+    session: ChatSession | null,
+    content: string,
+    shouldApply: boolean
+  ): Promise<void> {
+    if (!shouldApply || session === null || sessionId === '') {
+      return
+    }
+
+    const title = this.buildDraftTitle(content)
+    session.title = title
+    session.titleSource = SessionTitleSource.PLACEHOLDER
+    await this.databaseService.updateSessionTitle(sessionId, title, SessionTitleSource.PLACEHOLDER)
+    this.notifySessionListChanged()
+
+    if (this.isCurrentSessionId(sessionId) &&
+      this.titleCallbacks !== null &&
+      this.titleCallbacks.onTitleUpdated !== undefined) {
+      this.titleCallbacks.onTitleUpdated(title)
+    }
   }
 
   private appendMessageToSessionIfMissing(session: ChatSession | null, message: ChatMessage): void {
@@ -1395,7 +1424,7 @@ export class ChatViewModel {
     // 快照会话信息，后续所有异步回调中使用快照而非 this.currentSession，避免并发请求时会话被覆盖
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
-    const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
+    const shouldAutoGenerateTitle = this.shouldAutoGenerateTitleForSession(snapshotSession)
     const includeHistoryAttachmentPayloads = attachments.length === 0
     const historyMessages = this.buildConversationRequestHistory(
       messages,
@@ -1436,12 +1465,7 @@ export class ChatViewModel {
     if (snapshotSession !== null) {
       await this.databaseService.addMessage(snapshotSessionId, userMessage)
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
-      if (shouldAutoGenerateTitle) {
-        const title = content.length > 20 ? content.substring(0, 20) + '...' : content
-        snapshotSession.title = title
-        await this.databaseService.updateSessionTitle(snapshotSessionId, title)
-        this.notifySessionListChanged()
-      }
+      await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1577,7 +1601,7 @@ export class ChatViewModel {
             this.clearPendingAIMessageIfMatches(aiMessage.id)
 
             if (shouldAutoGenerateTitle) {
-              this.generateSmartTitle(snapshotSession)
+              void this.generateSmartTitle(snapshotSessionId, snapshotSession)
             }
           }
         } catch (persistError) {
@@ -1722,7 +1746,7 @@ export class ChatViewModel {
     // 快照会话信息，后续所有异步回调中使用快照而非 this.currentSession
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
-    const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
+    const shouldAutoGenerateTitle = this.shouldAutoGenerateTitleForSession(snapshotSession)
     const includeHistoryAttachmentPayloads = attachments.length === 0
     const historyMessages = this.buildConversationRequestHistory(
       messages,
@@ -1770,6 +1794,7 @@ ${webContext.content}
     if (snapshotSession !== null) {
       await this.databaseService.addMessage(snapshotSessionId, userMessage)
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
+      await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -1883,7 +1908,7 @@ ${webContext.content}
             this.markPendingAIMessagePersisted(aiMessage.id)
             this.clearPendingAIMessageIfMatches(aiMessage.id)
             if (shouldAutoGenerateTitle) {
-              this.generateSmartTitle(snapshotSession)
+              void this.generateSmartTitle(snapshotSessionId, snapshotSession)
             }
           }
         } catch (persistError) {
@@ -2008,7 +2033,7 @@ ${webContext.content}
     // 快照会话信息，后续所有异步回调中使用快照而非 this.currentSession
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
-    const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
+    const shouldAutoGenerateTitle = this.shouldAutoGenerateTitleForSession(snapshotSession)
     const includeHistoryAttachmentPayloads = attachments.length === 0
     const historyMessages = this.buildConversationRequestHistory(
       messages,
@@ -2086,6 +2111,7 @@ ${limitedSearchContext}
     if (snapshotSession !== null) {
       await this.databaseService.addMessage(snapshotSessionId, userMessage)
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
+      await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -2201,7 +2227,7 @@ ${limitedSearchContext}
             this.markPendingAIMessagePersisted(aiMessage.id)
             this.clearPendingAIMessageIfMatches(aiMessage.id)
             if (shouldAutoGenerateTitle) {
-              this.generateSmartTitle(snapshotSession)
+              void this.generateSmartTitle(snapshotSessionId, snapshotSession)
             }
           }
         } catch (persistError) {
@@ -2334,7 +2360,7 @@ ${limitedSearchContext}
     // 快照会话信息，后续所有异步回调中使用快照而非 this.currentSession
     const snapshotSessionId = this.currentSession?.id ?? ''
     const snapshotSession = this.currentSession
-    const shouldAutoGenerateTitle = this.isFirstRoundSession(snapshotSession)
+    const shouldAutoGenerateTitle = this.shouldAutoGenerateTitleForSession(snapshotSession)
     const includeHistoryAttachmentPayloads = attachments.length === 0
     const historyMessages = this.buildConversationRequestHistory(
       messages,
@@ -2376,12 +2402,7 @@ ${limitedSearchContext}
     if (snapshotSession !== null) {
       await this.databaseService.addMessage(snapshotSessionId, userMessage)
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
-      if (shouldAutoGenerateTitle) {
-        const title = content.length > 20 ? content.substring(0, 20) + '...' : content
-        snapshotSession.title = title
-        await this.databaseService.updateSessionTitle(snapshotSessionId, title)
-        this.notifySessionListChanged()
-      }
+      await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
     if (this.isCancelled(cancelSnapshot)) {
       return
@@ -2558,7 +2579,7 @@ ${limitedSearchContext}
         this.markPendingAIMessagePersisted(aiMessage.id)
         this.clearPendingAIMessageIfMatches(aiMessage.id)
         if (shouldAutoGenerateTitle) {
-          this.generateSmartTitle(snapshotSession)
+          void this.generateSmartTitle(snapshotSessionId, snapshotSession)
         }
       }
     } catch (persistError) {
@@ -4259,68 +4280,132 @@ ${limitedSearchContext}
     this.titleCallbacks = callbacks
   }
 
-  // 生成智能标题（带重试机制）
-  private async generateSmartTitle(session: ChatSession, retryCount: number = 0): Promise<void> {
-    // 通知开始生成
-    if (this.titleCallbacks !== null && this.titleCallbacks.onTitleGenerating !== undefined) {
-      this.titleCallbacks.onTitleGenerating(true)
+  private buildTitleConversationContent(messages: ChatMessage[]): string {
+    let content = ''
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i]
+      if (msg.role !== MessageRole.USER && msg.role !== MessageRole.ASSISTANT) {
+        continue
+      }
+      const text = msg.content.trim()
+      if (text === '') {
+        continue
+      }
+      content += `${msg.role}: ${text}\n`
     }
+    return content
+  }
+
+  private notifyTitleGeneratingForSession(sessionId: string, isGenerating: boolean): void {
+    if (!this.isCurrentSessionId(sessionId)) {
+      return
+    }
+    if (this.titleCallbacks !== null && this.titleCallbacks.onTitleGenerating !== undefined) {
+      this.titleCallbacks.onTitleGenerating(isGenerating)
+    }
+  }
+
+  private notifyTitleFailedForSession(sessionId: string): void {
+    if (!this.isCurrentSessionId(sessionId)) {
+      return
+    }
+    if (this.titleCallbacks !== null && this.titleCallbacks.onTitleFailed !== undefined) {
+      this.titleCallbacks.onTitleFailed()
+    }
+  }
+
+  // 生成智能标题：按会话 ID 写回，避免切换会话后丢失生成结果。
+  private async generateSmartTitle(
+    sessionId: string,
+    session: ChatSession,
+    retryCount: number = 0,
+    force: boolean = false
+  ): Promise<void> {
+    let retryScheduled = false
+    this.notifyTitleGeneratingForSession(sessionId, true)
 
     try {
-      // 构建对话内容
-      let content = ''
-      for (let i = 0; i < session.messages.length; i++) {
-        const msg = session.messages[i]
-        content += `${msg.role}: ${msg.content}\n`
+      const content = this.buildTitleConversationContent(session.messages)
+      if (content.trim() === '') {
+        console.warn('ChatViewModel', 'Title generation skipped: empty conversation content')
+        this.notifyTitleFailedForSession(sessionId)
+        return
       }
 
-      // 调用 AI 任务服务生成标题（自动检测语言）
-      const title = await this.aiTaskService.generateTitle(content)
-      if (title !== '' && this.currentSession !== null && this.currentSession.id === session.id) {
-        this.currentSession.title = title
-        await this.databaseService.updateSessionTitle(this.currentSession.id, title)
-        this.notifySessionListChanged()
-        console.info('ChatViewModel', 'Smart title generated: ' + title)
+      const result = await this.aiTaskService.generateTitleResult(content)
+      if (!result.success && result.retryable && retryCount < this.MAX_TITLE_RETRY) {
+        const delayMs = Math.pow(2, retryCount + 1) * 1000
+        retryScheduled = true
+        console.info('ChatViewModel',
+          `Retrying title generation in ${delayMs}ms (attempt ${retryCount + 1}/${this.MAX_TITLE_RETRY})`)
+        setTimeout(() => {
+          void this.generateSmartTitle(sessionId, session, retryCount + 1, force)
+        }, delayMs)
+        return
+      }
 
-        // 通知标题更新成功
+      const title = result.title.trim()
+      if (title === '') {
+        console.warn('ChatViewModel', 'Title generation returned empty string')
+        this.notifyTitleFailedForSession(sessionId)
+        return
+      }
+
+      if (force && !result.success) {
+        console.warn('ChatViewModel', 'Manual title regeneration failed: ' + result.errorMessage)
+        this.notifyTitleFailedForSession(sessionId)
+        return
+      }
+
+      const latestSession = await this.databaseService.getSession(sessionId)
+      if (latestSession === null) {
+        return
+      }
+      if (!force && latestSession.titleSource === SessionTitleSource.MANUAL) {
+        console.info('ChatViewModel', 'Skip generated title because session title is manual: ' + sessionId)
+        return
+      }
+
+      const titleSource = result.success ? SessionTitleSource.AI : SessionTitleSource.PLACEHOLDER
+      await this.databaseService.updateSessionTitle(sessionId, title, titleSource)
+      session.title = title
+      session.titleSource = titleSource
+
+      if (this.isCurrentSessionId(sessionId)) {
+        const current = this.sessionStore.getCurrentSession()
+        if (current !== null) {
+          current.title = title
+          current.titleSource = titleSource
+          this.currentSession = current
+        }
         if (this.titleCallbacks !== null && this.titleCallbacks.onTitleUpdated !== undefined) {
           this.titleCallbacks.onTitleUpdated(title)
         }
-      } else if (title === '') {
-        // 生成失败（配置问题或 API 返回空），通知失败
-        console.warn('ChatViewModel', 'Title generation returned empty string')
-        if (this.titleCallbacks !== null && this.titleCallbacks.onTitleFailed !== undefined) {
-          this.titleCallbacks.onTitleFailed()
-        }
       }
 
-      // 通知生成结束
-      if (this.titleCallbacks !== null && this.titleCallbacks.onTitleGenerating !== undefined) {
-        this.titleCallbacks.onTitleGenerating(false)
+      this.notifySessionListChanged()
+      if (!result.success) {
+        console.warn('ChatViewModel', 'Title generation used fallback: ' + result.errorMessage)
+        this.notifyTitleFailedForSession(sessionId)
+      } else {
+        console.info('ChatViewModel', 'Smart title generated: ' + title)
       }
     } catch (error) {
       console.error('ChatViewModel', 'Failed to generate smart title: ' + JSON.stringify(error))
-
-      // 检查是否可以重试（网络错误等可重试，配置错误不重试）
-      const errorStr = JSON.stringify(error)
-      const isConfigError = errorStr.includes('API Key') || errorStr.includes('未配置') || errorStr.includes('not configured')
-
-      if (!isConfigError && retryCount < this.MAX_TITLE_RETRY) {
-        // 指数退避重试：2秒、4秒、8秒
+      if (retryCount < this.MAX_TITLE_RETRY) {
         const delayMs = Math.pow(2, retryCount + 1) * 1000
-        console.info('ChatViewModel', `Retrying title generation in ${delayMs}ms (attempt ${retryCount + 1}/${this.MAX_TITLE_RETRY})`)
-
+        retryScheduled = true
+        console.info('ChatViewModel',
+          `Retrying title generation in ${delayMs}ms (attempt ${retryCount + 1}/${this.MAX_TITLE_RETRY})`)
         setTimeout(() => {
-          this.generateSmartTitle(session, retryCount + 1)
+          void this.generateSmartTitle(sessionId, session, retryCount + 1, force)
         }, delayMs)
-      } else {
-        // 重试次数用尽或配置错误，通知失败
-        if (this.titleCallbacks !== null && this.titleCallbacks.onTitleGenerating !== undefined) {
-          this.titleCallbacks.onTitleGenerating(false)
-        }
-        if (this.titleCallbacks !== null && this.titleCallbacks.onTitleFailed !== undefined) {
-          this.titleCallbacks.onTitleFailed()
-        }
+        return
+      }
+      this.notifyTitleFailedForSession(sessionId)
+    } finally {
+      if (!retryScheduled) {
+        this.notifyTitleGeneratingForSession(sessionId, false)
       }
     }
   }
@@ -4334,7 +4419,7 @@ ${limitedSearchContext}
       console.warn('ChatViewModel', 'Cannot generate title: no messages in session')
       return
     }
-    await this.generateSmartTitle(this.currentSession, 0)
+    await this.generateSmartTitle(this.currentSession.id, this.currentSession, 0, true)
   }
 
   // 手动更新会话标题

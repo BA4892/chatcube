@@ -269,6 +269,13 @@ export enum ModelRole {
   IMAGE = 'image'
 }
 
+// 会话标题来源：用于区分系统占位、AI 生成和用户手动编辑。
+export enum SessionTitleSource {
+  PLACEHOLDER = 'placeholder',
+  AI = 'ai',
+  MANUAL = 'manual'
+}
+
 // 推理级别枚举
 export enum ReasoningLevel {
   OFF = 'off',           // 关闭推理
@@ -782,6 +789,7 @@ export class ChatSession {
   @Trace messageCount: number
   @Trace draftText: string
   @Trace draftAttachments: MessageAttachment[]
+  @Trace titleSource: SessionTitleSource
   // 同步相关字段(为 WebDAV 同步预留)
   @Trace syncVersion: number = 0
   @Trace lastModified: number = Date.now()
@@ -802,6 +810,7 @@ export class ChatSession {
     this.messageCount = 0
     this.draftText = ''
     this.draftAttachments = []
+    this.titleSource = SessionTitleSource.PLACEHOLDER
     this.syncVersion = 0
     this.lastModified = Date.now()
     this.syncStatus = 'synced'
