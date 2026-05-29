@@ -1,5 +1,7 @@
 import {
   HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   HdsTabs,
@@ -8,15 +10,12 @@ import {
 import { ALL_THEMES, ColorTheme, getThemeColors, ThemeColorConfig, ThemeInfo } from '../models/ThemeColors'
 import { ThemeMode } from '../services/PreferencesService'
 import { ServiceRegistry } from '../services/ServiceRegistry'
-import { SettingsCompactTitleBarContent } from '../components/settings/SettingsCompactPageHeader'
 import { getSettingsPageContentMaxWidth, getSettingsPageCompactTabsTotalInset } from '../utils/SettingsPageLayoutHelper'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getAppUiState } from '../state/AppUiState'
 import {
-  buildHdsTopNavigationTitleBarOptions,
-  getHdsTopNavigationBlurEffectiveEndOffset,
-  getHdsTopNavigationMaskExtraHeight,
-  HdsTopNavigationBlurOptions,
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  getHdsTopNavigationContentTopPadding,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
 import {
@@ -122,7 +121,13 @@ export struct ThemeAppearanceSettingsView {
   }
 
   @Param compactTitle: string | Resource = $r('app.string.settings_appearance')
+  @Param hostedInNavDestination: boolean = false
   @Event onCompactBack: () => void = () => {}
+  @Event onDestinationReady: (context: NavDestinationContext) => void = (_context: NavDestinationContext) => {}
+  @Event onDestinationBack: () => boolean = () => {
+    this.onCompactBack()
+    return true
+  }
 
   @Local currentThemeMode: ThemeMode = ThemeMode.SYSTEM
   @Local currentColorTheme: ColorTheme = ColorTheme.DEFAULT
@@ -186,25 +191,16 @@ export struct ThemeAppearanceSettingsView {
       this.settingsDetailPresentationMode) + this.getPreviewFabContentInset()
   }
 
-  private getCompactTitleBarMaskExtraHeight(): number {
-    return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
-  }
-
   private getCompactContentTopPadding(): number {
-    return this.px2vp(this.topAvoidHeight) + 56 + this.getCompactTitleBarMaskExtraHeight()
+    return getHdsTopNavigationContentTopPadding(this.px2vp(this.topAvoidHeight), this.windowWidthVp,
+      this.windowHeightVp)
   }
 
   private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
-    const options = new HdsTopNavigationBlurOptions()
-    options.materialType = this.materialType
-    options.materialLevel = this.materialLevel
-    options.windowWidthVp = this.windowWidthVp
-    options.windowHeightVp = this.windowHeightVp
-    options.maskExtraHeightVp = this.getCompactTitleBarMaskExtraHeight()
-    options.blurEffectiveEndOffsetVp = getHdsTopNavigationBlurEffectiveEndOffset(this.windowWidthVp,
-      this.windowHeightVp)
-    options.stackBuilder = (): void => this.CompactTitleStackBuilder()
-    return buildHdsTopNavigationTitleBarOptions(options)
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, this.compactTitle, (): void => {
+        this.onCompactBack()
+      })
   }
 
   private getResolvedDarkMode(mode: ThemeMode = this.currentThemeMode): boolean {
@@ -1290,14 +1286,6 @@ export struct ThemeAppearanceSettingsView {
   }
 
   @Builder
-  private CompactTitleStackBuilder() {
-    SettingsCompactTitleBarContent({
-      title: this.compactTitle,
-      onBack: this.onCompactBack
-    })
-  }
-
-  @Builder
   private DetailPaneHeader() {
     Column() {
       Row() {
@@ -1318,6 +1306,15 @@ export struct ThemeAppearanceSettingsView {
   }
 
   build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
+  }
+
+  @Builder
+  private PageRootContent() {
     Column() {
       if (this.isDetailPaneMode()) {
         Column() {
@@ -1327,33 +1324,69 @@ export struct ThemeAppearanceSettingsView {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsNavigation() {
-          this.CompactBody()
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.themeBackground)
-        .titleBar(this.getCompactTitleBarOptions())
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .systemBarStyle(
-          { statusBarContentColor: getHdsStatusBarContentColor() },
-          { statusBarContentColor: getHdsStatusBarContentColor() }
-        )
-        .hideBackButton(true)
-        .hideToolBar(true)
-        .mode(NavigationMode.Stack)
-        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        this.CompactBody()
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.themeBackground)
   }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.themeScroller, this.fontScroller, this.materialScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .hideTitleBar(this.isDetailPaneMode(), false)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(this.themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      this.onDestinationReady(context)
+    })
+    .onBackPressed((): boolean => {
+      return this.onDestinationBack()
+    })
+  }
+
+  @Builder
+  private StandaloneRoot() {
+    if (this.isDetailPaneMode()) {
+      this.PageRootContent()
+    } else {
+      HdsNavigation() {
+        this.PageRootContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.themeBackground)
+      .titleBar(this.getCompactTitleBarOptions())
+      .bindToScrollable([this.themeScroller, this.fontScroller, this.materialScroller])
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .systemBarStyle(
+        { statusBarContentColor: getHdsStatusBarContentColor() },
+        { statusBarContentColor: getHdsStatusBarContentColor() }
+      )
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .mode(NavigationMode.Stack)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    }
+  }
 }
 
 @Entry
 @ComponentV2
 struct ThemeModeSettingsPage {
+  @Param hostedInNavDestination: boolean = false
+
   private handleBack(): void {
     if (themeModeSettingsPathStack !== null && themeModeSettingsPathStack.size() > 0) {
       themeModeSettingsPathStack.pop()
@@ -1364,8 +1397,16 @@ struct ThemeModeSettingsPage {
     Column() {
       ThemeAppearanceSettingsView({
         compactTitle: $r('app.string.settings_appearance'),
+        hostedInNavDestination: this.hostedInNavDestination,
         onCompactBack: () => {
           this.handleBack()
+        },
+        onDestinationReady: (context: NavDestinationContext) => {
+          themeModeSettingsPathStack = context.pathStack
+        },
+        onDestinationBack: (): boolean => {
+          this.handleBack()
+          return true
         }
       })
     }
@@ -1376,18 +1417,7 @@ struct ThemeModeSettingsPage {
 
 @Builder
 export function ThemeModeSettingsPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    ThemeModeSettingsPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    themeModeSettingsPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (themeModeSettingsPathStack !== null && themeModeSettingsPathStack.size() > 0) {
-      themeModeSettingsPathStack.pop()
-    }
-    return true
+  ThemeModeSettingsPage({
+    hostedInNavDestination: true
   })
 }

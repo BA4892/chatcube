@@ -13,6 +13,18 @@ import {
   CubeSpinner3D
 } from '../components/loading/CubeSpinner'
 import { getAppUiState } from '../state/AppUiState'
+import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
+import {
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  getHdsTopNavigationContentTopPadding,
+  getHdsStatusBarContentColor
+} from '../utils/HdsVisualEffectUtil'
 
 let cubeSpinnerPreviewPathStack: NavPathStack | null = null
 
@@ -23,7 +35,9 @@ type PreviewComparison = 'title' | 'imagegen'
 @Entry
 @ComponentV2
 struct CubeSpinnerPreview {
+  @Param hostedInNavDestination: boolean = false
   @Local private bgVariant: PreviewBackground = 'light'
+  private previewScroller: Scroller = new Scroller()
 
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -43,6 +57,38 @@ struct CubeSpinnerPreview {
 
   private get themeSurface(): string {
     return getAppUiState().themeSurface
+  }
+
+  private get windowWidthVp(): number {
+    return getAppUiState().windowWidthVp
+  }
+
+  private get windowHeightVp(): number {
+    return getAppUiState().windowHeightVp
+  }
+
+  private get materialType(): number {
+    return getAppUiState().materialType
+  }
+
+  private get materialLevel(): number {
+    return getAppUiState().materialLevel
+  }
+
+  private px2vp(px: number): number {
+    return px / (this.getUIContext().getHostContext()?.resourceManager.getDeviceCapabilitySync().screenDensity ?? 3) * 160
+  }
+
+  private getCompactContentTopPadding(): number {
+    return getHdsTopNavigationContentTopPadding(this.px2vp(getAppUiState().topAvoidHeight), this.windowWidthVp,
+      this.windowHeightVp)
+  }
+
+  private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, 'ChatCube 加载动效预览', (): void => {
+        this.handleBack()
+      })
   }
 
   private getStageColor(): string {
@@ -75,103 +121,111 @@ struct CubeSpinnerPreview {
   }
 
   build() {
-    NavDestination() {
-      Column() {
-        this.HeaderBar()
-        Scroll() {
-          Column({ space: 16 }) {
-            this.BackgroundToggleRow()
-
-            this.VariantCard(
-              'A',
-              'A · Light Cube',
-              '静态立方体, 高光在三个面之间循环 + 整体微浮动',
-              '推荐: 标题旁小指示器 / 通用 loading (12 - 32vp)'
-            )
-
-            this.VariantCard(
-              'B',
-              'B · Bubble Dots',
-              '现有 TypingDots 套上呼吸"对话气泡", 视觉上像 icon 上的对话面',
-              '推荐: 聊天里 AI 思考中 (替换现有 TypingIndicator)'
-            )
-
-            this.VariantCard(
-              'C',
-              'C · Assemble Cube',
-              '三个面带 stagger 地散开 → 聚合, 暗示 AI 在拼接画面',
-              '推荐: 生图占位 (≥ 56vp)'
-            )
-
-            this.VariantCard(
-              'D',
-              'D · 3D Spin Cube',
-              '立方体绕 Y 轴 3D 旋转',
-              '推荐: 中大尺寸 loading 替代方案 (32 - 80vp)'
-            )
-
-            this.ComparisonCard()
-
-            Blank().height(40)
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12 })
-        }
-        .layoutWeight(1)
-        .scrollBar(BarState.Off)
-        .width('100%')
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.themeBackground)
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
     }
-    .hideTitleBar(true)
-    .hideBackButton(true)
+  }
+
+  @Builder
+  private PageRootContent() {
+    Column() {
+      Scroll(this.previewScroller) {
+        Column({ space: 16 }) {
+          Blank()
+            .width('100%')
+            .height(this.getCompactContentTopPadding())
+
+          this.BackgroundToggleRow()
+
+          this.VariantCard(
+            'A',
+            'A · Light Cube',
+            '静态立方体, 高光在三个面之间循环 + 整体微浮动',
+            '推荐: 标题旁小指示器 / 通用 loading (12 - 32vp)'
+          )
+
+          this.VariantCard(
+            'B',
+            'B · Bubble Dots',
+            '现有 TypingDots 套上呼吸"对话气泡", 视觉上像 icon 上的对话面',
+            '推荐: 聊天里 AI 思考中 (替换现有 TypingIndicator)'
+          )
+
+          this.VariantCard(
+            'C',
+            'C · Assemble Cube',
+            '三个面带 stagger 地散开 → 聚合, 暗示 AI 在拼接画面',
+            '推荐: 生图占位 (≥ 56vp)'
+          )
+
+          this.VariantCard(
+            'D',
+            'D · 3D Spin Cube',
+            '立方体绕 Y 轴 3D 旋转',
+            '推荐: 中大尺寸 loading 替代方案 (32 - 80vp)'
+          )
+
+          this.ComparisonCard()
+
+          Blank().height(40)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 12 })
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.themeBackground)
+  }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.previewScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(this.themeBackground)
+    .onReady((context: NavDestinationContext): void => {
+      cubeSpinnerPreviewPathStack = context.pathStack
+    })
     .onBackPressed((): boolean => {
       this.handleBack()
       return true
     })
   }
 
-  // ---------------------------------------------------------------------------
-  // 顶部标题栏
-  // ---------------------------------------------------------------------------
   @Builder
-  private HeaderBar() {
-    Row() {
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph($r('sys.symbol.arrow_left'))
-          .fontSize(20)
-          .fontColor(['#24211C'])
-      }
-      .width(36)
-      .height(36)
-      .backgroundColor('rgba(0,0,0,0)')
-      .onClick((): void => {
-        this.handleBack()
-      })
-
-      Text('ChatCube 加载动效预览')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#24211C')
-        .margin({ left: 8 })
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Text('DEV')
-        .fontSize(10)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.themePrimary)
-        .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-        .backgroundColor(this.themePrimaryLight)
-        .borderRadius(6)
+  private StandaloneRoot() {
+    HdsNavigation() {
+      this.PageRootContent()
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 12, right: 16 })
-    .alignItems(VerticalAlign.Center)
+    .height('100%')
+    .backgroundColor(this.themeBackground)
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.previewScroller])
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .mode(NavigationMode.Stack)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 
   // ---------------------------------------------------------------------------
@@ -452,18 +506,7 @@ struct CubeSpinnerPreview {
 
 @Builder
 export function CubeSpinnerPreviewBuilder(name: string, param: Object) {
-  NavDestination() {
-    CubeSpinnerPreview()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext): void => {
-    cubeSpinnerPreviewPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (cubeSpinnerPreviewPathStack !== null && cubeSpinnerPreviewPathStack.size() > 0) {
-      cubeSpinnerPreviewPathStack.pop()
-    }
-    return true
+  CubeSpinnerPreview({
+    hostedInNavDestination: true
   })
 }

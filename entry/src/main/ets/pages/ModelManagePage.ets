@@ -1,4 +1,3 @@
-import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { ModelProvider, ModelInfo, ProviderType } from '../models/ChatModels'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { showToast } from '../utils/ToastUtil'
@@ -11,14 +10,16 @@ import { ProviderIcon, resolveProviderTextIconDisplayMode } from '../components/
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import {
   HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode
 } from '@kit.UIDesignKit'
 import {
-  buildHdsTopNavigationTitleBarOptionsForPage,
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  createHdsTitleBarSymbolIcon,
   getHdsTopNavigationContentTopPadding,
-  getHdsTopNavigationMaskExtraHeight,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
 import { AppStorageKeys } from '../config/AppStorageKeys'
@@ -52,6 +53,7 @@ export function notifyModelManageRefresh(): void {
 @Entry
 @ComponentV2
 struct ModelManagePage {
+  @Param hostedInNavDestination: boolean = false
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
   }
@@ -146,18 +148,16 @@ struct ModelManagePage {
       this.windowHeightVp)
   }
 
-  private getCompactTitleBarMaskExtraHeight(): number {
-    return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
-  }
-
   private getCompactContentTopPadding(): number {
     return getHdsTopNavigationContentTopPadding(this.px2vp(this.topAvoidHeight), this.windowWidthVp,
       this.windowHeightVp)
   }
 
   private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return buildHdsTopNavigationTitleBarOptionsForPage(this.materialType, this.materialLevel, this.windowWidthVp,
-      this.windowHeightVp, (): void => this.CompactTitleStackBuilder())
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.model_manage_title'), (): void => {
+        this.handleBack()
+      }, this.getManageMenus(), 2)
   }
 
   private hasExpandedDetailSelection(): boolean {
@@ -456,6 +456,15 @@ struct ModelManagePage {
   }
 
   build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
+  }
+
+  @Builder
+  private PageRootContent() {
     Column() {
       if (this.showEmbeddedProviderDetailPage()) {
         this.EmbeddedProviderDetailPage()
@@ -467,23 +476,7 @@ struct ModelManagePage {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsNavigation() {
-          this.CompactManageBody()
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(getAppUiState().themeBackground)
-        .titleBar(this.getCompactTitleBarOptions())
-        .bindToScrollable([this.providerListScroller])
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .systemBarStyle(
-          { statusBarContentColor: getHdsStatusBarContentColor() },
-          { statusBarContentColor: getHdsStatusBarContentColor() }
-        )
-        .hideBackButton(true)
-        .hideToolBar(true)
-        .mode(NavigationMode.Stack)
-        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        this.CompactManageBody()
       }
     }
     .width('100%')
@@ -501,6 +494,55 @@ struct ModelManagePage {
         this.pendingImportPayload = ''
       }
     })
+  }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.providerListScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .hideTitleBar(this.isEmbeddedSettingsDetailPane(), false)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(getAppUiState().themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      modelManagePagePathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      return this.handlePageBackPressed()
+    })
+  }
+
+  @Builder
+  private StandaloneRoot() {
+    if (this.isEmbeddedSettingsDetailPane()) {
+      this.PageRootContent()
+    } else {
+      HdsNavigation() {
+        this.PageRootContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(getAppUiState().themeBackground)
+      .titleBar(this.getCompactTitleBarOptions())
+      .bindToScrollable([this.providerListScroller])
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .systemBarStyle(
+        { statusBarContentColor: getHdsStatusBarContentColor() },
+        { statusBarContentColor: getHdsStatusBarContentColor() }
+      )
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .mode(NavigationMode.Stack)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    }
   }
 
   @Builder
@@ -552,12 +594,12 @@ struct ModelManagePage {
         Button() {
           SymbolGlyph($r('sys.symbol.plus_circle'))
             .fontSize(18)
-            .fontColor([$r('app.color.text_primary')])
+            .fontColor([$r('sys.color.icon_primary')])
         }
         .type(ButtonType.Circle)
         .width(36)
         .height(36)
-        .backgroundColor($r('app.color.divider'))
+        .backgroundColor($r('sys.color.comp_background_tertiary'))
         .bindMenu(this.AddProviderMenuBuilder())
       }
       .width('100%')
@@ -568,104 +610,6 @@ struct ModelManagePage {
     .width('100%')
     .backgroundColor(getAppUiState().themeBackground)
     .border({ width: { bottom: 1 }, color: $r('app.color.divider') })
-  }
-
-  @Builder
-  private CompactTitleStackBuilder() {
-    Row({ space: 6 }) {
-      Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(20)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .type(ButtonType.Normal)
-      .stateEffect(false)
-      .width(40)
-      .height(40)
-      .borderRadius(20)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.handleBack()
-      })
-
-      Text($r('app.string.model_manage_title'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.plus_circle'))
-          .fontSize(18)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .type(ButtonType.Circle)
-      .width(36)
-      .height(36)
-      .backgroundColor($r('app.color.divider'))
-      .bindMenu(this.AddProviderMenuBuilder())
-    }
-    .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 12 })
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private CompactPageHeader() {
-    Column() {
-      Column()
-        .width('100%')
-        .height(this.px2vp(this.topAvoidHeight))
-
-      Row({ space: 6 }) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(20)
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .type(ButtonType.Normal)
-        .stateEffect(false)
-        .width(40)
-        .height(40)
-        .borderRadius(20)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.handleBack()
-        })
-
-        Text($r('app.string.model_manage_title'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.plus_circle'))
-            .fontSize(18)
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor($r('app.color.divider'))
-        .bindMenu(this.AddProviderMenuBuilder())
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: 8, right: 12 })
-      .alignItems(VerticalAlign.Center)
-
-      Column()
-        .width('100%')
-        .height(this.getCompactTitleBarMaskExtraHeight())
-        .backgroundColor(withColorAlpha(getAppUiState().themeBackground, '00'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_THIN)
-    }
-    .width('100%')
-    .backgroundColor(withColorAlpha(getAppUiState().themeBackground, 'E6'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_THIN)
-    .renderGroup(true)
   }
 
   @Builder
@@ -1014,17 +958,23 @@ struct ModelManagePage {
   }
 
   private getManageMenus(): Array<HdsNavigationMenuItemOptions> {
-    const addIcon = new SymbolGlyphModifier($r('sys.symbol.plus_circle'))
-    addIcon.fontSize(20)
-    addIcon.fontColor([$r('app.color.text_primary')])
-
     const menus: Array<HdsNavigationMenuItemOptions> = [
       {
         content: {
-          label: $r('app.string.add_custom_provider'),
-          icon: addIcon,
+          label: $r('app.string.provider_add_menu_manual'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.plus_circle'), 20),
           action: () => {
             this.openCreateProvider()
+          }
+        }
+      },
+      {
+        content: {
+          label: $r('app.string.provider_add_menu_scan'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.qrcode'), 20),
+          isEnabled: !this.isScanning,
+          action: () => {
+            void this.triggerScanImport()
           }
         }
       }
@@ -1201,23 +1151,8 @@ struct ProviderCardItem {
 
 @Builder
 export function ModelManagePageBuilder(name: string, param: Object) {
-  NavDestination() {
-    ModelManagePage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    modelManagePagePathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (tryHandleModelManageInternalBack()) {
-      return true
-    }
-    if (modelManagePagePathStack !== null && modelManagePagePathStack.size() > 0) {
-      modelManagePagePathStack.pop()
-      return true
-    }
-    return false
+  ModelManagePage({
+    hostedInNavDestination: true
   })
 }
 

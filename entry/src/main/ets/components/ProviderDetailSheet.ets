@@ -1,5 +1,12 @@
 import { KeyboardAvoidMode } from '@kit.ArkUI'
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
+import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
 import {
   ModelProvider,
   ModelInfo,
@@ -52,7 +59,8 @@ import {
   validateCustomHeaderEntries
 } from '../utils/CustomHeaderUtils'
 import {
-  buildHdsTopNavigationTitleBarOptionsForPage,
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  createHdsTitleBarSymbolIcon,
   getHdsTopNavigationContentTopPadding,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
@@ -100,7 +108,9 @@ export struct ProviderDetailPanel {
   @Param closeOnSave: boolean = true
   @Param closeOnModelsSelected: boolean = false
   @Param presentationMode: ProviderDetailPresentationMode = ProviderDetailPresentationMode.SHEET
+  @Param hostedInNavDestination: boolean = false
   @Event onClose: () => void = () => {}
+  @Event onDestinationReady: (context: NavDestinationContext) => void = (_context: NavDestinationContext) => {}
   @Event onProviderChanged: (providerId: string, isCreateMode: boolean) => void = (_providerId: string, _isCreateMode: boolean) => {}
   private get themePrimary(): string {
     return getAppUiState().themePrimary
@@ -913,9 +923,48 @@ export struct ProviderDetailPanel {
       this.windowHeightVp)
   }
 
+  private getStandaloneTitleBarMenuItems(): Array<HdsNavigationMenuItemOptions> {
+    const menus: Array<HdsNavigationMenuItemOptions> = []
+    if (!this.isCreateMode && this.provider !== null) {
+      menus.push({
+        content: {
+          label: $r('app.string.share_button'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.arrow_right_up_and_square'), 20),
+          action: () => {
+            this.showShareSheet = true
+          }
+        }
+      })
+    }
+    if (!this.isCreateMode && this.provider !== null && !this.provider.isPreset) {
+      menus.push({
+        content: {
+          label: $r('app.string.delete'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.clean'), 20),
+          action: () => {
+            this.showDeleteConfirmDialog()
+          }
+        }
+      })
+    }
+    menus.push({
+      content: {
+        label: $r('app.string.save'),
+        icon: createHdsTitleBarSymbolIcon(this.headerSaveSymbol(), 20),
+        isEnabled: this.provider !== null && !this.isSaving,
+        action: () => {
+          this.saveConfigAndClose()
+        }
+      }
+    })
+    return menus
+  }
+
   private getStandaloneTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return buildHdsTopNavigationTitleBarOptionsForPage(this.materialType, this.materialLevel, this.windowWidthVp,
-      this.windowHeightVp, (): void => this.StandaloneTitleStackBuilder())
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.provider_detail_title'), (): void => {
+        this.onClose()
+      }, this.getStandaloneTitleBarMenuItems(), 3)
   }
 
   private getCompactSettingsTabsInset(): number {
@@ -1000,33 +1049,11 @@ export struct ProviderDetailPanel {
 
   build() {
     if (this.isStandalonePagePresentation()) {
-      HdsNavigation() {
-        Column() {
-          Blank()
-            .width('100%')
-            .height(this.getStandaloneContentTopPadding())
-
-          this.PanelMainContent()
-          this.UnifiedSheetHost()
-          this.ShareSheetHost()
-        }
-        .width('100%')
-        .height('100%')
+      if (this.hostedInNavDestination) {
+        this.StandaloneNavDestinationRoot()
+      } else {
+        this.StandaloneNavigationRoot()
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(getAppUiState().themeBackground)
-      .titleBar(this.getStandaloneTitleBarOptions())
-      .bindToScrollable([this.pageConfigScroller, this.pageModelListScroller])
-      .titleMode(HdsNavigationTitleMode.MINI)
-      .systemBarStyle(
-        { statusBarContentColor: getHdsStatusBarContentColor() },
-        { statusBarContentColor: getHdsStatusBarContentColor() }
-      )
-      .hideBackButton(true)
-      .hideToolBar(true)
-      .mode(NavigationMode.Stack)
-      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
     } else {
       Column() {
         this.SheetHeader()
@@ -1039,6 +1066,71 @@ export struct ProviderDetailPanel {
       .backgroundColor(this.presentationMode === ProviderDetailPresentationMode.SHEET ? Color.Transparent
         : getAppUiState().themeBackground)
     }
+  }
+
+  @Builder
+  private StandalonePageContent() {
+    Column() {
+      Blank()
+        .width('100%')
+        .height(this.getStandaloneContentTopPadding())
+
+      this.PanelMainContent()
+      this.UnifiedSheetHost()
+      this.ShareSheetHost()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private StandaloneNavDestinationRoot() {
+    HdsNavDestination() {
+      this.StandalonePageContent()
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(getAppUiState().themeBackground)
+    .titleBar(this.getStandaloneTitleBarOptions())
+    .bindToScrollable([this.pageConfigScroller, this.pageModelListScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .onReady((context: NavDestinationContext) => {
+      this.onDestinationReady(context)
+    })
+    .onBackPressed((): boolean => {
+      if (this.handleInternalBackPressed()) {
+        return true
+      }
+      this.onClose()
+      return true
+    })
+  }
+
+  @Builder
+  private StandaloneNavigationRoot() {
+    HdsNavigation() {
+      this.StandalonePageContent()
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(getAppUiState().themeBackground)
+    .titleBar(this.getStandaloneTitleBarOptions())
+    .bindToScrollable([this.pageConfigScroller, this.pageModelListScroller])
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .mode(NavigationMode.Stack)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 
   @Builder
@@ -1271,88 +1363,6 @@ export struct ProviderDetailPanel {
       }
       this.currentTabIndex = index
     })
-  }
-
-  @Builder
-  StandaloneTitleStackBuilder() {
-    Row({ space: 8 }) {
-      Button() {
-        SymbolGlyph(this.headerLeadingSymbol())
-          .fontSize(18)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .type(ButtonType.Normal)
-      .stateEffect(false)
-      .width(40)
-      .height(40)
-      .padding(0)
-      .borderRadius(20)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.onClose()
-      })
-
-      Column({ space: 2 }) {
-        Text($r('app.string.provider_detail_title'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .width('100%')
-        Text(this.currentTabIndex === 0 ? $r('app.string.provider_api_config') : $r('app.string.provider_models_manage'))
-          .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-
-      if (!this.isCreateMode && this.provider !== null) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.arrow_right_up_and_square'))
-            .fontSize(18)
-            .fontColor([$r('app.color.text_secondary')])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.showShareSheet = true
-        })
-      }
-
-      if (!this.isCreateMode && this.provider !== null && !this.provider.isPreset) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.clean'))
-            .fontSize(18)
-            .fontColor([$r('app.color.status_error')])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor($r('app.color.divider'))
-        .onClick(() => {
-          this.showDeleteConfirmDialog()
-        })
-      }
-
-      Button() {
-        SymbolGlyph(this.headerSaveSymbol())
-          .fontSize(18)
-          .fontColor([Color.White])
-      }
-      .type(ButtonType.Circle)
-      .width(36)
-      .height(36)
-      .backgroundColor(this.themePrimary)
-      .onClick(() => {
-        this.saveConfigAndClose()
-      })
-    }
-    .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 12 })
-    .alignItems(VerticalAlign.Center)
   }
 
   @Builder

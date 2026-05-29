@@ -3,6 +3,14 @@ import { pasteboard } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
 import { inputMethod } from '@kit.IMEKit'
 import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
+import {
   DefaultMediaModel,
   DefaultMediaType,
   MediaPreview,
@@ -34,6 +42,12 @@ import { saveFileImageToAlbum } from '../utils/RawfileImageSaveUtil'
 import { savePreviewImageToAlbumAuthorized } from '../utils/ImagePreviewSaveUtil'
 import { getShareService } from '../services/ShareService'
 import { showToast } from '../utils/ToastUtil'
+import {
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  createHdsTitleBarSymbolIcon,
+  getHdsTopNavigationContentTopPadding,
+  getHdsStatusBarContentColor
+} from '../utils/HdsVisualEffectUtil'
 
 let imageGenerationPagePathStack: NavPathStack | null = null
 let imageGenerationBackHandler: (() => boolean) | null = null
@@ -42,6 +56,7 @@ const IMAGE_PROMPT_TEMPLATE_MANAGER_ROUTE = 'ImagePromptTemplateManagerPage'
 @Entry
 @ComponentV2
 struct ImageGenerationPage {
+  @Param hostedInNavDestination: boolean = false
   @Local viewModel: ImageGenerationViewModel = ImageGenerationViewModel.getInstance()
   @Local currentTabIndex: number = 0
   @Local showSettingsSheet: boolean = false
@@ -75,6 +90,18 @@ struct ImageGenerationPage {
     return getAppUiState().windowWidthVp
   }
 
+  private get windowHeightVp(): number {
+    return getAppUiState().windowHeightVp
+  }
+
+  private get materialType(): number {
+    return getAppUiState().materialType
+  }
+
+  private get materialLevel(): number {
+    return getAppUiState().materialLevel
+  }
+
   aboutToAppear(): void {
     AppStorage.setOrCreate(AppStorageKeys.ACTIVE_IMAGE_GENERATION_PAGE, true)
     imageGenerationBackHandler = (): boolean => {
@@ -101,12 +128,44 @@ struct ImageGenerationPage {
     return px / (this.getUIContext().getHostContext()?.resourceManager.getDeviceCapabilitySync().screenDensity ?? 3) * 160
   }
 
-  private getTopPadding(): number {
-    return this.px2vp(getAppUiState().topAvoidHeight)
-  }
-
   private getBottomPadding(): number {
     return Math.max(this.px2vp(getAppUiState().bottomAvoidHeight), 8)
+  }
+
+  private getCompactContentTopPadding(): number {
+    return getHdsTopNavigationContentTopPadding(this.px2vp(getAppUiState().topAvoidHeight), this.windowWidthVp,
+      this.windowHeightVp)
+  }
+
+  private getTitleBarMenuItems(): Array<HdsNavigationMenuItemOptions> {
+    return [
+      {
+        content: {
+          label: $r('app.string.image_prompt_template_manage'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.AI_word_suggest'), 20),
+          action: () => {
+            this.openPromptTemplateManager()
+          }
+        }
+      },
+      {
+        content: {
+          label: $r('app.string.new_chat'),
+          icon: createHdsTitleBarSymbolIcon($r('sys.symbol.plus'), 20),
+          isEnabled: this.canStartNewSession(),
+          action: () => {
+            this.startNewSession()
+          }
+        }
+      }
+    ]
+  }
+
+  private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.image_generation_title'), (): void => {
+        this.handleBack()
+      }, this.getTitleBarMenuItems(), 2)
   }
 
   private getGalleryColumns(): number {
@@ -638,9 +697,21 @@ struct ImageGenerationPage {
   }
 
   build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
+  }
+
+  @Builder
+  private PageRootContent() {
     Stack() {
       Column() {
-        this.Header()
+        Blank()
+          .width('100%')
+          .height(this.getCompactContentTopPadding())
+
         this.TabBar()
 
         // Swiper 提供横向滑动切换 + 原生动画;index 与 currentTabIndex 双向同步
@@ -719,72 +790,48 @@ struct ImageGenerationPage {
   }
 
   @Builder
-  private Header() {
-    Row() {
-      Row() {
-        Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(22)
-            .fontColor([$r('app.color.text_primary')])
-        }
-        .type(ButtonType.Circle)
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.handleBack()
-        })
-
-        Blank()
-          .width(40)
-          .height(40)
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(this.themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      imageGenerationPagePathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      if (imageGenerationBackHandler !== null) {
+        return imageGenerationBackHandler()
       }
-      .width(88)
-      .alignItems(VerticalAlign.Center)
+      return false
+    })
+  }
 
-      Text($r('app.string.image_generation_title'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-        .textAlign(TextAlign.Center)
-
-      Row({ space: 8 }) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.AI_word_suggest'))
-            .fontSize(19)
-            .fontColor([this.themePrimary])
-        }
-        .type(ButtonType.Circle)
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
-        .accessibilityText($r('app.string.image_prompt_template_manage'))
-        .onClick(() => {
-          this.openPromptTemplateManager()
-        })
-
-        Button() {
-          SymbolGlyph($r('sys.symbol.plus'))
-            .fontSize(20)
-            .fontColor([this.canStartNewSession() ? this.themePrimary : $r('app.color.text_tertiary')])
-        }
-        .type(ButtonType.Circle)
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
-        .enabled(this.canStartNewSession())
-        .onClick(() => {
-          this.startNewSession()
-        })
-      }
-      .width(88)
-      .alignItems(VerticalAlign.Center)
+  @Builder
+  private StandaloneRoot() {
+    HdsNavigation() {
+      this.PageRootContent()
     }
     .width('100%')
-    .height(56 + this.getTopPadding())
-    .padding({ left: 12, right: 12, top: this.getTopPadding() })
+    .height('100%')
     .backgroundColor(this.themeBackground)
+    .titleBar(this.getCompactTitleBarOptions())
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .mode(NavigationMode.Stack)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 
   @Builder
@@ -1186,18 +1233,7 @@ struct ImageGenerationPage {
 
 @Builder
 export function ImageGenerationPageBuilder(_name: string, _param: Object) {
-  NavDestination() {
-    ImageGenerationPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    imageGenerationPagePathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (imageGenerationBackHandler !== null) {
-      return imageGenerationBackHandler()
-    }
-    return false
+  ImageGenerationPage({
+    hostedInNavDestination: true
   })
 }

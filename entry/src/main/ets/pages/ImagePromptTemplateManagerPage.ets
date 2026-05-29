@@ -2,6 +2,18 @@ import { ImagePromptTemplate } from '../models/ImagePromptTemplateModels'
 import { ImageGenerationViewModel } from '../viewmodels/ImageGenerationViewModel'
 import { getAppUiState } from '../state/AppUiState'
 import { showToast } from '../utils/ToastUtil'
+import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
+import {
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
+  getHdsTopNavigationContentTopPadding,
+  getHdsStatusBarContentColor
+} from '../utils/HdsVisualEffectUtil'
 
 let imagePromptTemplateManagerPathStack: NavPathStack | null = null
 
@@ -14,6 +26,7 @@ enum ImagePromptTemplateFilterMode {
 @Entry
 @ComponentV2
 struct ImagePromptTemplateManagerPage {
+  @Param hostedInNavDestination: boolean = false
   @Local viewModel: ImageGenerationViewModel = ImageGenerationViewModel.getInstance()
   @Local searchText: string = ''
   @Local filterMode: ImagePromptTemplateFilterMode = ImagePromptTemplateFilterMode.ALL
@@ -35,6 +48,22 @@ struct ImagePromptTemplateManagerPage {
     return getAppUiState().themeBackground
   }
 
+  private get windowWidthVp(): number {
+    return getAppUiState().windowWidthVp
+  }
+
+  private get windowHeightVp(): number {
+    return getAppUiState().windowHeightVp
+  }
+
+  private get materialType(): number {
+    return getAppUiState().materialType
+  }
+
+  private get materialLevel(): number {
+    return getAppUiState().materialLevel
+  }
+
   aboutToAppear(): void {
     this.viewModel.refreshPromptTemplates().catch((error: Object): void => {
       console.error('ImagePromptTemplateManagerPage', `Load prompt templates failed: ${JSON.stringify(error)}`)
@@ -45,12 +74,20 @@ struct ImagePromptTemplateManagerPage {
     return px / (this.getUIContext().getHostContext()?.resourceManager.getDeviceCapabilitySync().screenDensity ?? 3) * 160
   }
 
-  private getTopPadding(): number {
-    return this.px2vp(getAppUiState().topAvoidHeight)
-  }
-
   private getBottomPadding(): number {
     return Math.max(this.px2vp(getAppUiState().bottomAvoidHeight), 16)
+  }
+
+  private getCompactContentTopPadding(): number {
+    return getHdsTopNavigationContentTopPadding(this.px2vp(getAppUiState().topAvoidHeight), this.windowWidthVp,
+      this.windowHeightVp)
+  }
+
+  private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.image_prompt_template_manage'), (): void => {
+        this.handleBack()
+      })
   }
 
   private handleBack(): void {
@@ -186,8 +223,20 @@ struct ImagePromptTemplateManagerPage {
   }
 
   build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
+  }
+
+  @Builder
+  private PageRootContent() {
     Column() {
-      this.Header()
+      Blank()
+        .width('100%')
+        .height(this.getCompactContentTopPadding())
+
       this.Content()
     }
     .width('100%')
@@ -196,36 +245,46 @@ struct ImagePromptTemplateManagerPage {
   }
 
   @Builder
-  private Header() {
-    Row() {
-      Button() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(22)
-          .fontColor([$r('app.color.text_primary')])
-      }
-      .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.handleBack()
-      })
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(this.themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      imagePromptTemplateManagerPathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      this.handleBack()
+      return true
+    })
+  }
 
-      Text($r('app.string.image_prompt_template_manage'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-        .textAlign(TextAlign.Center)
-
-      Blank()
-        .width(40)
-        .height(40)
+  @Builder
+  private StandaloneRoot() {
+    HdsNavigation() {
+      this.PageRootContent()
     }
     .width('100%')
-    .height(56 + this.getTopPadding())
-    .padding({ left: 12, right: 12, top: this.getTopPadding() })
+    .height('100%')
     .backgroundColor(this.themeBackground)
+    .titleBar(this.getCompactTitleBarOptions())
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .mode(NavigationMode.Stack)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 
   @Builder
@@ -495,18 +554,7 @@ struct ImagePromptTemplateManagerPage {
 
 @Builder
 export function ImagePromptTemplateManagerPageBuilder(_name: string, _param: Object) {
-  NavDestination() {
-    ImagePromptTemplateManagerPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    imagePromptTemplateManagerPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (imagePromptTemplateManagerPathStack !== null && imagePromptTemplateManagerPathStack.size() > 0) {
-      imagePromptTemplateManagerPathStack.pop()
-    }
-    return true
+  ImagePromptTemplateManagerPage({
+    hostedInNavDestination: true
   })
 }

@@ -6,6 +6,8 @@ let colorThemeSettingsPathStack: NavPathStack | null = null
 @Entry
 @ComponentV2
 struct ColorThemeSettingsPage {
+  @Param hostedInNavDestination: boolean = false
+
   private handleBack(): void {
     if (colorThemeSettingsPathStack !== null && colorThemeSettingsPathStack.size() > 0) {
       colorThemeSettingsPathStack.pop()
@@ -16,8 +18,16 @@ struct ColorThemeSettingsPage {
     Column() {
       ThemeAppearanceSettingsView({
         compactTitle: $r('app.string.settings_appearance'),
+        hostedInNavDestination: this.hostedInNavDestination,
         onCompactBack: () => {
           this.handleBack()
+        },
+        onDestinationReady: (context: NavDestinationContext) => {
+          colorThemeSettingsPathStack = context.pathStack
+        },
+        onDestinationBack: (): boolean => {
+          this.handleBack()
+          return true
         }
       })
     }
@@ -29,18 +39,7 @@ struct ColorThemeSettingsPage {
 
 @Builder
 export function ColorThemeSettingsPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    ColorThemeSettingsPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    colorThemeSettingsPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (colorThemeSettingsPathStack !== null && colorThemeSettingsPathStack.size() > 0) {
-      colorThemeSettingsPathStack.pop()
-    }
-    return true
+  ColorThemeSettingsPage({
+    hostedInNavDestination: true
   })
 }

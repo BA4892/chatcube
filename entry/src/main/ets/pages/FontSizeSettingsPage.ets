@@ -6,6 +6,8 @@ let fontSizeSettingsPathStack: NavPathStack | null = null
 @Entry
 @ComponentV2
 struct FontSizeSettingsPage {
+  @Param hostedInNavDestination: boolean = false
+
   private handleBack(): void {
     if (fontSizeSettingsPathStack !== null && fontSizeSettingsPathStack.size() > 0) {
       fontSizeSettingsPathStack.pop()
@@ -16,8 +18,16 @@ struct FontSizeSettingsPage {
     Column() {
       ThemeAppearanceSettingsView({
         compactTitle: $r('app.string.settings_appearance'),
+        hostedInNavDestination: this.hostedInNavDestination,
         onCompactBack: () => {
           this.handleBack()
+        },
+        onDestinationReady: (context: NavDestinationContext) => {
+          fontSizeSettingsPathStack = context.pathStack
+        },
+        onDestinationBack: (): boolean => {
+          this.handleBack()
+          return true
         }
       })
     }
@@ -29,18 +39,7 @@ struct FontSizeSettingsPage {
 
 @Builder
 export function FontSizeSettingsPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    FontSizeSettingsPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    fontSizeSettingsPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (fontSizeSettingsPathStack !== null && fontSizeSettingsPathStack.size() > 0) {
-      fontSizeSettingsPathStack.pop()
-    }
-    return true
+  FontSizeSettingsPage({
+    hostedInNavDestination: true
   })
 }

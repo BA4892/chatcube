@@ -1,14 +1,19 @@
 import { common } from '@kit.AbilityKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { showToast } from '../utils/ToastUtil'
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { SettingsCompactTitleBarContent } from '../components/settings/SettingsCompactPageHeader'
+import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getSettingsPageContentMaxWidth } from '../utils/SettingsPageLayoutHelper'
 import { getAppUiState } from '../state/AppUiState'
 import { saveRawfileImageToAlbum } from '../utils/RawfileImageSaveUtil'
 import {
-  buildHdsTopNavigationTitleBarOptionsForPage,
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
   getHdsTopNavigationContentTopPadding,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
@@ -26,6 +31,7 @@ interface PerkItem {
 @Entry
 @ComponentV2
 struct SupportDevelopmentPage {
+  @Param hostedInNavDestination: boolean = false
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
   }
@@ -89,8 +95,10 @@ struct SupportDevelopmentPage {
   }
 
   private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return buildHdsTopNavigationTitleBarOptionsForPage(this.materialType, this.materialLevel, this.windowWidthVp,
-      this.windowHeightVp, (): void => this.CompactTitleStackBuilder())
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.settings_support_development'), (): void => {
+        this.handleBack()
+      })
   }
 
   private getPerkItems(): PerkItem[] {
@@ -409,17 +417,16 @@ struct SupportDevelopmentPage {
     .border({ width: { bottom: 1 }, color: $r('app.color.divider') })
   }
 
-  @Builder
-  private CompactTitleStackBuilder() {
-    SettingsCompactTitleBarContent({
-      title: $r('app.string.settings_support_development'),
-      onBack: () => {
-        this.handleBack()
-      }
-    })
+  build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
   }
 
-  build() {
+  @Builder
+  private PageRootContent() {
     Column() {
       if (this.isDetailPaneMode()) {
         Column() {
@@ -429,28 +436,62 @@ struct SupportDevelopmentPage {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsNavigation() {
-          this.PageContent()
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(getAppUiState().themeBackground)
-        .titleBar(this.getCompactTitleBarOptions())
-        .bindToScrollable([this.compactScroller])
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .systemBarStyle(
-          { statusBarContentColor: getHdsStatusBarContentColor() },
-          { statusBarContentColor: getHdsStatusBarContentColor() }
-        )
-        .hideBackButton(true)
-        .hideToolBar(true)
-        .mode(NavigationMode.Stack)
-        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        this.PageContent()
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(getAppUiState().themeBackground)
+  }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.compactScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .hideTitleBar(this.isDetailPaneMode(), false)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(getAppUiState().themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      supportDevelopmentPathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      this.handleBack()
+      return true
+    })
+  }
+
+  @Builder
+  private StandaloneRoot() {
+    if (this.isDetailPaneMode()) {
+      this.PageRootContent()
+    } else {
+      HdsNavigation() {
+        this.PageRootContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(getAppUiState().themeBackground)
+      .titleBar(this.getCompactTitleBarOptions())
+      .bindToScrollable([this.compactScroller])
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .systemBarStyle(
+        { statusBarContentColor: getHdsStatusBarContentColor() },
+        { statusBarContentColor: getHdsStatusBarContentColor() }
+      )
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .mode(NavigationMode.Stack)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    }
   }
 
   private async saveWechatPayCode(): Promise<void> {
@@ -479,18 +520,7 @@ struct SupportDevelopmentPage {
 
 @Builder
 export function SupportDevelopmentPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    SupportDevelopmentPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    supportDevelopmentPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (supportDevelopmentPathStack !== null && supportDevelopmentPathStack.size() > 0) {
-      supportDevelopmentPathStack.pop()
-    }
-    return true
+  SupportDevelopmentPage({
+    hostedInNavDestination: true
   })
 }

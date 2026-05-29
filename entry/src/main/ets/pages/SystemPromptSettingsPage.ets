@@ -5,10 +5,15 @@ import { getSettingsPageContentMaxWidth, getSettingsPageCompactTabsTotalInset } 
 import { showSnackBar, SnackBarDisplayOptions, SnackBarTone } from '../utils/ToastUtil'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getAppUiState } from '../state/AppUiState'
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { SettingsCompactTitleBarContent } from '../components/settings/SettingsCompactPageHeader'
 import {
-  buildHdsTopNavigationTitleBarOptionsForPage,
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
+import {
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
   getHdsTopNavigationContentTopPadding,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
@@ -18,6 +23,7 @@ let systemPromptSettingsPathStack: NavPathStack | null = null
 @Entry
 @ComponentV2
 struct SystemPromptSettingsPage {
+  @Param hostedInNavDestination: boolean = false
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
   }
@@ -114,8 +120,10 @@ struct SystemPromptSettingsPage {
   }
 
   private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return buildHdsTopNavigationTitleBarOptionsForPage(this.materialType, this.materialLevel, this.windowWidthVp,
-      this.windowHeightVp, (): void => this.CompactTitleStackBuilder())
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.system_prompt_edit_title'), (): void => {
+        this.handleBack()
+      })
   }
 
   @Builder
@@ -227,17 +235,16 @@ struct SystemPromptSettingsPage {
     .border({ width: { bottom: 1 }, color: $r('app.color.divider') })
   }
 
-  @Builder
-  private CompactTitleStackBuilder() {
-    SettingsCompactTitleBarContent({
-      title: $r('app.string.system_prompt_edit_title'),
-      onBack: () => {
-        this.handleBack()
-      }
-    })
+  build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
   }
 
-  build() {
+  @Builder
+  private PageRootContent() {
     Column() {
       if (this.isDetailPaneMode()) {
         Column() {
@@ -247,45 +254,66 @@ struct SystemPromptSettingsPage {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsNavigation() {
-          this.PageContent()
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(getAppUiState().themeBackground)
-        .titleBar(this.getCompactTitleBarOptions())
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .systemBarStyle(
-          { statusBarContentColor: getHdsStatusBarContentColor() },
-          { statusBarContentColor: getHdsStatusBarContentColor() }
-        )
-        .hideBackButton(true)
-        .hideToolBar(true)
-        .mode(NavigationMode.Stack)
-        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        this.PageContent()
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(getAppUiState().themeBackground)
   }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .hideTitleBar(this.isDetailPaneMode(), false)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(getAppUiState().themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      systemPromptSettingsPathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      this.handleBack()
+      return true
+    })
+  }
+
+  @Builder
+  private StandaloneRoot() {
+    if (this.isDetailPaneMode()) {
+      this.PageRootContent()
+    } else {
+      HdsNavigation() {
+        this.PageRootContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(getAppUiState().themeBackground)
+      .titleBar(this.getCompactTitleBarOptions())
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .systemBarStyle(
+        { statusBarContentColor: getHdsStatusBarContentColor() },
+        { statusBarContentColor: getHdsStatusBarContentColor() }
+      )
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .mode(NavigationMode.Stack)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    }
+  }
 }
 
 @Builder
 export function SystemPromptSettingsPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    SystemPromptSettingsPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    systemPromptSettingsPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (systemPromptSettingsPathStack !== null && systemPromptSettingsPathStack.size() > 0) {
-      systemPromptSettingsPathStack.pop()
-    }
-    return true
+  SystemPromptSettingsPage({
+    hostedInNavDestination: true
   })
 }
-

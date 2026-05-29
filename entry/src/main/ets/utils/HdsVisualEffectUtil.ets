@@ -1,7 +1,9 @@
 import uiEffect from '@ohos.graphics.uiEffect'
-import { LengthMetrics } from '@kit.ArkUI'
+import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI'
 import {
   BlurStrategy,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
   ScrollEffectType,
   hdsEffect,
@@ -166,6 +168,46 @@ export function buildHdsTopNavigationTitleBarOptionsForPage(materialType: number
   options.blurEffectiveEndOffsetVp = getHdsTopNavigationBlurEffectiveEndOffset(windowWidthVp, windowHeightVp)
   options.stackBuilder = stackBuilder
   return buildHdsTopNavigationTitleBarOptions(options)
+}
+
+export function createHdsTitleBarSymbolIcon(symbol: Resource, fontSize: number = 20): SymbolGlyphModifier {
+  const icon = new SymbolGlyphModifier(symbol)
+  icon.fontSize(fontSize)
+  icon.fontColor([$r('sys.color.icon_primary')])
+  return icon
+}
+
+export function createHdsTitleBarBackIcon(action: () => void): HdsNavigationBackButtonItemOptions {
+  return {
+    icon: createHdsTitleBarSymbolIcon($r('sys.symbol.chevron_left'), 20),
+    action: action
+  }
+}
+
+export function buildHdsTopNavigationTitleBarOptionsForNativePage(materialType: number, materialLevel: number,
+  windowWidthVp: number, windowHeightVp: number, title: ResourceStr, backAction: () => void,
+  menuItems: Array<HdsNavigationMenuItemOptions> = [], menuMaxCount: number = 3): HdsNavigationTitleBarOptions {
+  const options = new HdsTopNavigationBlurOptions()
+  options.materialType = materialType
+  options.materialLevel = materialLevel
+  options.windowWidthVp = windowWidthVp
+  options.windowHeightVp = windowHeightVp
+  options.maskExtraHeightVp = getHdsTopNavigationMaskExtraHeight(windowWidthVp, windowHeightVp)
+  options.blurEffectiveEndOffsetVp = getHdsTopNavigationBlurEffectiveEndOffset(windowWidthVp, windowHeightVp)
+  const titleBarOptions = buildHdsTopNavigationTitleBarOptions(options)
+  titleBarOptions.content = {
+    title: {
+      mainTitle: title
+    },
+    backIcon: createHdsTitleBarBackIcon(backAction)
+  }
+  if (menuItems.length > 0) {
+    titleBarOptions.content.menu = {
+      maxCount: menuMaxCount,
+      value: menuItems
+    }
+  }
+  return titleBarOptions
 }
 
 /**

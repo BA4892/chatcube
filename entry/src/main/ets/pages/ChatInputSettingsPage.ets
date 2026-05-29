@@ -1,15 +1,20 @@
 import { AppStorageKeys } from '../config/AppStorageKeys'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { IndexSettingsSheetContent } from '../components/index/IndexSettingsSheetContent'
-import { HdsNavigation, HdsNavigationTitleBarOptions, HdsNavigationTitleMode } from '@kit.UIDesignKit'
-import { SettingsCompactTitleBarContent } from '../components/settings/SettingsCompactPageHeader'
+import {
+  HdsNavigation,
+  HdsNavDestination,
+  HdsNavDestinationTitleMode,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit'
 import { IndexSettingsSheetActionCallbacks } from './index/IndexSettingsSheetCoordinator'
 import { SettingsSheetType } from './index/IndexPageTypes'
 import { getSettingsPageContentMaxWidth, getSettingsPageCompactTabsTotalInset } from '../utils/SettingsPageLayoutHelper'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getAppUiState, setAppUiStateValue } from '../state/AppUiState'
 import {
-  buildHdsTopNavigationTitleBarOptionsForPage,
+  buildHdsTopNavigationTitleBarOptionsForNativePage,
   getHdsTopNavigationContentTopPadding,
   getHdsStatusBarContentColor
 } from '../utils/HdsVisualEffectUtil'
@@ -19,6 +24,7 @@ let chatInputSettingsPathStack: NavPathStack | null = null
 @Entry
 @ComponentV2
 struct ChatInputSettingsPage {
+  @Param hostedInNavDestination: boolean = false
   private get topAvoidHeight(): number {
     return getAppUiState().topAvoidHeight
   }
@@ -87,8 +93,10 @@ struct ChatInputSettingsPage {
   }
 
   private getCompactTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return buildHdsTopNavigationTitleBarOptionsForPage(this.materialType, this.materialLevel, this.windowWidthVp,
-      this.windowHeightVp, (): void => this.CompactTitleStackBuilder())
+    return buildHdsTopNavigationTitleBarOptionsForNativePage(this.materialType, this.materialLevel, this.windowWidthVp,
+      this.windowHeightVp, $r('app.string.settings_chat_input'), (): void => {
+        this.handleBack()
+      })
   }
 
   private buildCallbacks(): IndexSettingsSheetActionCallbacks {
@@ -157,17 +165,16 @@ struct ChatInputSettingsPage {
     .border({ width: { bottom: 1 }, color: $r('app.color.divider') })
   }
 
-  @Builder
-  private CompactTitleStackBuilder() {
-    SettingsCompactTitleBarContent({
-      title: $r('app.string.settings_chat_input'),
-      onBack: () => {
-        this.handleBack()
-      }
-    })
+  build() {
+    if (this.hostedInNavDestination) {
+      this.NavDestinationRoot()
+    } else {
+      this.StandaloneRoot()
+    }
   }
 
-  build() {
+  @Builder
+  private PageRootContent() {
     Column() {
       if (this.isDetailPaneMode()) {
         Column() {
@@ -177,45 +184,68 @@ struct ChatInputSettingsPage {
         .width('100%')
         .layoutWeight(1)
       } else {
-        HdsNavigation() {
-          this.PageContent()
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(getAppUiState().themeBackground)
-        .titleBar(this.getCompactTitleBarOptions())
-        .bindToScrollable([this.compactScroller])
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .systemBarStyle(
-          { statusBarContentColor: getHdsStatusBarContentColor() },
-          { statusBarContentColor: getHdsStatusBarContentColor() }
-        )
-        .hideBackButton(true)
-        .hideToolBar(true)
-        .mode(NavigationMode.Stack)
-        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        this.PageContent()
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(getAppUiState().themeBackground)
   }
+
+  @Builder
+  private NavDestinationRoot() {
+    HdsNavDestination() {
+      this.PageRootContent()
+    }
+    .titleBar(this.getCompactTitleBarOptions())
+    .bindToScrollable([this.compactScroller])
+    .titleMode(HdsNavDestinationTitleMode.MINI)
+    .hideTitleBar(this.isDetailPaneMode(), false)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(false)
+    .hideToolBar(true)
+    .backgroundColor(getAppUiState().themeBackground)
+    .onReady((context: NavDestinationContext) => {
+      chatInputSettingsPathStack = context.pathStack
+    })
+    .onBackPressed((): boolean => {
+      this.handleBack()
+      return true
+    })
+  }
+
+  @Builder
+  private StandaloneRoot() {
+    if (this.isDetailPaneMode()) {
+      this.PageRootContent()
+    } else {
+      HdsNavigation() {
+        this.PageRootContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(getAppUiState().themeBackground)
+      .titleBar(this.getCompactTitleBarOptions())
+      .bindToScrollable([this.compactScroller])
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .systemBarStyle(
+        { statusBarContentColor: getHdsStatusBarContentColor() },
+        { statusBarContentColor: getHdsStatusBarContentColor() }
+      )
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .mode(NavigationMode.Stack)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    }
+  }
 }
 
 @Builder
 export function ChatInputSettingsPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    ChatInputSettingsPage()
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    chatInputSettingsPathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (chatInputSettingsPathStack !== null && chatInputSettingsPathStack.size() > 0) {
-      chatInputSettingsPathStack.pop()
-    }
-    return true
+  ChatInputSettingsPage({
+    hostedInNavDestination: true
   })
 }

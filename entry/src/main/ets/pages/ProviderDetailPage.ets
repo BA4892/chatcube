@@ -1,7 +1,6 @@
 import {
   ProviderDetailPanel,
-  ProviderDetailPresentationMode,
-  tryHandleProviderDetailInternalBack
+  ProviderDetailPresentationMode
 } from '../components/ProviderDetailSheet'
 import { notifyModelManageRefresh } from './ModelManagePage'
 import { getAppUiState } from '../state/AppUiState'
@@ -38,7 +37,11 @@ struct ProviderDetailPageContent {
         isCreateMode: this.isCreateMode,
         closeOnModelsSelected: false,
         presentationMode: ProviderDetailPresentationMode.PAGE,
+        hostedInNavDestination: true,
         onClose: this.onClose,
+        onDestinationReady: (context: NavDestinationContext) => {
+          providerDetailPagePathStack = context.pathStack
+        },
         onProviderChanged: (_providerId: string, _isCreateMode: boolean) => {
           notifyModelManageRefresh()
         }
@@ -52,24 +55,11 @@ struct ProviderDetailPageContent {
 
 @Builder
 export function ProviderDetailPageBuilder(name: string, param: Object) {
-  NavDestination() {
-    ProviderDetailPageContent({
-      providerId: resolveProviderDetailRouteParams(param).providerId ?? '',
-      isCreateMode: resolveProviderDetailRouteParams(param).isCreateMode ?? false,
-      onClose: () => {
-        popProviderDetailPage()
-      }
-    })
-  }
-  .hideTitleBar(true)
-  .hideBackButton(true)
-  .onReady((context: NavDestinationContext) => {
-    providerDetailPagePathStack = context.pathStack
-  })
-  .onBackPressed((): boolean => {
-    if (tryHandleProviderDetailInternalBack()) {
-      return true
+  ProviderDetailPageContent({
+    providerId: resolveProviderDetailRouteParams(param).providerId ?? '',
+    isCreateMode: resolveProviderDetailRouteParams(param).isCreateMode ?? false,
+    onClose: () => {
+      popProviderDetailPage()
     }
-    return popProviderDetailPage()
   })
 }
