@@ -138,6 +138,7 @@ struct Index {
   private static readonly COMPACT_TABS_ANIMATION_GUARD_MS: number = 220
   private static readonly SETTINGS_SHEET_OUTSIDE_DISMISS_GUARD_MS: number = 320
   private static readonly COMPACT_CHAT_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT: number = 20
+  private static readonly CHAT_SEARCH_GEOMETRY_TRANSITION_ID: string = 'INDEX_CHAT_SESSION_SEARCH_TRANSITION_ID'
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -165,7 +166,7 @@ struct Index {
   @Local showSystemPromptSheet: boolean = false
   @Local customSystemPrompt: string = ''
   @Local searchText: string = ''
-  @Local isSearchExpanded: boolean = false
+  @Local isSearchActive: boolean = false
   @Local currentSessionFilter: SessionFilterType = SessionFilterType.ALL
   @Local assistants: Assistant[] = []
   @Local currentAssistantName: string = '默认助手'
@@ -374,6 +375,7 @@ struct Index {
   private appUiStateDisposers: Array<() => void> = []
   private handledAssistantAvatarRefreshAt: number = 0
   private searchInputFocusId: string = 'index_session_search_input'
+  private searchInputFocusPending: boolean = false
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void = (status: motion.HoldingHandStatus): void => {
     if (!isExplicitHoldingHandStatus(status)) {
       return
@@ -514,6 +516,9 @@ struct Index {
       this.dismissSettingsSheetForNavigation()
     }
     if (index !== Index.TAB_CHAT) {
+      this.exitSearchBeforeRouteChange()
+    }
+    if (index !== Index.TAB_CHAT) {
       this.showCompactTabsFromNonScrollChange()
     }
     this.currentTabIndex = index
@@ -538,13 +543,7 @@ struct Index {
 
   private openChatRoute(params: ChatPageRouteParams): void {
     this.switchToTab(Index.TAB_CHAT)
-    if (this.isSearchExpanded) {
-      this.collapseSearchBeforeRouteChange((): void => {
-        this.openChatRouteAfterSearchReset(params)
-      })
-      return
-    }
-    this.resetSearchBeforeRouteChange()
+    this.exitSearchBeforeRouteChange()
     this.openChatRouteAfterSearchReset(params)
   }
 
@@ -1033,9 +1032,8 @@ struct Index {
       return true
     }
 
-    // 如果搜索框展开，收起搜索框
-    if (this.isSearchExpanded) {
-      this.collapseSearch()
+    if (this.isSearchActive) {
+      this.exitSearchPage()
       return true
     }
 
@@ -1255,10 +1253,7 @@ struct Index {
     this.patchAssistantInMemory(assistant)
     this.selectedSessionIds = []
     this.isMultiSelectMode = false
-    if (this.isSearchExpanded) {
-      this.searchText = ''
-      this.isSearchExpanded = false
-    }
+    this.exitSearchBeforeRouteChange()
     if (previousAssistantId !== this.currentAssistantId && this.isChatSplitLayout() && this.isChatDetailRouteActive()) {
       this.currentChatRouteName = Index.CHAT_DETAIL_EMPTY_ROUTE
       this.chatTabNavStack.replacePath({ name: Index.CHAT_DETAIL_EMPTY_ROUTE })
@@ -1417,22 +1412,37 @@ struct Index {
     return this.getCompactMultiSelectToolbarBottomInsetVp() + 118
   }
 
+  private getSearchListBottomSpacerHeight(): number {
+    return this.px2vp(this.bottomAvoidHeight) + 16
+  }
+
+  private getChatListPanelBottomSpacerHeight(bottomSpacerHeight: number): number {
+    return bottomSpacerHeight >= 0 ? bottomSpacerHeight : this.getSessionListBottomSpacerHeight()
+  }
+
   private getFabOffsetY(): number {
     return getFabOffsetYForIndex(this.getFabBaseBottomInset())
   }
 
-  private getCompactChatHeaderDefaultHeight(): number {
-    return this.px2vp(this.topAvoidHeight) + 56
+  private getCompactChatTitleContentHeight(): number {
+    return 56
   }
 
-  private getCompactChatHeaderOverlayHeight(): number {
-    return this.getCompactChatHeaderDefaultHeight()
+  private getHomeSearchEntryReservedHeight(): number {
+    if (this.isSearchActive || this.isMultiSelectMode) {
+      return 0
+    }
+    return 44
+  }
+
+  private getCompactChatTitleBarContentTopHeight(): number {
+    return this.px2vp(this.topAvoidHeight) + this.getCompactChatTitleContentHeight()
   }
 
   private getChatListTopSpacerHeight(): number {
     // 顶部模糊蒙版会向下渐变 maskExtraHeight，列表第一项需让出这一段，
     // 否则会落在模糊带上（卡片时间被模糊、筛选汇总行无法点击）。
-    return this.getCompactChatHeaderOverlayHeight() + this.getCompactChatTitleBarMaskExtraHeight()
+    return this.getCompactChatTitleBarContentTopHeight() + this.getCompactChatTitleBarMaskExtraHeight()
   }
 
   private getCompactSettingsHeaderDefaultHeight(): number {
@@ -2100,6 +2110,9 @@ struct Index {
   }
 
   private shouldHideCompactTabsHost(): boolean {
+    if (this.currentTabIndex === Index.TAB_CHAT && this.isSearchActive) {
+      return true
+    }
     return shouldHideCompactTabsHostForIndex(this.currentTabIndex, this.isMultiSelectMode)
   }
 
@@ -2372,61 +2385,63 @@ struct Index {
     })
   }
 
-  // 搜索框展开动画
-  private expandSearch(): void {
+  private enterSearchPage(): void {
+    if (this.isSearchActive || this.isMultiSelectMode) {
+      return
+    }
+    this.searchText = ''
+    this.currentSessionFilter = SessionFilterType.ALL
+    this.searchInputFocusPending = true
     this.getUIContext().animateTo({
       curve: curves.interpolatingSpring(0, 1, 342, 38)
     }, () => {
-      this.isSearchExpanded = true
-      // 输入框是动态挂载的，等一帧再抢焦点，系统才会跟着弹软键盘。
-      setTimeout(() => {
-        if (this.isSearchExpanded) {
-          this.getUIContext().getFocusController().requestFocus(this.searchInputFocusId)
-        }
-      }, 60)
-    })
-  }
-
-  // 搜索框收起动画
-  private collapseSearch(): void {
-    this.getUIContext().animateTo({
-      curve: curves.interpolatingSpring(0, 1, 342, 38)
-    }, () => {
-      this.searchText = ''
-      this.isSearchExpanded = false
+      this.isSearchActive = true
       this.refreshSessionListProjection()
     })
   }
 
-  private resetSearchBeforeRouteChange(): void {
-    if (!this.isSearchExpanded && this.searchText === '') {
+  private requestSearchInputFocusIfVisible(isVisible: boolean, currentRatio: number): void {
+    if (!this.searchInputFocusPending || !this.isSearchActive || !isVisible || currentRatio < 1) {
+      return
+    }
+    try {
+      this.getUIContext().getFocusController().requestFocus(this.searchInputFocusId)
+      this.searchInputFocusPending = false
+    } catch (err) {
+      const error = err as BusinessError
+      console.warn('Index', `Failed to focus search input: ${error.code}, ${error.message}`)
+    }
+  }
+
+  private exitSearchPage(): void {
+    this.searchInputFocusPending = false
+    this.getUIContext().animateTo({
+      curve: curves.interpolatingSpring(0, 1, 342, 38)
+    }, () => {
+      this.searchText = ''
+      this.currentSessionFilter = SessionFilterType.ALL
+      this.isSearchActive = false
+      this.refreshSessionListProjection()
+    })
+    try {
+      this.getUIContext().getFocusController().clearFocus()
+    } catch (error) {
+    }
+  }
+
+  private exitSearchBeforeRouteChange(): void {
+    if (!this.isSearchActive && this.searchText === '' && this.currentSessionFilter === SessionFilterType.ALL) {
       return
     }
     this.searchText = ''
-    this.isSearchExpanded = false
+    this.currentSessionFilter = SessionFilterType.ALL
+    this.isSearchActive = false
+    this.searchInputFocusPending = false
     this.refreshSessionListProjection()
     try {
       this.getUIContext().getFocusController().clearFocus()
     } catch (error) {
     }
-  }
-
-  private collapseSearchBeforeRouteChange(onFinish: () => void): void {
-    try {
-      this.getUIContext().getFocusController().clearFocus()
-    } catch (error) {
-    }
-    this.getUIContext().animateTo({
-      duration: 180,
-      curve: Curve.EaseOut
-    }, () => {
-      this.searchText = ''
-      this.isSearchExpanded = false
-      this.refreshSessionListProjection()
-    })
-    setTimeout(() => {
-      onFinish()
-    }, 190)
   }
 
   private isFavoriteFilterActive(): boolean {
@@ -2443,47 +2458,6 @@ struct Index {
 
   private toggleFavoriteFilter(): void {
     this.setSessionFilter(this.isFavoriteFilterActive() ? SessionFilterType.ALL : SessionFilterType.FAVORITE)
-  }
-
-  @Builder
-  FavoriteFilterActionButton() {
-    Row() {
-      SymbolGlyph(this.isFavoriteFilterActive() ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
-        .fontSize(21)
-        .fontColor([this.isFavoriteFilterActive() ? this.themePrimary : $r('app.color.text_primary')])
-    }
-    .width(40)
-    .height(40)
-    .borderRadius(20)
-    .backgroundColor(this.isFavoriteFilterActive() ? this.themePrimaryLight : this.themeSurface)
-    .border({
-      width: this.isFavoriteFilterActive() ? 1 : 0,
-      color: this.isFavoriteFilterActive() ? this.themePrimary : Color.Transparent
-    })
-    .justifyContent(FlexAlign.Center)
-    .transition(TransitionEffect.OPACITY)
-    .onClick(() => {
-      this.toggleFavoriteFilter()
-    })
-  }
-
-  @Builder
-  CollapsedSearchActionButton() {
-    Row() {
-      SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(22)
-        .fontColor([$r('app.color.text_primary')])
-    }
-    .width(40)
-    .height(40)
-    .borderRadius(20)
-    .backgroundColor(this.themeSurface)
-    .justifyContent(FlexAlign.Center)
-    .geometryTransition('SEARCH_BAR_ID', { follow: true })
-    .transition(TransitionEffect.OPACITY)
-    .onClick(() => {
-      this.expandSearch()
-    })
   }
 
   @Builder
@@ -2538,7 +2512,7 @@ struct Index {
     return buildHdsTopNavigationTitleBarOptions(options)
   }
 
-  private getCompactChatTitleBarMaskExtraHeight(): number {
+  private getCompactChatTitleBarBaseMaskExtraHeight(): number {
     // 平板分栏下需要更长的下沿渐变模糊，避免列表内容贴近 titleBar 时干扰标题可读性。
     // 手机/非分栏维持 HDS 推荐值（横屏 16 / 竖屏 20）。
     if (this.isChatSplitLayout()) {
@@ -2547,14 +2521,22 @@ struct Index {
     return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
   }
 
+  private getCompactChatTitleBarMaskExtraHeight(): number {
+    return this.getHomeSearchEntryReservedHeight() + this.getCompactChatTitleBarBaseMaskExtraHeight()
+  }
+
   @Builder
   private CompactChatTitleStackBuilder() {
-    Column() {
+    Stack({ alignContent: Alignment.TopStart }) {
       this.ChatListHeaderMainRow()
+      if (!this.isSearchActive && !this.isMultiSelectMode) {
+        this.HomeSearchEntrySlot()
+      }
     }
     .width('100%')
-    .height(56)
+    .height(this.getCompactChatTitleContentHeight())
     .translate({ y: -2 })
+    .clip(false)
     .renderGroup(false)
   }
 
@@ -4186,66 +4168,12 @@ struct Index {
 
   @Builder
   private ChatListHeaderMainRow() {
-    if (!this.isMultiSelectMode) {
+    if (this.isSearchActive) {
+      this.SearchPageHeader()
+    } else if (!this.isMultiSelectMode) {
       Row() {
-        if (!this.isSearchExpanded) {
-          this.AssistantSwitchPill()
-        }
-
-        if (this.isSearchExpanded) {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
-              .fontSize(18)
-              .fontColor([$r('app.color.text_tertiary')])
-
-            TextInput({ text: this.searchText, placeholder: $r('app.string.search_sessions_placeholder') })
-              .id(this.searchInputFocusId)
-              .layoutWeight(1)
-              .height(36)
-              .fontSize(14)
-              .fontColor($r('app.color.text_primary'))
-              .backgroundColor(Color.Transparent)
-              .padding({ left: 2, right: 0 })
-              .caretColor(this.themePrimary)
-              .placeholderColor($r('app.color.text_tertiary'))
-              .onChange((value: string) => {
-                this.searchText = value
-                this.refreshSessionListProjection()
-              })
-              .onSubmit(() => {
-                if (this.searchText.trim() === '') {
-                  this.collapseSearch()
-                }
-              })
-          }
-          .layoutWeight(1)
-          .height(40)
-          .padding({ left: 12, right: 12 })
-          .alignItems(VerticalAlign.Center)
-          .backgroundColor(this.themeSurface)
-          .borderRadius(20)
-          .geometryTransition('SEARCH_BAR_ID', { follow: true })
-          .transition(TransitionEffect.OPACITY)
-
-          Text($r('app.string.cancel'))
-            .fontSize(15)
-            .fontColor(this.themePrimary)
-            .margin({ left: 12 })
-            .onClick(() => {
-              this.collapseSearch()
-            })
-            .transition(TransitionEffect.asymmetric(
-              TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 20 }))
-                .animation({ duration: 250, curve: Curve.EaseOut }),
-              TransitionEffect.OPACITY.animation({ duration: 150 })
-            ))
-        } else {
-          Blank()
-          Row({ space: 8 }) {
-            this.FavoriteFilterActionButton()
-            this.CollapsedSearchActionButton()
-          }
-        }
+        this.AssistantSwitchPill()
+        Blank()
       }
       .width('100%')
       .height(56)
@@ -4275,7 +4203,92 @@ struct Index {
   }
 
   @Builder
-  private ChatListPanelContent(topSpacerHeight: number = 0) {
+  private HomeSearchEntry() {
+    Search({ value: '', placeholder: $r('app.string.search_sessions_placeholder') })
+      .width('100%')
+      .height(40)
+      .backgroundColor($r('sys.color.comp_background_tertiary'))
+      .border({ width: 1, color: $r('sys.color.comp_divider') })
+      .placeholderColor($r('sys.color.font_secondary'))
+      .geometryTransition(Index.CHAT_SEARCH_GEOMETRY_TRANSITION_ID, { follow: true })
+      .transition(TransitionEffect.OPACITY)
+      .defaultFocus(false)
+      .focusOnTouch(false)
+      .focusable(false)
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Up) {
+          this.enterSearchPage()
+        }
+      })
+  }
+
+  @Builder
+  private HomeSearchEntrySlot() {
+    Column() {
+      this.HomeSearchEntry()
+    }
+    .width('100%')
+    .height(this.getHomeSearchEntryReservedHeight())
+    .padding({ left: 8, right: 8, top: 0, bottom: 4 })
+    .position({ x: 0, y: this.getCompactChatTitleContentHeight() - 4 })
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  @Builder
+  private SearchPageHeader() {
+    Row({ space: 8 }) {
+      Button({ type: ButtonType.Circle, stateEffect: true }) {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(20)
+          .fontColor([$r('app.color.text_primary')])
+      }
+      .width(40)
+      .height(40)
+      .padding(0)
+      .backgroundColor($r('sys.color.comp_background_tertiary'))
+      .onClick(() => {
+        this.exitSearchPage()
+      })
+
+      Search({ value: this.searchText, placeholder: $r('app.string.search_sessions_placeholder') })
+        .id(this.searchInputFocusId)
+        .layoutWeight(1)
+        .height(40)
+        .backgroundColor($r('sys.color.comp_background_tertiary'))
+        .border({ width: 1, color: $r('sys.color.comp_divider') })
+        .placeholderColor($r('sys.color.font_secondary'))
+        .geometryTransition(Index.CHAT_SEARCH_GEOMETRY_TRANSITION_ID, { follow: true })
+        .transition(TransitionEffect.OPACITY)
+        .onChange((value: string) => {
+          this.searchText = value
+          this.refreshSessionListProjection()
+        })
+        .onVisibleAreaChange([1.0], (isVisible: boolean, currentRatio: number) => {
+          this.requestSearchInputFocusIfVisible(isVisible, currentRatio)
+        })
+
+      Button({ type: ButtonType.Circle, stateEffect: true }) {
+        SymbolGlyph(this.isFavoriteFilterActive() ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
+          .fontSize(20)
+          .fontColor([this.isFavoriteFilterActive() ? this.themePrimary : $r('app.color.text_primary')])
+      }
+      .width(40)
+      .height(40)
+      .padding(0)
+      .backgroundColor($r('sys.color.comp_background_tertiary'))
+      .onClick(() => {
+        this.toggleFavoriteFilter()
+      })
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 8, right: 8 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private ChatListPanelContent(topSpacerHeight: number = 0, showFavoriteFilterSummary: boolean = true,
+    bottomSpacerHeight: number = -1) {
     Column() {
       if (this.isLoading) {
         Column() {
@@ -4349,8 +4362,8 @@ struct Index {
             sessionListScroller: this.sessionListScroller,
             isMultiSelectMode: this.isMultiSelectMode,
             topSpacerHeight: topSpacerHeight,
-            bottomSpacerHeight: this.getSessionListBottomSpacerHeight(),
-            showFavoriteFilterSummary: this.isFavoriteFilterActive(),
+            bottomSpacerHeight: this.getChatListPanelBottomSpacerHeight(bottomSpacerHeight),
+            showFavoriteFilterSummary: showFavoriteFilterSummary && this.isFavoriteFilterActive(),
             favoriteFilterCountText: this.getFilterCountText(),
             onClearFavoriteFilter: (): void => {
               this.setSessionFilter(SessionFilterType.ALL)
@@ -4398,13 +4411,34 @@ struct Index {
   }
 
   @Builder
-  private ChatListViewportContent() {
+  private SearchResultViewportContent() {
     Column() {
-      this.ChatListPanelContent(this.getChatListTopSpacerHeight())
+      if (this.searchText.trim() === '') {
+        Column()
+          .width('100%')
+          .layoutWeight(1)
+      } else {
+        this.ChatListPanelContent(this.getChatListTopSpacerHeight(), false, this.getSearchListBottomSpacerHeight())
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.themeBackground)
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  @Builder
+  private ChatListViewportContent() {
+    if (this.isSearchActive) {
+      this.SearchResultViewportContent()
+    } else {
+      Column() {
+        this.ChatListPanelContent(this.getChatListTopSpacerHeight())
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.themeBackground)
+    }
   }
 
   @Builder
@@ -4443,12 +4477,16 @@ struct Index {
         .height('100%')
         .backgroundColor(this.themeBackground)
       } else {
-        Stack({ alignContent: Alignment.BottomEnd }) {
+        if (this.isSearchActive) {
           this.ChatListViewportContent()
-          this.FloatingActionButton()
+        } else {
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            this.ChatListViewportContent()
+            this.FloatingActionButton()
+          }
+          .width('100%')
+          .height('100%')
         }
-        .width('100%')
-        .height('100%')
       }
     } else {
       if (this.isMultiSelectMode) {
@@ -4488,12 +4526,16 @@ struct Index {
         .height('100%')
         .backgroundColor(this.themeBackground)
       } else {
-        Stack({ alignContent: Alignment.BottomEnd }) {
+        if (this.isSearchActive) {
           this.CompactChatListViewport()
-          this.FloatingActionButton()
+        } else {
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            this.CompactChatListViewport()
+            this.FloatingActionButton()
+          }
+          .width('100%')
+          .height('100%')
         }
-        .width('100%')
-        .height('100%')
       }
     }
   }
@@ -5042,6 +5084,7 @@ struct Index {
 
   // 进入多选模式
   private handleEnterMultiSelectMode(sessionId: string): void {
+    this.exitSearchBeforeRouteChange()
     this.isMultiSelectMode = true
     this.resetCompactTabsScrollState()
     this.selectedSessionIds = [sessionId]
