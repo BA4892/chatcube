@@ -34,16 +34,18 @@ export interface CaptureScrollableOptions {
   scale: number
 }
 
-interface ScrollSegment {
+interface StitchContext {
   pixelMap: image.PixelMap
-  yOffsetVp: number
+  widthPx: number
+  segHeightPx: number
+  totalHeightPx: number
 }
 
 export class ShareService {
   private context: common.UIAbilityContext | null = null
   private readonly snapshotRetryCount: number = 5
   private readonly snapshotRetryDelayMs: number = 200
-  private readonly scrollSettleMs: number = 220
+  private readonly scrollSettleMs: number = 120
   private readonly maxScrollSegments: number = 80
 
   // 初始化服务
@@ -213,16 +215,11 @@ export class ShareService {
       throw new Error(`截图失败: 无效尺寸 (content=${opts.totalContentVp}, viewport=${opts.viewportVp})`)
     }
 
-    const segments: ScrollSegment[] = []
-    let stitched: image.PixelMap | null = null
+    let stitchContext: StitchContext | null = null
 
     try {
       const density = display.getDefaultDisplaySync().densityPixels
       const maxScrollVp = Math.max(0, opts.totalContentVp - opts.viewportVp)
-
-      // 先回到顶部,确保起始截图对齐
-      opts.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-      await this.sleep(this.scrollSettleMs)
 
       let currentTargetVp = 0
       const stepVp = opts.viewportVp
@@ -233,7 +230,18 @@ export class ShareService {
         await this.sleep(this.scrollSettleMs)
 
         const pm = await this.captureScrollSnapshot(opts.uiContext, opts.scrollAreaId, opts.scale)
-        segments.push({ pixelMap: pm, yOffsetVp: currentTargetVp })
+        try {
+          if (stitchContext === null) {
+            stitchContext = await this.createStitchContext(pm, opts.totalContentVp, opts.scale, density)
+          }
+          await this.writeSegmentToStitched(stitchContext, pm, currentTargetVp, opts.scale, density)
+        } finally {
+          try {
+            pm.release()
+          } catch (_e) {
+            // ignore
+          }
+        }
 
         if (currentTargetVp >= maxScrollVp) {
           break
@@ -241,28 +249,20 @@ export class ShareService {
         currentTargetVp = Math.min(currentTargetVp + stepVp, maxScrollVp)
       }
 
-      if (segments.length === 0) {
+      if (stitchContext === null) {
         throw new Error('截图失败: 未生成任何片段')
       }
 
-      stitched = await this.stitchSegments(segments, opts.totalContentVp, opts.scale, density)
-      const filePath = await this.writePixelMapToImageFile(stitched)
+      const filePath = await this.writePixelMapToImageFile(stitchContext.pixelMap)
       return filePath
     } catch (e) {
       const msg = `截图失败: ${this.describeError(e)}`
       console.error('ShareService', `[captureScrollableAsImage] ${msg}`)
       throw new Error(msg)
     } finally {
-      for (let i = 0; i < segments.length; i++) {
+      if (stitchContext !== null) {
         try {
-          segments[i].pixelMap.release()
-        } catch (_e) {
-          // ignore
-        }
-      }
-      if (stitched !== null) {
-        try {
-          stitched.release()
+          stitchContext.pixelMap.release()
         } catch (_e) {
           // ignore
         }
@@ -297,21 +297,21 @@ export class ShareService {
     throw new Error(`snapshot.get failed: ${this.describeError(lastError)}`)
   }
 
-  private async stitchSegments(
-    segments: ScrollSegment[],
+  private async createStitchContext(
+    firstSegment: image.PixelMap,
     totalContentVp: number,
     scale: number,
     density: number
-  ): Promise<image.PixelMap> {
-    const firstInfo = await segments[0].pixelMap.getImageInfo()
+  ): Promise<StitchContext> {
+    const firstInfo = await firstSegment.getImageInfo()
     const widthPx = firstInfo.size.width
     const segHeightPx = firstInfo.size.height
-    // componentSnapshot.get 在 HarmonyOS 多个机型上即使 getImageInfo().pixelFormat 自报
-    // RGBA_8888,readPixelsToBuffer 出来的字节实际是 BGRA 排布(谎报)。ImagePacker PNG
-    // 编码按 RGBA 读字节,导致纯蓝 #0000FF 被编码为纯红 #FF0000。所以这里无条件 swap R/B,
-    // 不再相信 pixelFormat 字段。stitched 强制 RGBA_8888,swap 后数据就是真 RGBA,PNG 正确。
+    const stitchPixelFormat = firstInfo.pixelFormat
+    // buffer 创建 PixelMap 时源格式默认可能按 BGRA_8888 解释,这里显式声明源/目标格式一致。
+    // 分段像素搬运使用 readPixels/writePixels 成对接口,避免 readPixelsToBuffer 与 writePixels
+    // 混用时再手动猜测 R/B 通道顺序。
     console.info('ShareService',
-      `[stitchSegments] segment pixelFormat=${firstInfo.pixelFormat}, will swap R/B unconditionally`)
+      `[stitchSegments] segment pixelFormat=${stitchPixelFormat}, using paired readPixels/writePixels`)
 
     let totalHeightPx = Math.round(totalContentVp * density * scale)
     if (totalHeightPx <= 0) {
@@ -321,51 +321,60 @@ export class ShareService {
     const totalBuffer = new ArrayBuffer(widthPx * totalHeightPx * 4)
     const initOpts: image.InitializationOptions = {
       size: { width: widthPx, height: totalHeightPx },
-      pixelFormat: image.PixelMapFormat.RGBA_8888,
+      srcPixelFormat: stitchPixelFormat,
+      pixelFormat: stitchPixelFormat,
       alphaType: image.AlphaType.UNPREMUL,
       editable: true
     }
-    const stitched = image.createPixelMapSync(totalBuffer, initOpts)
+    const pixelMap = image.createPixelMapSync(totalBuffer, initOpts)
 
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i]
-      let yPx = Math.round(seg.yOffsetVp * density * scale)
-      if (yPx < 0) {
-        yPx = 0
-      }
-      if (yPx >= totalHeightPx) {
-        continue
-      }
-      // 仅写入落在 [yPx, totalHeightPx) 区间内的行,避免把 Scroll viewport 末尾的空白复制进去
-      const effectiveHeight = Math.min(segHeightPx, totalHeightPx - yPx)
-      if (effectiveHeight <= 0) {
-        continue
-      }
+    return { pixelMap, widthPx, segHeightPx, totalHeightPx }
+  }
 
-      const segBuffer = new ArrayBuffer(widthPx * segHeightPx * 4)
-      await seg.pixelMap.readPixelsToBuffer(segBuffer)
-
-      const u8 = new Uint8Array(segBuffer)
-      for (let j = 0; j < u8.length; j += 4) {
-        const r = u8[j]
-        u8[j] = u8[j + 2]
-        u8[j + 2] = r
-      }
-
-      const area: image.PositionArea = {
-        pixels: segBuffer,
-        offset: 0,
-        stride: widthPx * 4,
-        region: {
-          size: { width: widthPx, height: effectiveHeight },
-          x: 0,
-          y: yPx
-        }
-      }
-      await stitched.writePixels(area)
+  private async writeSegmentToStitched(
+    stitchContext: StitchContext,
+    segment: image.PixelMap,
+    yOffsetVp: number,
+    scale: number,
+    density: number
+  ): Promise<void> {
+    let yPx = Math.round(yOffsetVp * density * scale)
+    if (yPx < 0) {
+      yPx = 0
+    }
+    if (yPx >= stitchContext.totalHeightPx) {
+      return
+    }
+    // 仅写入落在 [yPx, totalHeightPx) 区间内的行,避免把 Scroll viewport 末尾的空白复制进去。
+    const effectiveHeight = Math.min(stitchContext.segHeightPx, stitchContext.totalHeightPx - yPx)
+    if (effectiveHeight <= 0) {
+      return
     }
 
-    return stitched
+    const segBuffer = new ArrayBuffer(stitchContext.widthPx * effectiveHeight * 4)
+    const readArea: image.PositionArea = {
+      pixels: segBuffer,
+      offset: 0,
+      stride: stitchContext.widthPx * 4,
+      region: {
+        size: { width: stitchContext.widthPx, height: effectiveHeight },
+        x: 0,
+        y: 0
+      }
+    }
+    await segment.readPixels(readArea)
+
+    const area: image.PositionArea = {
+      pixels: segBuffer,
+      offset: 0,
+      stride: stitchContext.widthPx * 4,
+      region: {
+        size: { width: stitchContext.widthPx, height: effectiveHeight },
+        x: 0,
+        y: yPx
+      }
+    }
+    await stitchContext.pixelMap.writePixels(area)
   }
 
   private async writePixelMapToImageFile(pixelMap: image.PixelMap): Promise<string> {

@@ -237,7 +237,7 @@ export struct SharePreviewSheet {
   }
 
   // 等待 ShareMessageCard 高度稳定,避免 lv-markdown-in Worker 仍在异步排版时就开始截图。
-  private async waitForCardStable(maxWaitMs: number = 4000, stableThresholdMs: number = 400): Promise<void> {
+  private async waitForCardStable(maxWaitMs: number = 4000, stableThresholdMs: number = 250): Promise<void> {
     const start = Date.now()
     while (true) {
       const sinceLastUpdate = Date.now() - this.cardContentHeightUpdatedAt
@@ -433,4 +433,3 @@ export struct SharePreviewSheet {
     }
   }
 }
-
