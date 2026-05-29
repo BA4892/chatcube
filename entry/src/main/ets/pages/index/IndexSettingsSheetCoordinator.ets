@@ -10,6 +10,8 @@ export class IndexSettingsSheetActionCallbacks {
   onToggleNotifyOnComplete: (value: boolean) => Promise<void> = async (_value: boolean): Promise<void> => {}
   onToggleNotifyOnFailed: (value: boolean) => Promise<void> = async (_value: boolean): Promise<void> => {}
   onToggleChatInputEnterKeySend: (value: boolean) => Promise<void> = async (_value: boolean): Promise<void> => {}
+  onToggleChatSuggestedQuestionsEnabled: (value: boolean) => Promise<void> =
+    async (_value: boolean): Promise<void> => {}
   onOpenSystemNotificationSettings: () => void = (): void => {}
 }
 
@@ -22,6 +24,8 @@ export class IndexSettingsSheetCoordinatorBindOptions {
   onNotifyEnabledUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onNotifyOnCompleteUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onNotifyOnFailedUpdated: (value: boolean) => void = (_value: boolean): void => {}
+  onChatInputEnterKeySendUpdated: (value: boolean) => void = (_value: boolean): void => {}
+  onChatSuggestedQuestionsEnabledUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onOpenSystemNotificationSettings: () => void = (): void => {}
 }
 
@@ -68,6 +72,16 @@ export class IndexSettingsSheetCoordinator {
     callbacks.onToggleNotifyOnFailed = async (value: boolean): Promise<void> => {
       options.onNotifyOnFailedUpdated(value)
       await this.settingsManager.setNotifyOnFailedEnabled(value)
+    }
+
+    callbacks.onToggleChatInputEnterKeySend = async (value: boolean): Promise<void> => {
+      options.onChatInputEnterKeySendUpdated(value)
+      await this.settingsManager.setChatInputEnterKeySend(value)
+    }
+
+    callbacks.onToggleChatSuggestedQuestionsEnabled = async (value: boolean): Promise<void> => {
+      options.onChatSuggestedQuestionsEnabledUpdated(value)
+      await this.settingsManager.setChatSuggestedQuestionsEnabled(value)
     }
 
     callbacks.onOpenSystemNotificationSettings = (): void => {

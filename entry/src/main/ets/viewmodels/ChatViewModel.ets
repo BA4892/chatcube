@@ -1367,6 +1367,88 @@ export class ChatViewModel {
     return this.currentSession
   }
 
+  async clearSuggestedQuestions(sessionId: string = ''): Promise<void> {
+    const current = this.sessionStore.getCurrentSession()
+    const targetSessionId = sessionId !== '' ? sessionId : (current !== null ? current.id : '')
+    if (targetSessionId === '') {
+      return
+    }
+    if (current !== null && current.id === targetSessionId) {
+      current.suggestedQuestions = []
+    }
+    await this.databaseService.updateSessionSuggestedQuestions(targetSessionId, [])
+  }
+
+  private buildSuggestedQuestionsConversationContent(messages: ChatMessage[]): string {
+    const startIndex = Math.max(0, messages.length - 8)
+    const lines: string[] = []
+    for (let i = startIndex; i < messages.length; i++) {
+      const message = messages[i]
+      if (message.role !== MessageRole.USER && message.role !== MessageRole.ASSISTANT) {
+        continue
+      }
+      const content = message.content.trim()
+      if (content === '') {
+        continue
+      }
+      const role = message.role === MessageRole.USER ? 'user' : 'assistant'
+      lines.push(`${role}: ${content}`)
+    }
+    return lines.join('\n')
+  }
+
+  private getLastStableAssistantMessageId(messages: ChatMessage[]): string {
+    if (messages.length === 0) {
+      return ''
+    }
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage.role !== MessageRole.ASSISTANT || lastMessage.isGenerating) {
+      return ''
+    }
+    return lastMessage.id
+  }
+
+  async generateSuggestedQuestionsForSession(sessionId: string): Promise<string[]> {
+    if (sessionId === '') {
+      return []
+    }
+    const enabled = await getPreferencesService().getChatSuggestedQuestionsEnabled()
+    if (!enabled) {
+      await this.clearSuggestedQuestions(sessionId)
+      return []
+    }
+
+    const session = this.sessionStore.getCurrentSession()
+    if (session === null || session.id !== sessionId) {
+      return []
+    }
+    const anchorMessageId = this.getLastStableAssistantMessageId(session.messages)
+    if (anchorMessageId === '') {
+      return []
+    }
+    const conversationContent = this.buildSuggestedQuestionsConversationContent(session.messages)
+    if (conversationContent.trim() === '') {
+      return []
+    }
+
+    const questions = await this.aiTaskService.generateSuggestedQuestions(conversationContent)
+    const latestEnabled = await getPreferencesService().getChatSuggestedQuestionsEnabled()
+    if (!latestEnabled) {
+      await this.clearSuggestedQuestions(sessionId)
+      return []
+    }
+    const latestSession = this.sessionStore.getCurrentSession()
+    if (latestSession === null || latestSession.id !== sessionId) {
+      return []
+    }
+    if (this.getLastStableAssistantMessageId(latestSession.messages) !== anchorMessageId) {
+      return []
+    }
+    latestSession.suggestedQuestions = questions
+    await this.databaseService.updateSessionSuggestedQuestions(sessionId, questions)
+    return questions
+  }
+
   async toggleSessionFavorite(sessionId: string): Promise<boolean> {
     const isFavorite = await this.sessionStore.toggleSessionFavorite(sessionId)
     this.currentSession = this.sessionStore.getCurrentSession()

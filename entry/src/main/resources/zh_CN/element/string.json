@@ -1765,6 +1765,14 @@
       "value": "开启后，键盘上的换行按钮会被替换成发送"
     },
     {
+      "name": "chat_suggested_questions_title",
+      "value": "推荐后续问题"
+    },
+    {
+      "name": "chat_suggested_questions_desc",
+      "value": "AI 回复完成后，在输入框上方显示最多 3 个后续问题"
+    },
+    {
       "name": "system_prompt_edit_title",
       "value": "系统提示词"
     },

@@ -5,6 +5,7 @@ import { DateDivider } from '../DateDivider'
 import { MessageBubble } from '../MessageBubble'
 import { CubeSpinner3D } from '../loading/CubeSpinner'
 import { getAppUiState } from '../../state/AppUiState'
+import { ChatSuggestedQuestionsSection } from './ChatSuggestedQuestionsSection'
 import {
   buildChatMessageContentRenderSignature,
   buildChatMessageRowRenderSignature,
@@ -26,6 +27,7 @@ export struct ChatMessageListSection {
   @Param pendingAttachments: MessageAttachment[] = []
   @Param showDraftPreview: boolean = false
   @Param draftPreviewTimeText: string = ''
+  @Param suggestedQuestions: string[] = []
   @Param bottomPadding: number = 0
   @Param topInsetHeight: number = 0
   @Param currentModelId: string = ''
@@ -41,6 +43,7 @@ export struct ChatMessageListSection {
   @Event onDelete: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onEdit: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onCancelEdit: () => void = (): void => {}
+  @Event onSuggestedQuestionClick: (question: string) => void = (_question: string): void => {}
   @Event onShareMessage: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onTranslate: (content: string, targetLang: string, callback: (result: string, errorMessage: string) => void) => void =
     (_content: string, _targetLang: string, _callback: (result: string, errorMessage: string) => void): void => {}
@@ -531,6 +534,18 @@ export struct ChatMessageListSection {
               .justifyContent(FlexAlign.Center)
             }
             .padding({ left: 14, right: 14, top: 5, bottom: 5 })
+          }
+
+          if (!this.isEditingMessage && !this.isMultiSelectMode && this.suggestedQuestions.length > 0) {
+            ListItem({ style: ListItemStyle.NONE }) {
+              ChatSuggestedQuestionsSection({
+                questions: this.suggestedQuestions,
+                contentMaxWidth: this.getEffectiveContentMaxWidth(),
+                onQuestionClick: (question: string): void => {
+                  this.onSuggestedQuestionClick(question)
+                }
+              })
+            }
           }
 
           ListItem({ style: ListItemStyle.NONE }) {

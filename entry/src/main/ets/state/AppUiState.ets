@@ -59,6 +59,7 @@ export class AppUiState {
   @Trace themeMarkdownTableBorder: string = '#DED8CC'
   @Trace chatFontSize: number = 15
   @Trace chatInputEnterKeySend: boolean = false
+  @Trace chatSuggestedQuestionsEnabled: boolean = false
   @Trace materialType: number = 100   // ADAPTIVE
   @Trace materialLevel: number = 10   // ADAPTIVE
   @Trace lightColorMode: string = 'default'
@@ -227,6 +228,9 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
     case AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND:
       state.chatInputEnterKeySend = value as boolean
       return
+    case AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED:
+      state.chatSuggestedQuestionsEnabled = value as boolean
+      return
     case AppStorageKeys.MATERIAL_TYPE:
       state.materialType = value as number
       return
@@ -345,6 +349,8 @@ function createAppUiStateFromStorage(): AppUiState {
   applyAppUiStateValue(state, AppStorageKeys.CHAT_FONT_SIZE, readStorageValue<number>(AppStorageKeys.CHAT_FONT_SIZE, 15))
   applyAppUiStateValue(state, AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND,
     readStorageValue<boolean>(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, false))
+  applyAppUiStateValue(state, AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED,
+    readStorageValue<boolean>(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, false))
   applyAppUiStateValue(state, AppStorageKeys.MATERIAL_TYPE,
     readStorageValue<number>(AppStorageKeys.MATERIAL_TYPE, 100))
   applyAppUiStateValue(state, AppStorageKeys.MATERIAL_LEVEL,
@@ -558,6 +564,8 @@ function resolveAppUiStatePath(path: string): string {
       return 'chatFontSize'
     case AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND:
       return 'chatInputEnterKeySend'
+    case AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED:
+      return 'chatSuggestedQuestionsEnabled'
     case AppStorageKeys.MATERIAL_TYPE:
       return 'materialType'
     case AppStorageKeys.MATERIAL_LEVEL:

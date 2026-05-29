@@ -18,6 +18,7 @@ export struct IndexSettingsSheetContent {
   @Param notifyOnComplete: boolean = true
   @Param notifyOnFailed: boolean = true
   @Param chatInputEnterKeySend: boolean = false
+  @Param chatSuggestedQuestionsEnabled: boolean = false
   @Param handAdaptiveEnabled: boolean = false
   @Param handAdaptiveNewChat: boolean = false
   @Param handAdaptiveUnsupported: boolean = false
@@ -150,6 +151,13 @@ export struct IndexSettingsSheetContent {
         $r('app.string.chat_input_independent_send_button_desc'), this.chatInputEnterKeySend, (value: boolean) => {
           this.callbacks.onToggleChatInputEnterKeySend(value)
         })
+
+      Divider().color($r('app.color.divider'))
+
+      this.NotificationToggleItem($r('app.string.chat_suggested_questions_title'),
+        $r('app.string.chat_suggested_questions_desc'), this.chatSuggestedQuestionsEnabled, (value: boolean) => {
+          this.callbacks.onToggleChatSuggestedQuestionsEnabled(value)
+        })
     }
     .width('100%')
   }
@@ -234,4 +242,3 @@ export struct IndexSettingsSheetContent {
     })
   }
 }
-

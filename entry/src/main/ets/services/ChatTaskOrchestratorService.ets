@@ -47,6 +47,11 @@ export class ChatTaskOrchestratorService {
     return this.countRunningTasks()
   }
 
+  isTaskRunning(taskId: string): boolean {
+    const runtime = this.tasks.get(taskId)
+    return runtime !== undefined && runtime.info.status === ChatTaskStatus.RUNNING && !runtime.finalized
+  }
+
   private countRunningTasks(): number {
     let count = 0
     this.tasks.forEach((runtime) => {

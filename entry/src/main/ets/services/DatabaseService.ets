@@ -186,6 +186,7 @@ export class DatabaseService {
         message_count INTEGER DEFAULT 0,
         draft_text TEXT DEFAULT '',
         draft_attachments_json TEXT DEFAULT '',
+        suggested_questions_json TEXT DEFAULT '',
         title_source TEXT DEFAULT 'manual',
         sync_version INTEGER DEFAULT 0,
         last_modified INTEGER DEFAULT 0,
@@ -353,6 +354,7 @@ export class DatabaseService {
 	      // 尝试添加草稿字段（用于会话级草稿恢复）
 	      await this.addSessionDraftColumnsIfNeeded()
 	      await this.addSessionAssistantColumnIfNeeded()
+      await this.addSessionSuggestedQuestionsColumnIfNeeded()
       await this.addSessionTitleSourceColumnIfNeeded()
 	      // 尝试添加搜索引用相关字段（用于联网搜索）
 	      await this.addSearchColumnsIfNeeded()
@@ -720,7 +722,20 @@ export class DatabaseService {
 	    } catch (error) {
 	      console.info('DatabaseService', 'assistant_id backfill skipped')
 	    }
-		  }
+	  }
+
+  private async addSessionSuggestedQuestionsColumnIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(
+        `ALTER TABLE ${TableNames.SESSIONS} ADD COLUMN suggested_questions_json TEXT DEFAULT ''`
+      )
+    } catch (error) {
+      console.info('DatabaseService', 'suggested_questions_json column may already exist')
+    }
+  }
 
   private async addSessionTitleSourceColumnIfNeeded(): Promise<void> {
     if (this.rdbStore === null) {
@@ -1075,6 +1090,45 @@ export class DatabaseService {
     }
   }
 
+  private serializeSuggestedQuestions(questions: string[]): string {
+    if (questions.length === 0) {
+      return ''
+    }
+    const normalized: string[] = []
+    for (let i = 0; i < questions.length && normalized.length < 3; i++) {
+      const question = questions[i].trim()
+      if (question === '') {
+        continue
+      }
+      if (normalized.indexOf(question) >= 0) {
+        continue
+      }
+      normalized.push(question)
+    }
+    return normalized.length > 0 ? JSON.stringify(normalized) : ''
+  }
+
+  private parseSuggestedQuestions(raw: string): string[] {
+    if (raw === '') {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(raw) as string[]
+      const questions: string[] = []
+      for (let i = 0; i < parsed.length && questions.length < 3; i++) {
+        const question = parsed[i].trim()
+        if (question === '' || questions.indexOf(question) >= 0) {
+          continue
+        }
+        questions.push(question)
+      }
+      return questions
+    } catch (error) {
+      console.error('DatabaseService', `Failed to parse suggested questions: ${JSON.stringify(error)}`)
+      return []
+    }
+  }
+
   private normalizeSessionTitleSource(value: string): SessionTitleSource {
     if (value === SessionTitleSource.PLACEHOLDER) {
       return SessionTitleSource.PLACEHOLDER
@@ -1410,6 +1464,7 @@ export class DatabaseService {
       message_count: session.messageCount,
       draft_text: session.draftText,
       draft_attachments_json: this.serializeDraftAttachments(session.draftAttachments),
+      suggested_questions_json: this.serializeSuggestedQuestions(session.suggestedQuestions),
       title_source: session.titleSource
     }
     try {
@@ -1427,7 +1482,7 @@ export class DatabaseService {
     }
     const valueBucket: relationalStore.ValuesBucket = {
 	      title: session.title,
-		      model_id: session.modelId,
+	      model_id: session.modelId,
 		      provider_id: session.providerId,
 		      assistant_id: session.assistantId !== '' ? session.assistantId : DEFAULT_ASSISTANT_ID,
 		      updated_at: Date.now(),
@@ -1582,6 +1637,24 @@ export class DatabaseService {
       console.error('DatabaseService', `Failed to update session draft: ${JSON.stringify(error)}`)
     }
   }
+
+  async updateSessionSuggestedQuestions(sessionId: string, questions: string[]): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null || sessionId === '') {
+      return
+    }
+    const valueBucket: relationalStore.ValuesBucket = {
+      suggested_questions_json: this.serializeSuggestedQuestions(questions)
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.SESSIONS)
+    predicates.equalTo('id', sessionId)
+    try {
+      await this.rdbStore.update(valueBucket, predicates)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to update suggested questions: ${JSON.stringify(error)}`)
+    }
+  }
+
   async toggleSessionFavorite(sessionId: string): Promise<boolean> {
     await this.waitForInitialization()
     if (this.rdbStore === null) {
@@ -1722,6 +1795,9 @@ export class DatabaseService {
         } catch (e) {
           session.draftAttachments = []
         }
+        session.suggestedQuestions = this.parseSuggestedQuestions(
+          this.safeGetString(resultSet, 'suggested_questions_json')
+        )
         session.titleSource = this.normalizeSessionTitleSource(
           this.safeGetString(resultSet, 'title_source', SessionTitleSource.MANUAL)
         )
@@ -1805,6 +1881,9 @@ export class DatabaseService {
         } catch (e) {
           session.draftAttachments = []
         }
+        session.suggestedQuestions = this.parseSuggestedQuestions(
+          this.safeGetString(resultSet, 'suggested_questions_json')
+        )
         session.titleSource = this.normalizeSessionTitleSource(
           this.safeGetString(resultSet, 'title_source', SessionTitleSource.MANUAL)
         )

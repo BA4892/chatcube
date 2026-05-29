@@ -1765,6 +1765,14 @@
       "value": "When enabled, the New Line key on the keyboard is replaced with Send"
     },
     {
+      "name": "chat_suggested_questions_title",
+      "value": "Suggested follow-up questions"
+    },
+    {
+      "name": "chat_suggested_questions_desc",
+      "value": "After an AI reply, generate up to 3 follow-up questions above the input box"
+    },
+    {
       "name": "system_prompt_edit_title",
       "value": "System Prompt"
     },

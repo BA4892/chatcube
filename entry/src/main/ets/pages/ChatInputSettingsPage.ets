@@ -51,6 +51,7 @@ struct ChatInputSettingsPage {
   }
 
   @Local chatInputEnterKeySend: boolean = false
+  @Local chatSuggestedQuestionsEnabled: boolean = false
 
   private settingsManager = ServiceRegistry.settings()
   private compactScroller: Scroller = new Scroller()
@@ -65,6 +66,7 @@ struct ChatInputSettingsPage {
 
   private reloadSettings(): void {
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
+    this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
   }
 
   private getContentMaxWidth(): number {
@@ -113,6 +115,18 @@ struct ChatInputSettingsPage {
         setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, previousValue)
       }
     }
+    callbacks.onToggleChatSuggestedQuestionsEnabled = async (value: boolean): Promise<void> => {
+      const previousValue = this.chatSuggestedQuestionsEnabled
+      this.chatSuggestedQuestionsEnabled = value
+      setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, value)
+      try {
+        await this.settingsManager.setChatSuggestedQuestionsEnabled(value)
+      } catch (error) {
+        console.error('ChatInputSettingsPage', `Failed to set suggested questions: ${JSON.stringify(error)}`)
+        this.chatSuggestedQuestionsEnabled = previousValue
+        setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, previousValue)
+      }
+    }
     return callbacks
   }
 
@@ -130,6 +144,7 @@ struct ChatInputSettingsPage {
           IndexSettingsSheetContent({
             settingsSheetType: SettingsSheetType.CHAT_INPUT,
             chatInputEnterKeySend: this.chatInputEnterKeySend,
+            chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
             callbacks: this.buildCallbacks()
           })
         }

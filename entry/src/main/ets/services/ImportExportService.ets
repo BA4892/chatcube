@@ -235,6 +235,7 @@ interface SessionData {
   providerId: string
   assistantId?: string
   titleSource?: string
+  suggestedQuestions?: string[]
   createdAt: number
   updatedAt: number
   isFavorite: boolean
@@ -704,6 +705,7 @@ export class ImportExportService {
         providerId: s.providerId,
         assistantId: s.assistantId !== '' ? s.assistantId : DEFAULT_ASSISTANT_ID,
         titleSource: s.titleSource,
+        suggestedQuestions: [...s.suggestedQuestions],
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         isFavorite: s.isFavorite,
@@ -1113,6 +1115,7 @@ export class ImportExportService {
       session.isFavorite = sessionData.isFavorite || false
       session.lastMessagePreview = sessionData.lastMessagePreview || ''
       session.messageCount = sessionData.messageCount || 0
+      session.suggestedQuestions = this.normalizeSuggestedQuestions(sessionData.suggestedQuestions)
       session.titleSource =
         sessionData.titleSource === SessionTitleSource.PLACEHOLDER ||
         sessionData.titleSource === SessionTitleSource.AI ?
@@ -1343,6 +1346,21 @@ export class ImportExportService {
       return this.getPathFromFileUri(trimmed)
     }
     return trimmed
+  }
+
+  private normalizeSuggestedQuestions(rawQuestions: string[] | undefined): string[] {
+    const normalized: string[] = []
+    if (rawQuestions === undefined || !Array.isArray(rawQuestions)) {
+      return normalized
+    }
+    for (let i = 0; i < rawQuestions.length && normalized.length < 3; i++) {
+      const question = rawQuestions[i].trim()
+      if (question === '' || normalized.indexOf(question) >= 0) {
+        continue
+      }
+      normalized.push(question)
+    }
+    return normalized
   }
 
   private async importAssistants(assistants: AssistantExportData[], tempDir: string): Promise<void> {

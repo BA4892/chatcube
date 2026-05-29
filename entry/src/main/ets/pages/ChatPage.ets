@@ -146,6 +146,7 @@ export struct ChatPage {
   @Param routeParamsSeed: ChatPageRouteParams | null = null
   @Local routeParams: ChatPageRouteParams | null = null
   @Local messages: ChatMessage[] = []
+  @Local suggestedQuestions: string[] = []
   @Local inputText: string = ''
   @Local currentModel: string = ''
   @Local currentModelId: string = ''
@@ -162,6 +163,9 @@ export struct ChatPage {
   // 应用是否退到后台（用于处理生成中返回桌面/关闭应用）
   private get appInBackground(): boolean {
     return getAppUiState().appInBackground
+  }
+  private get chatSuggestedQuestionsEnabled(): boolean {
+    return getAppUiState().chatSuggestedQuestionsEnabled
   }
   private get inAppTaskAlertPayload(): string {
     return getAppUiState().inAppTaskAlertPayload
@@ -392,6 +396,7 @@ export struct ChatPage {
   private initialAlignmentTimerIds: number[] = []
   private assistantAvatarReloadToken: number = 0
   private pendingToolInteractionSyncTimerId: number = -1
+  private suggestedQuestionGenerationSeq: number = 0
 
   private showChatSnack(message: string | Resource, duration: number = 2000,
     tone: SnackBarTone = SnackBarTone.DEFAULT): void {
@@ -643,6 +648,72 @@ export struct ChatPage {
     this.markMessageListChanged()
   }
 
+  private clearSuggestedQuestionsInMemory(): void {
+    if (this.suggestedQuestions.length === 0) {
+      return
+    }
+    this.suggestedQuestions = []
+    this.markMessageListChanged()
+  }
+
+  private clearSuggestedQuestionsForCurrentSession(): void {
+    this.suggestedQuestionGenerationSeq += 1
+    this.clearSuggestedQuestionsInMemory()
+    const targetSessionId = this.sessionId
+    if (targetSessionId === '') {
+      return
+    }
+    this.chatViewModel.clearSuggestedQuestions(targetSessionId).catch((error: Error): void => {
+      console.warn('ChatPage', `Failed to clear suggested questions: ${JSON.stringify(error)}`)
+    })
+  }
+
+  private generateSuggestedQuestionsForSession(sessionId: string): void {
+    if (sessionId === '') {
+      return
+    }
+    const seq = this.suggestedQuestionGenerationSeq + 1
+    this.suggestedQuestionGenerationSeq = seq
+    const shouldStayAtBottom = this.isAtBottom
+    this.chatViewModel.generateSuggestedQuestionsForSession(sessionId).then((questions: string[]): void => {
+      if (seq !== this.suggestedQuestionGenerationSeq || this.sessionId !== sessionId) {
+        return
+      }
+      if (!this.chatSuggestedQuestionsEnabled) {
+        return
+      }
+      this.suggestedQuestions = [...questions]
+      this.markMessageListChanged()
+      if (questions.length > 0 && shouldStayAtBottom) {
+        this.alignListToBottomAfterLayout()
+      }
+    }).catch((error: Error): void => {
+      console.warn('ChatPage', `Failed to generate suggested questions: ${JSON.stringify(error)}`)
+    })
+  }
+
+  private handleSuggestedQuestionClick(question: string): void {
+    const trimmed = question.trim()
+    if (trimmed === '') {
+      return
+    }
+    if (this.showAttachmentPicker) {
+      this.closeAttachmentPanel()
+    }
+    if (this.isEditingMessage) {
+      this.handleCancelEdit()
+    }
+    this.inputText = trimmed
+    this.resetDocumentParseQueue()
+    this.pendingAttachments = []
+    this.autoFocusInput = false
+    setTimeout(() => {
+      this.autoFocusInput = true
+      this.getScrollUiFlow().alignToBottomAfterLayout()
+    }, 0)
+    this.scheduleDraftAutosave()
+  }
+
   private markMessageListChanged(changedMessageId: string = ''): void {
     this.messageListSyncMessageId = changedMessageId
     this.messageListSyncVersion = this.messageListSyncVersion + 1
@@ -669,6 +740,7 @@ export struct ChatPage {
     this.resetDocumentParseQueue()
     this.pendingAttachments = [...loadResult.draftAttachments]
     this.preparePendingDocumentAttachments()
+    this.suggestedQuestions = [...loadResult.suggestedQuestions]
     this.isNewChatTransition = loadResult.isNewChatTransition
     this.isNewEmptySession = loadResult.isNewEmptySession
     this.applyAssistantSnapshot(loadResult.assistantId, loadResult.assistantAvatarSymbol, loadResult.assistantColor)
@@ -948,13 +1020,21 @@ export struct ChatPage {
 
   private getBottomAnchorListIndex(): number {
     const draftItemCount = !this.isEditingMessage && this.hasDraftContent() ? 1 : 0
-    return this.messages.length + 1 + draftItemCount
+    return this.messages.length + 1 + draftItemCount + this.getSuggestedQuestionItemCount()
   }
 
   private getTotalListItemCount(): number {
-    // 1 (top padding) + messages + draft preview (0 or 1) + 1 (bottom padding)
+    // 1 (top padding) + messages + draft preview (0 or 1) + suggested questions (0 or 1) + 1 (bottom padding)
     const draftItemCount = !this.isEditingMessage && this.hasDraftContent() ? 1 : 0
-    return 1 + this.messages.length + draftItemCount + 1
+    return 1 + this.messages.length + draftItemCount + this.getSuggestedQuestionItemCount() + 1
+  }
+
+  private getSuggestedQuestionItemCount(): number {
+    if (!this.chatSuggestedQuestionsEnabled || this.isEditingMessage || this.isMultiSelectMode ||
+      this.suggestedQuestions.length === 0) {
+      return 0
+    }
+    return 1
   }
 
   private getCurrentModelInfo(): ModelInfo | null {
@@ -1661,6 +1741,12 @@ export struct ChatPage {
           console.error('ChatPage', `Failed to clear draft after send: ${JSON.stringify(error)}`)
         })
       },
+      onClearSuggestedQuestions: (): void => {
+        this.clearSuggestedQuestionsForCurrentSession()
+      },
+      onGenerateSuggestedQuestions: (sessionId: string): void => {
+        this.generateSuggestedQuestionsForSession(sessionId)
+      },
       onMarkAutoTaskCompleted: (): void => {
         // no-op
       },
@@ -2331,6 +2417,7 @@ export struct ChatPage {
           pendingAttachments: this.pendingAttachments,
           showDraftPreview: this.hasDraftContent(),
           draftPreviewTimeText: this.getPreviewTimeText(),
+          suggestedQuestions: this.chatSuggestedQuestionsEnabled ? this.suggestedQuestions : [],
           bottomPadding: this.getListBottomPadding(),
           topInsetHeight: this.getMessageListTopSpacerHeight(),
           currentModelId: this.currentModelId,
@@ -2352,6 +2439,9 @@ export struct ChatPage {
           },
           onCancelEdit: (): void => {
             this.handleCancelEdit()
+          },
+          onSuggestedQuestionClick: (question: string): void => {
+            this.handleSuggestedQuestionClick(question)
           },
           onShareMessage: (message: ChatMessage): void => {
             this.handleShareSingleMessage(message)
@@ -4152,6 +4242,7 @@ export struct ChatPage {
     if (userMsgIndex < 0) {
       return
     }
+    this.clearSuggestedQuestionsForCurrentSession()
     const userMsg = this.messages[userMsgIndex]
     const savedContent = userMsg.content
     const savedAttachments = userMsg.attachments.slice()
@@ -4324,6 +4415,7 @@ export struct ChatPage {
     if (index < 0) {
       return
     }
+    this.clearSuggestedQuestionsForCurrentSession()
     this.messages.splice(index, 1)
     this.markMessageListChanged()
     await this.chatViewModel.deleteMessage(message.id)
@@ -4381,6 +4473,8 @@ export struct ChatPage {
   private async handleNewChat(): Promise<void> {
     await this.prepareCurrentSessionForTransition()
     this.clearDraftAutosaveTimer()
+    this.suggestedQuestionGenerationSeq += 1
+    this.clearSuggestedQuestionsInMemory()
     // 创建新会话
     const assistant = await ServiceRegistry.assistant().getCurrentAssistantForNewChat()
     const session = await this.chatViewModel.createNewSession(
@@ -4468,6 +4562,7 @@ export struct ChatPage {
     if (!ok) {
       return
     }
+    this.clearSuggestedQuestionsForCurrentSession()
     this.editingOriginalContent = message.content
     this.editingOriginalAttachments = [...message.attachments]
     this.editingMessageId = message.id
@@ -4519,7 +4614,11 @@ export struct ChatPage {
     if (!this.guardAttachmentReadyForSend()) {
       return
     }
-    this.stopActiveGenerationBeforeMessageRewrite()
+    const ok = await this.stopActiveGenerationBeforeMessageRewrite()
+    if (!ok) {
+      return
+    }
+    this.clearSuggestedQuestionsForCurrentSession()
     await this.getInlineEditFlow().saveAndSendInline(
       this.editingMessageId,
       this.inputText,
@@ -4664,6 +4763,7 @@ export struct ChatPage {
         fontColor: '#FF3B30',
         action: async () => {
           await this.getSelectionFlow().deleteSelectedMessages(this.selectedMessageIds)
+          this.clearSuggestedQuestionsForCurrentSession()
         }
       }
     })

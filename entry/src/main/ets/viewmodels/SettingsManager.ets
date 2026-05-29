@@ -12,7 +12,7 @@ export interface SettingsChangeCallback {
   onColorThemeChanged?: (theme: ColorTheme, colors: ThemeColorConfig) => void
   onNotificationSettingsChanged?: (enabled: boolean, notifyOnComplete: boolean, notifyOnFailed: boolean) => void
   onChatFontSizeChanged?: (size: number) => void
-  onChatInputSettingsChanged?: (enterKeySend: boolean) => void
+  onChatInputSettingsChanged?: (enterKeySend: boolean, suggestedQuestionsEnabled: boolean) => void
   onMaterialSettingsChanged?: (materialType: number, materialLevel: number, lightColorMode: string) => void
 }
 
@@ -26,6 +26,7 @@ export class SettingsManager {
   private notifyOnFailed: boolean = true
   private chatFontSize: number = 15
   private chatInputEnterKeySend: boolean = false
+  private chatSuggestedQuestionsEnabled: boolean = false
   private materialType: number = 100    // ADAPTIVE
   private materialLevel: number = 10    // ADAPTIVE
   private lightColorMode: string = 'default'
@@ -66,10 +67,12 @@ export class SettingsManager {
     this.notifyOnFailed = await preferencesService.getNotifyOnFailed()
     this.chatFontSize = await preferencesService.getChatFontSize()
     this.chatInputEnterKeySend = await preferencesService.getChatInputEnterKeySend()
+    this.chatSuggestedQuestionsEnabled = await preferencesService.getChatSuggestedQuestionsEnabled()
     this.materialType = await preferencesService.getMaterialType()
     this.materialLevel = await preferencesService.getMaterialLevel()
     this.lightColorMode = await preferencesService.getLightColorMode()
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
+    setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
     this.isInitialized = true
   }
 
@@ -83,10 +86,12 @@ export class SettingsManager {
     this.notifyOnFailed = await preferencesService.getNotifyOnFailed()
     this.chatFontSize = await preferencesService.getChatFontSize()
     this.chatInputEnterKeySend = await preferencesService.getChatInputEnterKeySend()
+    this.chatSuggestedQuestionsEnabled = await preferencesService.getChatSuggestedQuestionsEnabled()
     this.materialType = await preferencesService.getMaterialType()
     this.materialLevel = await preferencesService.getMaterialLevel()
     this.lightColorMode = await preferencesService.getLightColorMode()
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
+    setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
   }
 
   // 等待初始化完成
@@ -285,6 +290,10 @@ export class SettingsManager {
     return this.chatInputEnterKeySend
   }
 
+  getChatSuggestedQuestionsEnabled(): boolean {
+    return this.chatSuggestedQuestionsEnabled
+  }
+
   async setChatInputEnterKeySend(enabled: boolean): Promise<void> {
     if (this.chatInputEnterKeySend === enabled) {
       return
@@ -297,7 +306,24 @@ export class SettingsManager {
     for (let i = 0; i < this.callbacks.length; i++) {
       const callback = this.callbacks[i]
       if (callback.onChatInputSettingsChanged !== undefined) {
-        callback.onChatInputSettingsChanged(enabled)
+        callback.onChatInputSettingsChanged(enabled, this.chatSuggestedQuestionsEnabled)
+      }
+    }
+  }
+
+  async setChatSuggestedQuestionsEnabled(enabled: boolean): Promise<void> {
+    if (this.chatSuggestedQuestionsEnabled === enabled) {
+      return
+    }
+
+    this.chatSuggestedQuestionsEnabled = enabled
+    await getPreferencesService().setChatSuggestedQuestionsEnabled(enabled)
+    setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, enabled)
+
+    for (let i = 0; i < this.callbacks.length; i++) {
+      const callback = this.callbacks[i]
+      if (callback.onChatInputSettingsChanged !== undefined) {
+        callback.onChatInputSettingsChanged(this.chatInputEnterKeySend, enabled)
       }
     }
   }

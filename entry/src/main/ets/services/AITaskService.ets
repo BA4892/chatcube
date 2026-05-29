@@ -75,6 +75,39 @@ export class AITaskService {
     return result
   }
 
+  private truncateContentForSuggestedQuestions(content: string): string {
+    const maxChars = 4000
+    const maxLines = 80
+    const lines = content.split('\n')
+    let result = ''
+    let lineCount = 0
+
+    for (let i = Math.max(0, lines.length - maxLines); i < lines.length; i++) {
+      if (lineCount >= maxLines) {
+        break
+      }
+      const line = lines[i]
+      const nextLength = result.length + line.length + (result === '' ? 0 : 1)
+      if (nextLength > maxChars) {
+        const remaining = maxChars - result.length
+        if (remaining > 0) {
+          if (result !== '') {
+            result += '\n'
+          }
+          result += line.substring(0, remaining)
+        }
+        break
+      }
+      if (result !== '') {
+        result += '\n'
+      }
+      result += line
+      lineCount++
+    }
+
+    return result
+  }
+
   // 检测文本语言（简单判断：中文字符占比）
   private detectLanguage(text: string): string {
     const chineseRegex = /[\u4e00-\u9fa5]/g
@@ -94,6 +127,13 @@ export class AITaskService {
   // 获取标题语言（优先 App 设置，其次自动检测）
   private getTitleLocale(content: string): string {
     // 目前使用自动检测
+    return this.detectLanguage(content)
+  }
+
+  private getSuggestedQuestionsLocale(content: string, locale?: string): string {
+    if (locale !== undefined && locale !== '') {
+      return locale
+    }
     return this.detectLanguage(content)
   }
 
@@ -134,6 +174,54 @@ export class AITaskService {
     title = title.replace(/^["'""'']+|["'""'']+$/g, '')
 
     return title.trim()
+  }
+
+  private cleanSuggestedQuestionsResponse(raw: string): string {
+    let content = raw.trim()
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+    if (content.startsWith('```')) {
+      const firstLineEnd = content.indexOf('\n')
+      if (firstLineEnd >= 0) {
+        content = content.substring(firstLineEnd + 1).trim()
+      }
+      if (content.endsWith('```')) {
+        content = content.substring(0, content.length - 3).trim()
+      }
+    }
+    return content
+  }
+
+  private parseSuggestedQuestions(raw: string): string[] {
+    const content = this.cleanSuggestedQuestionsResponse(raw)
+    if (content === '') {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(content) as string[]
+      const questions: string[] = []
+      for (let i = 0; i < parsed.length && questions.length < 3; i++) {
+        const question = parsed[i].trim().replace(/\s+/g, ' ')
+        if (question === '' || question.length < 4 || question.length > 40) {
+          continue
+        }
+        if (questions.indexOf(question) >= 0) {
+          continue
+        }
+        questions.push(question)
+      }
+      return questions
+    } catch (error) {
+      console.warn('AITaskService', 'Failed to parse suggested questions: ' + JSON.stringify(error))
+      return []
+    }
+  }
+
+  private buildSuggestedQuestionsSystemPrompt(locale: string): string {
+    return 'You generate follow-up questions for a chat app. ' +
+      'Return only a JSON string array with 1 to 3 items. ' +
+      'Each item must be a question the user may naturally ask next, 4 to 40 characters, no numbering, no Markdown. ' +
+      'Do not repeat questions already asked in the conversation. ' +
+      'Use this language: ' + locale + '.'
   }
 
   // 验证标题有效性
@@ -354,6 +442,70 @@ export class AITaskService {
   async generateTitle(conversationContent: string, locale?: string): Promise<string> {
     const result = await this.generateTitleResult(conversationContent, locale)
     return result.title
+  }
+
+  async generateSuggestedQuestions(conversationContent: string, locale?: string): Promise<string[]> {
+    const titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
+    const provider = await this.providerViewModel.getProviderByIdAsync(titleModel.providerId)
+
+    if (provider === null) {
+      console.error('AITaskService', 'Provider not found for suggested questions: ' + titleModel.providerId)
+      return []
+    }
+
+    const effectiveApiKey = getEffectiveApiKey(provider.id, provider.apiKey)
+    if (effectiveApiKey === '') {
+      console.error('AITaskService', 'No API Key configured for suggested questions provider: ' + provider.id)
+      return []
+    }
+
+    const truncatedContent = this.truncateContentForSuggestedQuestions(conversationContent)
+    if (truncatedContent.trim() === '') {
+      return []
+    }
+    const effectiveLocale = this.getSuggestedQuestionsLocale(truncatedContent, locale)
+
+    const apiConfig: AIApiConfig = {
+      providerId: provider.id,
+      providerType: provider.type,
+      apiStyle: provider.apiStyle,
+      apiKey: effectiveApiKey,
+      baseUrl: provider.baseUrl,
+      apiPath: provider.apiPath !== '' ? provider.apiPath : undefined,
+      openaiTransport: provider.openaiTransport,
+      customHeadersJson: provider.customHeadersJson || undefined
+    }
+
+    for (let i = 0; i < provider.models.length; i++) {
+      if (provider.models[i].id === titleModel.modelId) {
+        apiConfig.modelReasoningStrategyOverride = ReasoningRequestStrategy.NONE
+        break
+      }
+    }
+
+    const messages: RequestMessage[] = [
+      new RequestMessage('system', this.buildSuggestedQuestionsSystemPrompt(effectiveLocale)),
+      new RequestMessage('user', `<content>\n${truncatedContent}\n</content>`)
+    ]
+
+    try {
+      const result = await this.aiApiService.sendChatRequest(
+        apiConfig,
+        messages,
+        titleModel.modelId,
+        0.4,
+        300,
+        ReasoningLevel.OFF
+      )
+      if (!result.success) {
+        console.warn('AITaskService', 'Failed to generate suggested questions: ' + result.errorMessage)
+        return []
+      }
+      return this.parseSuggestedQuestions(result.content)
+    } catch (error) {
+      console.error('AITaskService', 'Error generating suggested questions: ' + JSON.stringify(error))
+      return []
+    }
   }
 
   // 翻译文本

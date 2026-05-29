@@ -789,6 +789,7 @@ export class ChatSession {
   @Trace messageCount: number
   @Trace draftText: string
   @Trace draftAttachments: MessageAttachment[]
+  @Trace suggestedQuestions: string[]
   @Trace titleSource: SessionTitleSource
   // 同步相关字段(为 WebDAV 同步预留)
   @Trace syncVersion: number = 0
@@ -810,6 +811,7 @@ export class ChatSession {
     this.messageCount = 0
     this.draftText = ''
     this.draftAttachments = []
+    this.suggestedQuestions = []
     this.titleSource = SessionTitleSource.PLACEHOLDER
     this.syncVersion = 0
     this.lastModified = Date.now()

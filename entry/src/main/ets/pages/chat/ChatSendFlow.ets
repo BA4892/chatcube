@@ -86,6 +86,8 @@ export interface ChatSendFlowDependencies {
   onScrollBottom: () => void
   onSetNewEmptySession: (value: boolean) => void
   onDraftCommitted: () => void
+  onClearSuggestedQuestions: () => void
+  onGenerateSuggestedQuestions: (sessionId: string) => void
   onMarkAutoTaskCompleted: () => void
   onMarkAutoTaskFailed: (message: string) => void
   onShowError: (message: string | Resource) => void
@@ -482,6 +484,7 @@ export class ChatSendFlow {
       return
     }
     this.deps.onClearComposer()
+    this.deps.onClearSuggestedQuestions()
     this.deps.messages.push(userMessage)
     this.deps.onSyncMessages()
     this.deps.onSetNewEmptySession(false)
@@ -518,6 +521,7 @@ export class ChatSendFlow {
   }
 
   private handleTaskCompleted(taskId: string, senderSessionId: string): void {
+    const completedFromRunning = this.deps.chatTaskOrchestrator.isTaskRunning(taskId)
     this.deps.chatTaskOrchestrator.completeTask(taskId)
     if (this.deps.getSessionId() === senderSessionId) {
       if (this.deps.getCurrentTaskId() === taskId) {
@@ -526,6 +530,9 @@ export class ChatSendFlow {
       this.deps.onSetSending(false)
     }
     this.deps.onMarkAutoTaskCompleted()
+    if (completedFromRunning) {
+      this.deps.onGenerateSuggestedQuestions(senderSessionId)
+    }
   }
 
   private handleTaskFailed(taskId: string, error: string, showError: boolean, senderSessionId: string): void {

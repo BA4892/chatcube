@@ -26,6 +26,7 @@ export class ChatPageLoadResult {
   messages: ChatMessage[] = []
   draftText: string = ''
   draftAttachments: MessageAttachment[] = []
+  suggestedQuestions: string[] = []
   isNewChatTransition: boolean = true
   isNewEmptySession: boolean = false
   assistantId: string = DEFAULT_ASSISTANT_ID
@@ -99,6 +100,7 @@ export class ChatPageLoadFlow {
         result.messages = [...session.messages]
         result.draftText = session.draftText
         result.draftAttachments = this.cloneDraftAttachments(session.draftAttachments)
+        result.suggestedQuestions = [...session.suggestedQuestions]
         const assistant = await this.loadAssistantSnapshot(session.assistantId)
         this.applyAssistantSnapshot(result, assistant)
       }

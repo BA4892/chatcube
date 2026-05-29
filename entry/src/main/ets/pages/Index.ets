@@ -258,6 +258,7 @@ struct Index {
   }
   @Local chatFontSize: number = 15
   @Local chatInputEnterKeySend: boolean = false
+  @Local chatSuggestedQuestionsEnabled: boolean = false
   @Local materialType: number = 100
   @Local materialLevel: number = 10
   @Local lightColorMode: string = 'default'
@@ -1098,8 +1099,9 @@ struct Index {
         this.chatFontSize = size
         this.syncSettingsSummaryToStorage()
       },
-      onChatInputSettingsChanged: (enterKeySend: boolean): void => {
+      onChatInputSettingsChanged: (enterKeySend: boolean, suggestedQuestionsEnabled: boolean): void => {
         this.chatInputEnterKeySend = enterKeySend
+        this.chatSuggestedQuestionsEnabled = suggestedQuestionsEnabled
         this.syncSettingsSummaryToStorage()
       },
       onMaterialSettingsChanged: (materialType: number, materialLevel: number, lightColorMode: string): void => {
@@ -1123,6 +1125,7 @@ struct Index {
     this.notifyOnFailed = this.settingsManager.getNotifyOnFailedEnabled()
     this.chatFontSize = this.settingsManager.getChatFontSize()
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
+    this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
     this.materialType = this.settingsManager.getMaterialType()
     this.materialLevel = this.settingsManager.getMaterialLevel()
     this.lightColorMode = this.settingsManager.getLightColorMode()
@@ -1274,6 +1277,7 @@ struct Index {
     this.notifyOnFailed = this.settingsManager.getNotifyOnFailedEnabled()
     this.chatFontSize = this.settingsManager.getChatFontSize()
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
+    this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
     this.materialType = this.settingsManager.getMaterialType()
     this.materialLevel = this.settingsManager.getMaterialLevel()
     this.lightColorMode = this.settingsManager.getLightColorMode()
@@ -1293,6 +1297,7 @@ struct Index {
     setAppUiStateValue(AppStorageKeys.HOLDING_HAND_STATUS, this.currentHoldingHand)
     setAppUiStateValue(AppStorageKeys.CHAT_FONT_SIZE, this.chatFontSize)
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
+    setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
     setAppUiStateValue(AppStorageKeys.MATERIAL_TYPE, this.materialType)
     setAppUiStateValue(AppStorageKeys.MATERIAL_LEVEL, this.materialLevel)
     setAppUiStateValue(AppStorageKeys.LIGHT_COLOR_MODE, this.lightColorMode)
@@ -5044,6 +5049,7 @@ struct Index {
           notifyOnComplete: this.notifyOnComplete,
           notifyOnFailed: this.notifyOnFailed,
           chatInputEnterKeySend: this.chatInputEnterKeySend,
+          chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
           handAdaptiveEnabled: this.handAdaptiveEnabled,
           handAdaptiveNewChat: this.handAdaptiveNewChat,
           handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5070,6 +5076,7 @@ struct Index {
       notifyOnComplete: this.notifyOnComplete,
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
+      chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5087,6 +5094,7 @@ struct Index {
       notifyOnComplete: this.notifyOnComplete,
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
+      chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5104,6 +5112,7 @@ struct Index {
       notifyOnComplete: this.notifyOnComplete,
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
+      chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5160,6 +5169,11 @@ struct Index {
       this.chatInputEnterKeySend = value
       this.syncSettingsSummaryToStorage()
       await this.settingsManager.setChatInputEnterKeySend(value)
+    }
+    callbacks.onToggleChatSuggestedQuestionsEnabled = async (value: boolean): Promise<void> => {
+      this.chatSuggestedQuestionsEnabled = value
+      this.syncSettingsSummaryToStorage()
+      await this.settingsManager.setChatSuggestedQuestionsEnabled(value)
     }
     callbacks.onOpenSystemNotificationSettings = (): void => {
       this.openSystemNotificationSettings()

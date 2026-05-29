@@ -65,6 +65,7 @@ export class PreferenceKeys {
   static readonly CHAT_SELECTED_TOOL_IDS_JSON: string = 'chat_selected_tool_ids_json'
   static readonly CHAT_REASONING_LEVEL: string = 'chat_reasoning_level'
   static readonly CHAT_BUILTIN_IMAGE_GEN_ENABLED: string = 'chat_builtin_image_gen_enabled'
+  static readonly CHAT_SUGGESTED_QUESTIONS_ENABLED: string = 'chat_suggested_questions_enabled'
 
   // 主题配色
   static readonly COLOR_THEME: string = 'color_theme'
@@ -454,6 +455,14 @@ export class PreferencesService {
   // 设置聊天输入框回车键是否发送
   async setChatInputEnterKeySend(enabled: boolean): Promise<void> {
     await this.setBoolean(PreferenceKeys.CHAT_INPUT_ENTER_KEY_SEND, enabled)
+  }
+
+  async getChatSuggestedQuestionsEnabled(): Promise<boolean> {
+    return await this.getBoolean(PreferenceKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, false)
+  }
+
+  async setChatSuggestedQuestionsEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(PreferenceKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, enabled)
   }
 
   // 获取材质类型
