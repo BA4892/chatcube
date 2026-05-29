@@ -175,6 +175,7 @@ struct Index {
   @Local assistantProviders: ModelProvider[] = []
   @Local currentAssistantId: string = DEFAULT_ASSISTANT_ID
   @Local showAssistantSwitchSheet: boolean = false
+  @Local assistantSwitchSwipeOffsetX: number = 0
   @Local openingAssistantId: string = ''
   @Local showAssistantEditorSheet: boolean = false
   @Local showAssistantModelSheet: boolean = false
@@ -376,6 +377,7 @@ struct Index {
   private handledAssistantAvatarRefreshAt: number = 0
   private searchInputFocusId: string = 'index_session_search_input'
   private searchInputFocusPending: boolean = false
+  private assistantSwitchPanDirection: string = 'none'
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void = (status: motion.HoldingHandStatus): void => {
     if (!isExplicitHoldingHandStatus(status)) {
       return
@@ -1249,6 +1251,8 @@ struct Index {
   private async switchAssistant(assistantId: string): Promise<void> {
     const previousAssistantId = this.currentAssistantId
     const assistant = await this.assistantService.setCurrentAssistantId(assistantId)
+    this.assistantSwitchSwipeOffsetX = 0
+    this.assistantSwitchPanDirection = 'none'
     this.currentAssistantId = assistant.id !== '' ? assistant.id : DEFAULT_ASSISTANT_ID
     this.patchAssistantInMemory(assistant)
     this.selectedSessionIds = []
@@ -1437,6 +1441,22 @@ struct Index {
 
   private getCompactChatTitleBarContentTopHeight(): number {
     return this.px2vp(this.topAvoidHeight) + this.getCompactChatTitleContentHeight()
+  }
+
+  private getCompactAssistantsTitleContentHeight(): number {
+    return 56
+  }
+
+  private getCompactAssistantsTitleBarContentTopHeight(): number {
+    return this.px2vp(this.topAvoidHeight) + this.getCompactAssistantsTitleContentHeight()
+  }
+
+  private getCompactAssistantsTitleBarMaskExtraHeight(): number {
+    return getHdsTopNavigationMaskExtraHeight(this.windowWidthVp, this.windowHeightVp)
+  }
+
+  private getCompactAssistantsListTopSpacerHeight(): number {
+    return this.getCompactAssistantsTitleBarContentTopHeight() + this.getCompactAssistantsTitleBarMaskExtraHeight()
   }
 
   private getChatListTopSpacerHeight(): number {
@@ -2291,6 +2311,14 @@ struct Index {
     return this.currentAssistantColor !== '' ? this.currentAssistantColor : this.themePrimary
   }
 
+  private getCurrentAssistantDefaultModelText(): ResourceStr {
+    const assistant = this.findAssistantById(this.currentAssistantId)
+    if (assistant === null) {
+      return $r('app.string.assistant_model_follow_global')
+    }
+    return this.getAssistantDefaultModelText(assistant)
+  }
+
   private normalizeAssistantAvatarSymbol(value: string): string {
     return normalizeAssistantAvatarValue(value)
   }
@@ -2318,15 +2346,82 @@ struct Index {
       `${this.currentAssistantColor}:${this.assistantAvatarRenderTick}`
   }
 
+  private getCurrentAssistantIndex(): number {
+    for (let i = 0; i < this.assistants.length; i++) {
+      if (this.assistants[i].id === this.currentAssistantId) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private getAssistantIdBySwipeOffset(offsetX: number): string {
+    if (this.assistants.length <= 1 || Math.abs(offsetX) < 56) {
+      return ''
+    }
+    const currentIndex = this.getCurrentAssistantIndex()
+    if (currentIndex < 0) {
+      return ''
+    }
+    const nextIndex = offsetX < 0 ? currentIndex + 1 : currentIndex - 1
+    if (nextIndex < 0 || nextIndex >= this.assistants.length) {
+      return ''
+    }
+    return this.assistants[nextIndex].id
+  }
+
+  private getDampedAssistantSwitchOffset(offsetX: number): number {
+    let offset = offsetX * 0.18
+    const currentIndex = this.getCurrentAssistantIndex()
+    if ((currentIndex <= 0 && offset > 0) || (currentIndex >= this.assistants.length - 1 && offset < 0)) {
+      offset = offset * 0.35
+    }
+    if (offset > 24) {
+      return 24
+    }
+    if (offset < -24) {
+      return -24
+    }
+    return offset
+  }
+
+  private handleAssistantSwitchSwipeStart(): void {
+    this.assistantSwitchPanDirection = 'none'
+  }
+
+  private handleAssistantSwitchSwipeUpdate(event: GestureEvent): void {
+    const absX = Math.abs(event.offsetX)
+    const absY = Math.abs(event.offsetY)
+    if (this.assistantSwitchPanDirection === 'none' && (absX > 12 || absY > 12)) {
+      this.assistantSwitchPanDirection = absX > absY * 1.35 ? 'horizontal' : 'vertical'
+    }
+    if (this.assistantSwitchPanDirection !== 'horizontal') {
+      return
+    }
+    this.assistantSwitchSwipeOffsetX = this.getDampedAssistantSwitchOffset(event.offsetX)
+  }
+
+  private handleAssistantSwitchSwipeEnd(event: GestureEvent): void {
+    const nextAssistantId = this.assistantSwitchPanDirection === 'horizontal' ?
+      this.getAssistantIdBySwipeOffset(event.offsetX) : ''
+    this.assistantSwitchPanDirection = 'none'
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.assistantSwitchSwipeOffsetX = 0
+    })
+    if (nextAssistantId !== '') {
+      this.switchAssistant(nextAssistantId)
+    }
+  }
+
   private getAssistantSwitchMaxWidth(): number {
     if (this.windowWidthVp <= 0) {
       return 260
     }
-    return Math.max(140, this.windowWidthVp - 104)
+    return Math.max(180, this.windowWidthVp - 16)
   }
 
   private getAssistantSwitchNameMaxWidth(): number {
-    return Math.max(72, this.getAssistantSwitchMaxWidth() - 82)
+    return Math.max(72, this.getAssistantSwitchMaxWidth() - 112)
   }
 
   private isTabActive(index: number): boolean {
@@ -2882,7 +2977,7 @@ struct Index {
   }
 
   @Builder
-  private AssistantsTabContent(applyTopInset: boolean) {
+  private AssistantsTabContent(applyTopInset: boolean, showHeader: boolean = true, listTopSpacerHeight: number = 0) {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
         if (applyTopInset) {
@@ -2891,8 +2986,10 @@ struct Index {
             .height(this.px2vp(this.topAvoidHeight))
         }
 
-        this.AssistantsHeader()
-        this.AssistantsList()
+        if (showHeader) {
+          this.AssistantsHeader()
+        }
+        this.AssistantsList(listTopSpacerHeight)
       }
       .width('100%')
       .height('100%')
@@ -2906,7 +3003,24 @@ struct Index {
 
   @Builder
   AssistantsTab() {
-    this.AssistantsTabContent(!this.isExpandedLayout())
+    HdsNavigation() {
+      this.AssistantsTabContent(false, false, this.getCompactAssistantsListTopSpacerHeight())
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.themeBackground)
+    .titleBar(this.getCompactAssistantsTitleBarOptions())
+    .bindToScrollable([this.assistantListScroller])
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .systemBarStyle(
+      { statusBarContentColor: getHdsStatusBarContentColor() },
+      { statusBarContentColor: getHdsStatusBarContentColor() }
+    )
+    .hideBackButton(true)
+    .hideToolBar(true)
+    .mode(NavigationMode.Stack)
+    .navBarWidth(this.windowWidthVp)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
   }
 
   @Builder
@@ -2937,11 +3051,42 @@ struct Index {
   }
 
   @Builder
+  private CompactAssistantsTitleStackBuilder() {
+    Row() {
+      Text($r('app.string.assistant_manage_title'))
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .layoutWeight(1)
+
+      this.AssistantHeaderPill(this.assistants.length.toString(), $r('app.string.assistant_total_label'))
+    }
+    .width('100%')
+    .height(this.getCompactAssistantsTitleContentHeight())
+    .padding({ left: 8, right: 8 })
+    .alignItems(VerticalAlign.Center)
+    .renderGroup(false)
+  }
+
+  private getCompactAssistantsTitleBarOptions(): HdsNavigationTitleBarOptions {
+    const options = new HdsTopNavigationBlurOptions()
+    options.materialType = this.materialType
+    options.materialLevel = this.materialLevel
+    options.windowWidthVp = this.windowWidthVp
+    options.windowHeightVp = this.windowHeightVp
+    options.maskExtraHeightVp = this.getCompactAssistantsTitleBarMaskExtraHeight()
+    options.blurEffectiveEndOffsetVp = getHdsTopNavigationBlurEffectiveEndOffset(this.windowWidthVp,
+      this.windowHeightVp)
+    options.stackBuilder = (): void => this.CompactAssistantsTitleStackBuilder()
+    return buildHdsTopNavigationTitleBarOptions(options)
+  }
+
+  @Builder
   private AssistantsHeader() {
     Column() {
       Row() {
         Text($r('app.string.assistant_manage_title'))
-          .fontSize(22)
+          .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
@@ -2949,10 +3094,14 @@ struct Index {
         this.AssistantHeaderPill(this.assistants.length.toString(), $r('app.string.assistant_total_label'))
       }
       .width('100%')
+      .height(56)
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 12, bottom: 8 })
+    .padding({
+      left: this.getAssistantsListHorizontalPadding(),
+      right: this.getAssistantsListHorizontalPadding()
+    })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -3009,9 +3158,15 @@ struct Index {
   }
 
   @Builder
-  private AssistantsList() {
+  private AssistantsList(topSpacerHeight: number = 0) {
     if (this.assistants.length === 0) {
       Column() {
+        if (topSpacerHeight > 0) {
+          Blank()
+            .width('100%')
+            .height(topSpacerHeight)
+        }
+
         IndexEmptyStateCard({
           icon: $r('sys.symbol.person_2'),
           title: $r('app.string.assistant_manage_title'),
@@ -3022,6 +3177,15 @@ struct Index {
       .layoutWeight(1)
     } else {
       List({ space: 8, scroller: this.assistantListScroller }) {
+        if (topSpacerHeight > 0) {
+          ListItem() {
+            Column()
+              .height(topSpacerHeight)
+          }
+          .focusable(false)
+          .selectable(false)
+        }
+
         ForEach(this.assistants, (assistant: Assistant) => {
           ListItem({ style: ListItemStyle.NONE }) {
             this.AssistantJumpCard(assistant, assistant.id === this.currentAssistantId)
@@ -4020,35 +4184,68 @@ struct Index {
   private AssistantSwitchPill() {
     Stack() {
       ForEach([this.getCurrentAssistantSwitchRenderKey()], (_renderKey: string) => {
-        Row({ space: 8 }) {
-          this.AssistantAvatarBadge(this.getCurrentAssistantSymbol(), this.getCurrentAssistantColor(), 36, 12, 20)
+        Row({ space: 10 }) {
+          this.AssistantAvatarBadge(this.getCurrentAssistantSymbol(), this.getCurrentAssistantColor(), 40, 12, 19)
 
-          Text(this.getCurrentAssistantName())
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ maxWidth: this.getAssistantSwitchNameMaxWidth() })
+          Column({ space: 2 }) {
+            Row({ space: 6 }) {
+              Text(this.getCurrentAssistantName())
+                .fontSize(20)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: this.getAssistantSwitchNameMaxWidth() })
 
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor([$r('app.color.text_secondary')])
+              SymbolGlyph($r('sys.symbol.chevron_down'))
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor([$r('sys.color.icon_secondary')])
+            }
+            .alignItems(VerticalAlign.Center)
+
+            Text(this.getCurrentAssistantDefaultModelText())
+              .fontSize(11)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .constraintSize({ maxWidth: this.getAssistantSwitchNameMaxWidth() })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
         }
+        .width('100%')
+        .height(48)
         .alignItems(VerticalAlign.Center)
       }, (renderKey: string) => renderKey)
     }
-    .height(44)
-    .padding({ left: 0, right: 10 })
-    .constraintSize({ maxWidth: this.getAssistantSwitchMaxWidth() })
-    .onClick(() => {
-      this.showAssistantSwitchSheet = true
-    })
+    .width(this.getAssistantSwitchMaxWidth())
+    .height(52)
+    .padding({ left: 0, right: 0 })
+    .translate({ x: this.assistantSwitchSwipeOffsetX, y: 0 })
     .transition(TransitionEffect.OPACITY.animation({
       duration: 200,
       curve: Curve.EaseOut
     }))
+    .gesture(
+      GestureGroup(GestureMode.Exclusive,
+        PanGesture({ fingers: 1, distance: 18 })
+          .onActionStart(() => {
+            this.handleAssistantSwitchSwipeStart()
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            this.handleAssistantSwitchSwipeUpdate(event)
+          })
+          .onActionEnd((event: GestureEvent) => {
+            this.handleAssistantSwitchSwipeEnd(event)
+          }),
+        TapGesture({ count: 1 })
+          .onAction(() => {
+            this.showAssistantSwitchSheet = true
+          })
+      )
+    )
   }
 
   @Builder
