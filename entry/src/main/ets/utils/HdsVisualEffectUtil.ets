@@ -114,6 +114,16 @@ export function buildHdsTopNavigationTitleBarOptions(
           backgroundColor: getHdsTopNavigationOriginBackgroundColor(),
           maskExtraHeight: options.maskExtraHeightVp,
           blurRadius: getHdsTopNavigationInitialBlurRadius(options.materialType)
+        },
+        contentStyle: {
+          menuStyle: {
+            backgroundColor: $r('sys.color.comp_background_tertiary'),
+            iconColor: $r('sys.color.icon_primary')
+          },
+          backIconStyle: {
+            backgroundColor: $r('sys.color.comp_background_tertiary'),
+            iconColor: $r('sys.color.icon_primary')
+          }
         }
       },
       scrollEffectStyle: {
@@ -122,6 +132,16 @@ export function buildHdsTopNavigationTitleBarOptions(
           maskExtraHeight: options.maskExtraHeightVp,
           blurRadius: getHdsTopNavigationBlurRadius(options.materialType, options.materialLevel, options.windowWidthVp,
             options.windowHeightVp)
+        },
+        contentStyle: {
+          menuStyle: {
+            backgroundColor: $r('sys.color.comp_background_tertiary'),
+            iconColor: $r('sys.color.icon_primary')
+          },
+          backIconStyle: {
+            backgroundColor: $r('sys.color.comp_background_tertiary'),
+            iconColor: $r('sys.color.icon_primary')
+          }
         }
       },
       blurStrategy: BlurStrategy.ENABLE,
