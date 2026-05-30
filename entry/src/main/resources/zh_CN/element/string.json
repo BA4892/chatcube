@@ -174,7 +174,7 @@
     },
     {
       "name": "settings_appearance_desc",
-      "value": "显示模式、主题配色和字体大小"
+      "value": "显示模式、主题配色、字体大小、材质与光效"
     },
     {
       "name": "appearance_display_mode_title",
@@ -658,7 +658,7 @@
     },
     {
       "name": "settings_default_model_desc",
-      "value": "聊天、标题生成、翻译"
+      "value": "聊天、标题生成、推荐候选词、翻译、图像生成"
     },
     {
       "name": "edit_chat_title",
@@ -1777,6 +1777,10 @@
       "value": "可用变量:"
     },
     {
+      "name": "prompt_template_available_variables",
+      "value": "可用变量:"
+    },
+    {
       "name": "default_model_prompt_variable_content",
       "value": "对话内容"
     },
@@ -1862,7 +1866,7 @@
     },
     {
       "name": "settings_chat_input_desc",
-      "value": "设置键盘回车键行为"
+      "value": "回车键行为、推荐后续问题"
     },
     {
       "name": "chat_input_independent_send_button_title",
@@ -1891,6 +1895,26 @@
     {
       "name": "system_prompt_variables_hint",
       "value": "可用变量：{{current_time}}、{{current_date}}、{{current_clock}}、{{current_weekday}}、{{current_lunar}}"
+    },
+    {
+      "name": "prompt_template_variable_current_time",
+      "value": "当前日期时间"
+    },
+    {
+      "name": "prompt_template_variable_current_date",
+      "value": "当前日期"
+    },
+    {
+      "name": "prompt_template_variable_current_clock",
+      "value": "当前时间"
+    },
+    {
+      "name": "prompt_template_variable_current_weekday",
+      "value": "当前星期"
+    },
+    {
+      "name": "prompt_template_variable_current_lunar",
+      "value": "农历日期"
     },
     {
       "name": "system_prompt_placeholder",

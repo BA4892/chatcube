@@ -174,7 +174,7 @@
     },
     {
       "name": "settings_appearance_desc",
-      "value": "Display mode, color theme, and font size"
+      "value": "Display mode, theme, font, materials"
     },
     {
       "name": "appearance_display_mode_title",
@@ -658,7 +658,7 @@
     },
     {
       "name": "settings_default_model_desc",
-      "value": "Chat, title generation, translation"
+      "value": "Chat, title, suggestions, translation, image"
     },
     {
       "name": "edit_chat_title",
@@ -1777,6 +1777,10 @@
       "value": "Available variables:"
     },
     {
+      "name": "prompt_template_available_variables",
+      "value": "Available variables:"
+    },
+    {
       "name": "default_model_prompt_variable_content",
       "value": "Conversation content"
     },
@@ -1862,7 +1866,7 @@
     },
     {
       "name": "settings_chat_input_desc",
-      "value": "Keyboard return key behavior"
+      "value": "Return key, suggested questions"
     },
     {
       "name": "chat_input_independent_send_button_title",
@@ -1891,6 +1895,26 @@
     {
       "name": "system_prompt_variables_hint",
       "value": "Variables: {{current_time}}, {{current_date}}, {{current_clock}}, {{current_weekday}}, {{current_lunar}}"
+    },
+    {
+      "name": "prompt_template_variable_current_time",
+      "value": "Current date and time"
+    },
+    {
+      "name": "prompt_template_variable_current_date",
+      "value": "Current date"
+    },
+    {
+      "name": "prompt_template_variable_current_clock",
+      "value": "Current time"
+    },
+    {
+      "name": "prompt_template_variable_current_weekday",
+      "value": "Current weekday"
+    },
+    {
+      "name": "prompt_template_variable_current_lunar",
+      "value": "Lunar date"
     },
     {
       "name": "system_prompt_placeholder",
@@ -2858,7 +2882,7 @@
     },
     {
       "name": "image_generation_settings_entry_desc",
-      "value": "文生图、图生图和生成历史"
+      "value": "Text-to-image, image-to-image, history"
     },
     {
       "name": "image_generation_tab_generate",

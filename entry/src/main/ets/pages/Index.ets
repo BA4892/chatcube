@@ -116,8 +116,10 @@ import {
 } from '../utils/HdsVisualEffectUtil'
 import {
   normalizeSystemPromptTemplate,
-  SystemPromptTemplateDefaults
+  SystemPromptTemplateDefaults,
+  SystemPromptTemplateVariables
 } from '../utils/SystemPromptTemplateUtils'
+import { appendPromptVariableText, PromptVariableItem, PromptVariablePanel } from '../components/PromptVariablePanel'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getAppUiState, observeAppUiState, setAppUiStateValue } from '../state/AppUiState'
 import { tryHandleProviderDetailInternalBack } from '../components/ProviderDetailSheet'
@@ -3873,6 +3875,14 @@ struct Index {
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
 
+      PromptVariablePanel({
+        variables: this.getSystemPromptVariables(),
+        onVariableClick: (token: string): void => {
+          this.appendAssistantPromptVariable(token)
+        }
+      })
+        .width('100%')
+
       TextArea({ text: this.assistantFormSystemPrompt, placeholder: $r('app.string.assistant_prompt_placeholder') })
         .width('100%')
         .height(150)
@@ -5195,6 +5205,29 @@ struct Index {
     this.customSystemPrompt = SystemPromptTemplateDefaults.DEFAULT_TEMPLATE
   }
 
+  private getSystemPromptVariables(): PromptVariableItem[] {
+    return [
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_TIME,
+        $r('app.string.prompt_template_variable_current_time')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_DATE,
+        $r('app.string.prompt_template_variable_current_date')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_CLOCK,
+        $r('app.string.prompt_template_variable_current_clock')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_WEEKDAY,
+        $r('app.string.prompt_template_variable_current_weekday')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_LUNAR,
+        $r('app.string.prompt_template_variable_current_lunar'))
+    ]
+  }
+
+  private appendSystemPromptVariable(token: string): void {
+    this.customSystemPrompt = appendPromptVariableText(this.customSystemPrompt, token)
+  }
+
+  private appendAssistantPromptVariable(token: string): void {
+    this.assistantFormSystemPrompt = appendPromptVariableText(this.assistantFormSystemPrompt, token)
+  }
+
   @Builder
   SystemPromptSheetBuilder() {
     Column() {
@@ -5243,11 +5276,13 @@ struct Index {
         .padding({ left: 16, right: 16, bottom: 8 })
         .width('100%')
 
-      Text($r('app.string.system_prompt_variables_hint'))
-        .fontSize(11)
-        .fontColor($r('app.color.text_tertiary'))
-        .padding({ left: 16, right: 16, bottom: 12 })
-        .width('100%')
+      PromptVariablePanel({
+        variables: this.getSystemPromptVariables(),
+        onVariableClick: (token: string): void => {
+          this.appendSystemPromptVariable(token)
+        }
+      })
+        .margin({ left: 16, right: 16, bottom: 12 })
 
       TextArea({ text: this.customSystemPrompt, placeholder: $r('app.string.system_prompt_placeholder') })
         .layoutWeight(1)

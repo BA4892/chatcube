@@ -36,6 +36,7 @@ import { TypewriterFlusher } from '../utils/DisplaySyncTypewriter'
 import { UIContext } from '@kit.ArkUI'
 import {
   buildCurrentTimeContext,
+  renderSystemPromptVariables,
   renderSystemPromptTemplate,
   SystemPromptTemplateDefaults
 } from '../utils/SystemPromptTemplateUtils'
@@ -284,7 +285,8 @@ export class ChatViewModel {
 	  private async buildRequestSystemPrompt(extraPrompt: string = ''): Promise<string> {
 	    const globalPrompt = await this.getRenderedSystemPrompt()
 	    const assistantConfig = await this.getAssistantRuntimeConfig()
-	    const basePrompt = this.assistantService.combineSystemPrompts(globalPrompt, assistantConfig.systemPrompt)
+	    const assistantPrompt = renderSystemPromptVariables(assistantConfig.systemPrompt)
+	    const basePrompt = this.assistantService.combineSystemPrompts(globalPrompt, assistantPrompt)
 	    return this.assistantService.combineSystemPrompts(basePrompt, extraPrompt)
 	  }
 

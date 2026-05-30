@@ -1,6 +1,11 @@
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { PreferenceKeys } from '../services/PreferencesService'
-import { normalizeSystemPromptTemplate, SystemPromptTemplateDefaults } from '../utils/SystemPromptTemplateUtils'
+import {
+  normalizeSystemPromptTemplate,
+  SystemPromptTemplateDefaults,
+  SystemPromptTemplateVariables
+} from '../utils/SystemPromptTemplateUtils'
+import { appendPromptVariableText, PromptVariableItem, PromptVariablePanel } from '../components/PromptVariablePanel'
 import { getSettingsPageContentMaxWidth, getSettingsPageCompactTabsTotalInset } from '../utils/SettingsPageLayoutHelper'
 import { showSnackBar, SnackBarDisplayOptions, SnackBarTone } from '../utils/ToastUtil'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
@@ -108,6 +113,25 @@ struct SystemPromptSettingsPage {
     this.customSystemPrompt = SystemPromptTemplateDefaults.DEFAULT_TEMPLATE
   }
 
+  private getSystemPromptVariables(): PromptVariableItem[] {
+    return [
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_TIME,
+        $r('app.string.prompt_template_variable_current_time')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_DATE,
+        $r('app.string.prompt_template_variable_current_date')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_CLOCK,
+        $r('app.string.prompt_template_variable_current_clock')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_WEEKDAY,
+        $r('app.string.prompt_template_variable_current_weekday')),
+      new PromptVariableItem(SystemPromptTemplateVariables.CURRENT_LUNAR,
+        $r('app.string.prompt_template_variable_current_lunar'))
+    ]
+  }
+
+  private appendSystemPromptVariable(token: string): void {
+    this.customSystemPrompt = appendPromptVariableText(this.customSystemPrompt, token)
+  }
+
   private handleBack(): void {
     if (systemPromptSettingsPathStack !== null && systemPromptSettingsPathStack.size() > 0) {
       systemPromptSettingsPathStack.pop()
@@ -142,10 +166,13 @@ struct SystemPromptSettingsPage {
           .lineHeight(18)
           .width('100%')
 
-        Text($r('app.string.system_prompt_variables_hint'))
-          .fontSize(11)
-          .fontColor($r('app.color.text_tertiary'))
-          .lineHeight(16)
+        PromptVariablePanel({
+          variables: this.getSystemPromptVariables(),
+          variableEnabled: this.systemPromptEnabled,
+          onVariableClick: (token: string): void => {
+            this.appendSystemPromptVariable(token)
+          }
+        })
           .width('100%')
 
         Row() {

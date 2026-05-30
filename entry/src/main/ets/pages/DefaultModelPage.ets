@@ -5,6 +5,7 @@ import { DefaultModelConfig, ModelRole, ModelProvider, OutputMode } from '../mod
 import { DefaultPrompts } from '../config/DefaultPrompts'
 import { ServiceRegistry } from '../services/ServiceRegistry'
 import { DefaultModelSelectSheetContent } from '../components/defaultmodel/DefaultModelSelectSheetContent'
+import { appendPromptVariableText, PromptVariableItem, PromptVariablePanel } from '../components/PromptVariablePanel'
 import {
   HdsNavigation,
   HdsNavDestination,
@@ -33,9 +34,6 @@ struct DefaultModelPage {
   }
   private get themePrimary(): string {
     return getAppUiState().themePrimary
-  }
-  private get themePrimaryLight(): string {
-    return getAppUiState().themePrimaryLight
   }
   private get layoutSizeClass(): string {
     return getAppUiState().layoutSizeClass
@@ -532,7 +530,13 @@ struct DefaultModelPage {
       .height(56)
       .padding({ left: 16, right: 16 })
 
-      this.PromptVariablePanel()
+      PromptVariablePanel({
+        variables: this.getCurrentPromptVariables(),
+        onVariableClick: (token: string): void => {
+          this.appendPromptVariable(token)
+        }
+      })
+        .margin({ left: 16, right: 16, top: 16 })
 
       // 编辑区域
       TextArea({ text: this.currentPrompt })
@@ -564,59 +568,6 @@ struct DefaultModelPage {
     }
     .width('100%')
     .height('100%')
-  }
-
-  @Builder
-  private PromptVariablePanel() {
-    Column({ space: 10 }) {
-      Text($r('app.string.default_model_prompt_variables'))
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-
-      Column({ space: 8 }) {
-        if (this.currentPromptRole === ModelRole.TRANSLATE) {
-          this.PromptVariableRow('{source_text}', $r('app.string.default_model_prompt_variable_source_text'))
-          this.PromptVariableRow('{target_lang}', $r('app.string.default_model_prompt_variable_target_lang'))
-        } else {
-          this.PromptVariableRow('{content}', $r('app.string.default_model_prompt_variable_content'))
-          this.PromptVariableRow('{locale}', $r('app.string.default_model_prompt_variable_locale'))
-        }
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(getAppUiState().themeSurface)
-    .borderRadius(12)
-    .margin({ left: 16, right: 16, top: 16 })
-  }
-
-  @Builder
-  private PromptVariableRow(token: string, description: Resource) {
-    Row({ space: 8 }) {
-      Row() {
-        Text(token)
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.themePrimary)
-      }
-      .height(28)
-      .padding({ left: 10, right: 10 })
-      .backgroundColor(this.themePrimaryLight)
-      .borderRadius(14)
-      .border({ width: 1, color: this.themePrimary })
-      .onClick(() => {
-        this.appendPromptVariable(token)
-      })
-
-      Text(description)
-        .fontSize(12)
-        .fontColor($r('app.color.text_tertiary'))
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
   }
 
   private getSheetTitle(): Resource {
@@ -765,13 +716,21 @@ struct DefaultModelPage {
     }
   }
 
-  private appendPromptVariable(token: string): void {
-    if (this.currentPrompt.length === 0) {
-      this.currentPrompt = token
-      return
+  private getCurrentPromptVariables(): PromptVariableItem[] {
+    if (this.currentPromptRole === ModelRole.TRANSLATE) {
+      return [
+        new PromptVariableItem('{source_text}', $r('app.string.default_model_prompt_variable_source_text')),
+        new PromptVariableItem('{target_lang}', $r('app.string.default_model_prompt_variable_target_lang'))
+      ]
     }
-    this.currentPrompt = this.currentPrompt.endsWith('\n') ? `${this.currentPrompt}${token}` :
-      `${this.currentPrompt}\n${token}`
+    return [
+      new PromptVariableItem('{content}', $r('app.string.default_model_prompt_variable_content')),
+      new PromptVariableItem('{locale}', $r('app.string.default_model_prompt_variable_locale'))
+    ]
+  }
+
+  private appendPromptVariable(token: string): void {
+    this.currentPrompt = appendPromptVariableText(this.currentPrompt, token)
   }
 
   private async savePrompt(): Promise<void> {

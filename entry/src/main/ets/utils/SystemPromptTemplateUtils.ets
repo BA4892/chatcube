@@ -42,8 +42,7 @@ export function normalizeSystemPromptTemplate(template: string): string {
   return template
 }
 
-export function renderSystemPromptTemplate(template: string, date: Date = new Date()): string {
-  const normalizedTemplate = normalizeSystemPromptTemplate(template)
+export function renderSystemPromptVariables(template: string, date: Date = new Date()): string {
   const year = date.getFullYear()
   const month = date.getMonth() + 1
   const day = date.getDate()
@@ -57,7 +56,7 @@ export function renderSystemPromptTemplate(template: string, date: Date = new Da
   const currentDate = `${year}年${padZero(month)}月${padZero(day)}日`
   const currentClock = `${padZero(hours)}:${padZero(minutes)}`
 
-  let rendered = normalizedTemplate
+  let rendered = template
   rendered = rendered.replace(/\{\{\s*current_time\s*\}\}/g, currentTime)
   rendered = rendered.replace(/\{\{\s*current_datetime\s*\}\}/g, currentTime)
   rendered = rendered.replace(/\{\{\s*current_date\s*\}\}/g, currentDate)
@@ -65,4 +64,8 @@ export function renderSystemPromptTemplate(template: string, date: Date = new Da
   rendered = rendered.replace(/\{\{\s*current_weekday\s*\}\}/g, weekDay)
   rendered = rendered.replace(/\{\{\s*current_lunar\s*\}\}/g, lunarStr)
   return rendered
+}
+
+export function renderSystemPromptTemplate(template: string, date: Date = new Date()): string {
+  return renderSystemPromptVariables(normalizeSystemPromptTemplate(template), date)
 }
