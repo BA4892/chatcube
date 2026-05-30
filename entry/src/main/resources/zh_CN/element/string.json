@@ -213,8 +213,12 @@
       "value": "语言"
     },
     {
+      "name": "settings_language_desc",
+      "value": "界面显示语言"
+    },
+    {
       "name": "settings_model_config",
-      "value": "模型配置"
+      "value": "模型与 AI 能力"
     },
     {
       "name": "settings_ai_creation",
@@ -243,6 +247,10 @@
     {
       "name": "settings_hand_adaptive",
       "value": "智感握姿"
+    },
+    {
+      "name": "settings_hand_adaptive_desc",
+      "value": "识别握持手，优化单手操作"
     },
     {
       "name": "hand_adaptive_title",
@@ -275,6 +283,10 @@
     {
       "name": "settings_notifications",
       "value": "通知"
+    },
+    {
+      "name": "settings_notifications_desc",
+      "value": "生成完成与失败提醒"
     },
     {
       "name": "notification_enabled_title",

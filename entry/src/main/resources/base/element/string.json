@@ -213,8 +213,12 @@
       "value": "Language"
     },
     {
+      "name": "settings_language_desc",
+      "value": "App interface language"
+    },
+    {
       "name": "settings_model_config",
-      "value": "Model Configuration"
+      "value": "Models & AI"
     },
     {
       "name": "settings_ai_creation",
@@ -243,6 +247,10 @@
     {
       "name": "settings_hand_adaptive",
       "value": "Smart Grip"
+    },
+    {
+      "name": "settings_hand_adaptive_desc",
+      "value": "Adapt layout for one-handed use"
     },
     {
       "name": "hand_adaptive_title",
@@ -275,6 +283,10 @@
     {
       "name": "settings_notifications",
       "value": "Notifications"
+    },
+    {
+      "name": "settings_notifications_desc",
+      "value": "Generation complete & failure alerts"
     },
     {
       "name": "notification_enabled_title",

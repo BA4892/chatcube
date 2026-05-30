@@ -105,6 +105,20 @@ export struct IndexSettingsPanel {
             title: $r('app.string.settings_default_model'),
             subtitle: $r('app.string.settings_default_model_desc'),
             action: (): void => { this.onOpenDefaultModel() }
+          } as SettingsListItemModel,
+          {
+            key: SettingsRouteName.SYSTEM_PROMPT,
+            icon: $r('sys.symbol.message'),
+            title: $r('app.string.settings_system_prompt'),
+            subtitle: $r('app.string.settings_system_prompt_desc'),
+            action: (): void => { this.onOpenSystemPrompt() }
+          } as SettingsListItemModel,
+          {
+            key: SettingsRouteName.TOOLS_CENTER,
+            icon: $r('sys.symbol.puzzle'),
+            title: $r('app.string.settings_tools_center'),
+            subtitle: $r('app.string.settings_tools_center_desc'),
+            action: (): void => { this.onOpenToolsCenter() }
           } as SettingsListItemModel
         ]
       } as SettingsGroupModel,
@@ -120,20 +134,6 @@ export struct IndexSettingsPanel {
             action: (): void => { this.onOpenTheme() }
           } as SettingsListItemModel,
           {
-            key: SettingsRouteName.TOOLS_CENTER,
-            icon: $r('sys.symbol.puzzle'),
-            title: $r('app.string.settings_tools_center'),
-            subtitle: $r('app.string.settings_tools_center_desc'),
-            action: (): void => { this.onOpenToolsCenter() }
-          } as SettingsListItemModel,
-          {
-            key: SettingsRouteName.SYSTEM_PROMPT,
-            icon: $r('sys.symbol.message'),
-            title: $r('app.string.settings_system_prompt'),
-            subtitle: $r('app.string.settings_system_prompt_desc'),
-            action: (): void => { this.onOpenSystemPrompt() }
-          } as SettingsListItemModel,
-          {
             key: SettingsRouteName.CHAT_INPUT,
             icon: $r('sys.symbol.keyboard'),
             title: $r('app.string.settings_chat_input'),
@@ -144,18 +144,21 @@ export struct IndexSettingsPanel {
             key: SettingsRouteName.HAND_ADAPTIVE,
             icon: $r('sys.symbol.phone_and_hand'),
             title: $r('app.string.settings_hand_adaptive'),
+            subtitle: $r('app.string.settings_hand_adaptive_desc'),
             action: (): void => { this.onOpenHandAdaptive() }
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.LANGUAGE,
             icon: $r('sys.symbol.globe_badge_message'),
             title: $r('app.string.settings_language'),
+            subtitle: $r('app.string.settings_language_desc'),
             action: (): void => { this.onOpenLanguage() }
           } as SettingsListItemModel,
           {
             key: SettingsRouteName.NOTIFICATION,
             icon: $r('sys.symbol.bell_badge_gearshape'),
             title: $r('app.string.settings_notifications'),
+            subtitle: $r('app.string.settings_notifications_desc'),
             action: (): void => { this.onOpenNotification() }
           } as SettingsListItemModel
         ]
@@ -184,13 +187,7 @@ export struct IndexSettingsPanel {
             title: $r('app.string.settings_webdav_sync'),
             subtitle: $r('app.string.settings_webdav_sync_desc'),
             action: (): void => { this.onOpenWebDAVSync() }
-          } as SettingsListItemModel
-        ]
-      } as SettingsGroupModel,
-      {
-        key: 'usage',
-        title: $r('app.string.settings_usage_stats_group'),
-        items: [
+          } as SettingsListItemModel,
           {
             key: SettingsRouteName.USAGE_STATS,
             icon: $r('sys.symbol.line_3_horizontal'),
