@@ -34,6 +34,9 @@ struct DefaultModelPage {
   private get themePrimary(): string {
     return getAppUiState().themePrimary
   }
+  private get themePrimaryLight(): string {
+    return getAppUiState().themePrimaryLight
+  }
   private get layoutSizeClass(): string {
     return getAppUiState().layoutSizeClass
   }
@@ -529,38 +532,7 @@ struct DefaultModelPage {
       .height(56)
       .padding({ left: 16, right: 16 })
 
-      // 变量提示
-      Column() {
-        Text($r('app.string.default_model_prompt_variables'))
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-
-        if (this.currentPromptRole === ModelRole.TITLE) {
-          Text($r('app.string.default_model_prompt_title_variables_hint'))
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-            .width('100%')
-            .margin({ top: 4 })
-        } else if (this.currentPromptRole === ModelRole.SUGGESTION) {
-          Text($r('app.string.default_model_prompt_suggestion_variables_hint'))
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-            .width('100%')
-            .margin({ top: 4 })
-        } else {
-          Text($r('app.string.default_model_prompt_translate_variables_hint'))
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-            .width('100%')
-            .margin({ top: 4 })
-        }
-      }
-      .width('100%')
-      .padding(16)
-      .backgroundColor(getAppUiState().themeSurface)
-      .borderRadius(12)
-      .margin({ left: 16, right: 16, top: 16 })
+      this.PromptVariablePanel()
 
       // 编辑区域
       TextArea({ text: this.currentPrompt })
@@ -592,6 +564,59 @@ struct DefaultModelPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  private PromptVariablePanel() {
+    Column({ space: 10 }) {
+      Text($r('app.string.default_model_prompt_variables'))
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      Column({ space: 8 }) {
+        if (this.currentPromptRole === ModelRole.TRANSLATE) {
+          this.PromptVariableRow('{source_text}', $r('app.string.default_model_prompt_variable_source_text'))
+          this.PromptVariableRow('{target_lang}', $r('app.string.default_model_prompt_variable_target_lang'))
+        } else {
+          this.PromptVariableRow('{content}', $r('app.string.default_model_prompt_variable_content'))
+          this.PromptVariableRow('{locale}', $r('app.string.default_model_prompt_variable_locale'))
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(getAppUiState().themeSurface)
+    .borderRadius(12)
+    .margin({ left: 16, right: 16, top: 16 })
+  }
+
+  @Builder
+  private PromptVariableRow(token: string, description: Resource) {
+    Row({ space: 8 }) {
+      Row() {
+        Text(token)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.themePrimary)
+      }
+      .height(28)
+      .padding({ left: 10, right: 10 })
+      .backgroundColor(this.themePrimaryLight)
+      .borderRadius(14)
+      .border({ width: 1, color: this.themePrimary })
+      .onClick(() => {
+        this.appendPromptVariable(token)
+      })
+
+      Text(description)
+        .fontSize(12)
+        .fontColor($r('app.color.text_tertiary'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   private getSheetTitle(): Resource {
@@ -738,6 +763,15 @@ struct DefaultModelPage {
       await this.defaultModelService.resetTranslatePrompt()
       this.currentPrompt = DefaultPrompts.TRANSLATE_PROMPT
     }
+  }
+
+  private appendPromptVariable(token: string): void {
+    if (this.currentPrompt.length === 0) {
+      this.currentPrompt = token
+      return
+    }
+    this.currentPrompt = this.currentPrompt.endsWith('\n') ? `${this.currentPrompt}${token}` :
+      `${this.currentPrompt}\n${token}`
   }
 
   private async savePrompt(): Promise<void> {

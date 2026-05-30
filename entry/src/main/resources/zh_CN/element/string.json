@@ -1777,16 +1777,20 @@
       "value": "可用变量:"
     },
     {
-      "name": "default_model_prompt_title_variables_hint",
-      "value": "{content} - 对话内容\\n{locale} - 语言"
+      "name": "default_model_prompt_variable_content",
+      "value": "对话内容"
     },
     {
-      "name": "default_model_prompt_translate_variables_hint",
-      "value": "{source_text} - 原文\\n{target_lang} - 目标语言"
+      "name": "default_model_prompt_variable_locale",
+      "value": "语言"
     },
     {
-      "name": "default_model_prompt_suggestion_variables_hint",
-      "value": "{content} - 对话内容\\n{locale} - 语言"
+      "name": "default_model_prompt_variable_source_text",
+      "value": "原文"
+    },
+    {
+      "name": "default_model_prompt_variable_target_lang",
+      "value": "目标语言"
     },
     {
       "name": "default_model_reset_prompt",

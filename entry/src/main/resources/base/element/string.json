@@ -1777,16 +1777,20 @@
       "value": "Available variables:"
     },
     {
-      "name": "default_model_prompt_title_variables_hint",
-      "value": "{content} - Conversation content\\n{locale} - Locale"
+      "name": "default_model_prompt_variable_content",
+      "value": "Conversation content"
     },
     {
-      "name": "default_model_prompt_translate_variables_hint",
-      "value": "{source_text} - Source text\\n{target_lang} - Target language"
+      "name": "default_model_prompt_variable_locale",
+      "value": "Locale"
     },
     {
-      "name": "default_model_prompt_suggestion_variables_hint",
-      "value": "{content} - Conversation content\\n{locale} - Locale"
+      "name": "default_model_prompt_variable_source_text",
+      "value": "Source text"
+    },
+    {
+      "name": "default_model_prompt_variable_target_lang",
+      "value": "Target language"
     },
     {
       "name": "default_model_reset_prompt",
