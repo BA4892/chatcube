@@ -4869,6 +4869,9 @@ struct Index {
       },
       onOpenReplayOnboarding: (): void => {
         this.handleReplayOnboarding()
+      },
+      onOpenHelpCenter: (): void => {
+        this.openSettingsDestination(SettingsRouteName.HELP_CENTER)
       }
     })
   }

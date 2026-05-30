@@ -18,6 +18,7 @@ import {
 } from '../models/ChatModels'
 import { ModelEditSheet } from '../components/ModelEditSheet'
 import { ModelPickerSheetHost } from '../components/ModelPickerSheetHost'
+import { HelpHintButton } from '../components/HelpHintButton'
 import { ProviderViewModel } from '../viewmodels/ProviderViewModel'
 import { buildIconResourcePath, getModelIconPath, isNetworkIconPath, isSandboxIconPath } from '../utils/ProviderIconUtils'
 import { showToast } from '../utils/ToastUtil'
@@ -2123,8 +2124,15 @@ export struct ProviderDetailPanel {
               .fontSize(13)
               .fontColor(Color.Red)
           }
+          Blank()
+          HelpHintButton({
+            title: $r('app.string.help_hint_provider_title'),
+            body: $r('app.string.help_hint_provider_body'),
+            iconSize: 15
+          })
         }
         .width('100%')
+        .alignItems(VerticalAlign.Center)
 
         Row() {
           TextInput({ text: this.provider?.apiKey ?? '', placeholder: $r('app.string.provider_api_key_placeholder') })

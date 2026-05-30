@@ -55,6 +55,7 @@ export struct IndexSettingsPanel {
   @Event onOpenPrivacy: () => void = () => {}
   @Event onOpenInvitation: () => void = () => {}
   @Event onOpenReplayOnboarding: () => void = () => {}
+  @Event onOpenHelpCenter: () => void = () => {}
 
   aboutToAppear(): void {
     try {
@@ -201,6 +202,13 @@ export struct IndexSettingsPanel {
         key: 'about',
         title: $r('app.string.settings_about'),
         items: [
+          {
+            key: SettingsRouteName.HELP_CENTER,
+            icon: $r('sys.symbol.questionmark_circle'),
+            title: $r('app.string.settings_help_center'),
+            subtitle: $r('app.string.settings_help_center_desc'),
+            action: (): void => { this.onOpenHelpCenter() }
+          } as SettingsListItemModel,
           {
             key: 'replay_onboarding',
             icon: $r('sys.symbol.arrow_clockwise'),
