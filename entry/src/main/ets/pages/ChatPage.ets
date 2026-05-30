@@ -111,6 +111,7 @@ import { ToolPreviewEntry, buildToolArgumentsPreview } from '../utils/ToolPayloa
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { getSearchToolIds, isSearchToolId } from '../utils/SearchToolIdentityUtils'
+import { SendCancellationSignal } from '../utils/SendCancellationSignal'
 import { normalizeAssistantAvatarValue } from '../components/AssistantAvatar'
 import {
   preparePreviewImageForShare,
@@ -376,7 +377,7 @@ export struct ChatPage {
   private initialPromptAutoSent: boolean = false
   private forcedToolIdsOnce: string[] = []
   private currentTaskId: string = ''
-  private isSendDispatching: boolean = false
+  private activeSendSignal: SendCancellationSignal | null = null
   private lastHandledAlertTimestamp: number = 0
   private isPageVisible: boolean = false
   // 兜底 watcher：页面切换时可能错过一次任务完成事件，这里只负责回收发送态，不碰消息内容同步
@@ -1831,10 +1832,7 @@ export struct ChatPage {
         this.markMessageListChanged()
       },
       onResetEditState: (): void => {
-        this.isEditingMessage = false
-        this.editingMessageId = ''
-        this.editingOriginalContent = ''
-        this.editingOriginalAttachments = []
+        this.resetInlineEditState()
       },
       onApplySavedDraft: (
         content: string,
@@ -4148,7 +4146,33 @@ export struct ChatPage {
 
   // 处理停止生成
   handleStop(): void {
+    this.cancelActiveSendDispatch()
     this.getStopFlow().stopCurrentTask()
+  }
+
+  private beginSendDispatch(): SendCancellationSignal {
+    this.cancelActiveSendDispatch()
+    const signal = new SendCancellationSignal()
+    this.activeSendSignal = signal
+    return signal
+  }
+
+  private isCurrentSendDispatch(signal: SendCancellationSignal): boolean {
+    return this.activeSendSignal === signal && !signal.isCancelled()
+  }
+
+  private finishSendDispatch(signal: SendCancellationSignal): void {
+    if (this.activeSendSignal === signal) {
+      this.activeSendSignal = null
+    }
+  }
+
+  private cancelActiveSendDispatch(): void {
+    if (this.activeSendSignal === null) {
+      return
+    }
+    this.activeSendSignal.cancel()
+    this.activeSendSignal = null
   }
 
   // 处理模型选择
@@ -4169,13 +4193,13 @@ export struct ChatPage {
   }
 
   async sendMessage(): Promise<void> {
-    if (this.isSendDispatching || this.isSending) {
+    if (this.activeSendSignal !== null || this.isSending) {
       return
     }
     if (!this.guardAttachmentReadyForSend()) {
       return
     }
-    this.isSendDispatching = true
+    const sendSignal = this.beginSendDispatch()
     try {
       const prepareResult = this.getSendFlow().prepareSendRequest(
         this.inputText,
@@ -4193,11 +4217,17 @@ export struct ChatPage {
       const effectiveApiKey = prepareResult.effectiveApiKey
 
       await this.syncToolAvailabilityFromPreferences()
+      if (!this.isCurrentSendDispatch(sendSignal)) {
+        return
+      }
       const requestedToolIds = [
         ...this.selectedToolIds,
         ...this.forcedToolIdsOnce
       ]
       const enabledMcpServerIds = await this.loadEnabledMcpServerIds()
+      if (!this.isCurrentSendDispatch(sendSignal)) {
+        return
+      }
       if (this.collectPendingEnabledMcpToolIds(requestedToolIds, enabledMcpServerIds).length > 0) {
         this.refreshMcpToolAvailabilityInBackground(false)
       }
@@ -4210,6 +4240,9 @@ export struct ChatPage {
       const activeSearchMode: ChatSearchMode = this.resolveEffectiveSearchModeForCurrentProvider(this.searchMode)
       const activeBuiltinImageGen = this.getActiveComposerBuiltinImageGenEnabled() &&
         this.isOpenAIBuiltinImageGenAvailableForCurrentProvider()
+      if (!this.isCurrentSendDispatch(sendSignal)) {
+        return
+      }
       await this.getSendFlow().executeSend(
         messageContent,
         currentProvider,
@@ -4220,7 +4253,8 @@ export struct ChatPage {
         forcedToolIds,
         this.currentModelId,
         activeSearchMode,
-        activeBuiltinImageGen
+        activeBuiltinImageGen,
+        sendSignal
       )
       this.forcedToolIdsOnce = []
     } catch (error) {
@@ -4228,7 +4262,7 @@ export struct ChatPage {
       this.forcedToolIdsOnce = []
       this.showError($r('app.string.action_failed_retry'))
     } finally {
-      this.isSendDispatching = false
+      this.finishSendDispatch(sendSignal)
     }
   }
 
@@ -4243,6 +4277,7 @@ export struct ChatPage {
       return
     }
     this.clearSuggestedQuestionsForCurrentSession()
+    this.resetInlineEditState()
     const userMsg = this.messages[userMsgIndex]
     const savedContent = userMsg.content
     const savedAttachments = userMsg.attachments.slice()
@@ -4591,6 +4626,14 @@ export struct ChatPage {
 
   // ========== 内联编辑模式相关方法 ==========
 
+  private resetInlineEditState(): void {
+    this.isEditingMessage = false
+    this.editingMessageId = ''
+    this.editingOriginalContent = ''
+    this.editingOriginalAttachments = []
+    this.editingMessageIsUser = true
+  }
+
   // 取消编辑
   private handleCancelEdit(): void {
     // 恢复原始内容
@@ -4599,10 +4642,7 @@ export struct ChatPage {
     this.pendingAttachments = []
 
     // 退出编辑模式
-    this.isEditingMessage = false
-    this.editingMessageId = ''
-    this.editingOriginalContent = ''
-    this.editingOriginalAttachments = []
+    this.resetInlineEditState()
     // 允许下次进入编辑时 ChatInputBar @Monitor('autoFocus') 重新触发
     this.autoFocusInput = false
     // 收键盘 + clearFocus + stopInputSession, 避免 textarea 残留焦点引发键盘异常弹起
@@ -4632,7 +4672,8 @@ export struct ChatPage {
   private async stopActiveGenerationBeforeMessageRewrite(): Promise<boolean> {
     const hasPendingToolInteraction = this.sessionId !== '' &&
       ServiceRegistry.toolExecution().hasPendingInteractionForSession(this.sessionId)
-    if (!this.isSending && this.currentTaskId === '' && !this.showToolExecutionApprovalSheet &&
+    if (this.activeSendSignal === null && !this.isSending && this.currentTaskId === '' &&
+      !this.showToolExecutionApprovalSheet &&
       !hasPendingToolInteraction) {
       return true
     }
@@ -4666,6 +4707,7 @@ export struct ChatPage {
       this.isLoading = false
       this.forcedToolIdsOnce = []
     }
+    this.cancelActiveSendDispatch()
     return true
   }
 

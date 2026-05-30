@@ -22,6 +22,7 @@ import { appendUniqueToolId } from './ChatToolIdHelper'
 import { syncChatMessageFromSource } from './ChatMessageActionHelper'
 import { validateProviderConfig } from '../../utils/ProviderValidationUtils'
 import { getEffectiveCapabilities } from '../../utils/ModelCapabilityDeriver'
+import { SendCancellationSignal } from '../../utils/SendCancellationSignal'
 import {
   LEGACY_WEB_SEARCH_TOOL_ID,
   SCRAPE_WEB_TOOL_ID,
@@ -178,8 +179,12 @@ export class ChatSendFlow {
     // 联网模式: external_engine 走本地 search_web 工具; openai_builtin 走 Responses hosted web_search
     searchMode: ChatSearchMode = ChatSearchMode.EXTERNAL_ENGINE,
     // OpenAI Responses 内置生图开关 (hosted image_generation tool)
-    builtinImageGenEnabled: boolean = false
+    builtinImageGenEnabled: boolean = false,
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     const plan = await this.buildExecutionPlan(
       currentProvider,
       webSearchConversationEnabled,
@@ -189,6 +194,9 @@ export class ChatSendFlow {
       searchMode,
       builtinImageGenEnabled
     )
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     console.info(
       'ChatSendFlow',
       `[executeSend] plan=${plan.kind}, search=${webSearchConversationEnabled}, mode=${searchMode}, imageGen=${builtinImageGenEnabled}, selected=${selectedToolIds.join(',')}, forced=${forcedToolIds.join(',')}, tools=${plan.enabledToolIds.join(',')}, builtin=${plan.builtInResponsesTools.length}`
@@ -203,7 +211,8 @@ export class ChatSendFlow {
         plan.enabledToolIds,
         plan.learnToolsOnSuccess,
         plan.builtInResponsesTools,
-        plan.builtInResponsesToolChoice
+        plan.builtInResponsesToolChoice,
+        sendSignal
       )
       return
     }
@@ -220,8 +229,13 @@ export class ChatSendFlow {
       currentProvider,
       effectiveApiKey,
       attachmentsToSend,
-      plan.builtInResponsesTools
+      plan.builtInResponsesTools,
+      sendSignal
     )
+  }
+
+  private isSendCancelled(sendSignal?: SendCancellationSignal): boolean {
+    return sendSignal !== undefined && sendSignal.isCancelled()
   }
 
   isCurrentModelSupportsTools(currentProvider: ModelProvider | null, currentModelId: string): boolean {
@@ -550,7 +564,7 @@ export class ChatSendFlow {
     }
   }
 
-  private completeTaskForFallback(taskId: string, senderSessionId: string): void {
+  private completeTaskSilently(taskId: string, senderSessionId: string): void {
     this.deps.chatTaskOrchestrator.completeTaskSilently(taskId)
     if (this.deps.getSessionId() !== senderSessionId) {
       return
@@ -601,11 +615,18 @@ export class ChatSendFlow {
     currentProvider: ModelProvider,
     effectiveApiKey: string,
     attachmentsToSend: MessageAttachment[],
-    error: string
+    error: string,
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     console.warn('ChatSendFlow', `[Function Calling] tools request failed, fallback to plain message: ${error}`)
-    this.completeTaskForFallback(taskId, senderSessionId)
+    this.completeTaskSilently(taskId, senderSessionId)
     await this.removeProbeMessages(messageIds, senderSessionId)
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     if (this.deps.getSessionId() === senderSessionId) {
       this.deps.onShowToast('当前模型未接受工具调用，已关闭工具重试本次发送')
     }
@@ -613,7 +634,9 @@ export class ChatSendFlow {
       messageContent,
       currentProvider,
       effectiveApiKey,
-      attachmentsToSend
+      attachmentsToSend,
+      [],
+      sendSignal
     )
   }
 
@@ -622,18 +645,34 @@ export class ChatSendFlow {
     currentProvider: ModelProvider,
     effectiveApiKey: string,
     attachmentsToSend: MessageAttachment[] = [],
-    builtInResponsesTools: BuiltInResponsesToolSpec[] = []
+    builtInResponsesTools: BuiltInResponsesToolSpec[] = [],
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
       return
     }
+    const senderSessionId = this.deps.getSessionId()
+    if (this.isSendCancelled(sendSignal)) {
+      this.completeTaskSilently(taskId, senderSessionId)
+      return
+    }
 
     this.prepareSendState(taskId)
-    const senderSessionId = this.deps.getSessionId()
     const modelId = this.deps.getCurrentModelId()
     const contextMessageCount = await this.deps.chatViewModel.getContextMessageCount()
+    if (this.isSendCancelled(sendSignal)) {
+      this.completeTaskSilently(taskId, senderSessionId)
+      return
+    }
     const maxOutputTokens = await this.deps.chatViewModel.getMaxOutputTokens()
+    if (this.isSendCancelled(sendSignal)) {
+      this.completeTaskSilently(taskId, senderSessionId)
+      return
+    }
     const messages = this.deps.getMessages()
     const contextStartIndex = contextMessageCount > 0 ? Math.max(0, messages.length - contextMessageCount) : 0
 
@@ -670,8 +709,12 @@ export class ChatSendFlow {
         currentProvider.customHeadersJson || undefined,
         currentProvider.openaiTransport,
         maxOutputTokens > 0 ? maxOutputTokens : undefined,
-        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined
+        builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined,
+        sendSignal
       )
+      if (this.isSendCancelled(sendSignal)) {
+        this.completeTaskSilently(taskId, senderSessionId)
+      }
     } catch (error) {
       const message = `发送失败: ${JSON.stringify(error)}`
       this.handleTaskFailed(taskId, message, true, senderSessionId)
@@ -686,15 +729,23 @@ export class ChatSendFlow {
     enabledToolIds: string[] = [],
     learnToolsOnSuccess: boolean = false,
     builtInResponsesTools: BuiltInResponsesToolSpec[] = [],
-    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice,
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
+    if (this.isSendCancelled(sendSignal)) {
+      return
+    }
     const taskId = this.startTaskOrFail(messageContent)
     if (taskId === '') {
       return
     }
+    const senderSessionId = this.deps.getSessionId()
+    if (this.isSendCancelled(sendSignal)) {
+      this.completeTaskSilently(taskId, senderSessionId)
+      return
+    }
 
     this.prepareSendState(taskId)
-    const senderSessionId = this.deps.getSessionId()
     const modelId = this.deps.getCurrentModelId()
     const tools = this.deps.toolRegistry.getEnabledToolDefinitions(enabledToolIds)
     const createdMessageIds: string[] = []
@@ -755,7 +806,8 @@ export class ChatSendFlow {
               currentProvider,
               effectiveApiKey,
               attachmentsToSend,
-              error
+              error,
+              sendSignal
             )
             return
           }
@@ -770,8 +822,13 @@ export class ChatSendFlow {
         currentProvider.customHeadersJson || undefined,
         currentProvider.openaiTransport,
         builtInResponsesTools.length > 0 ? builtInResponsesTools : undefined,
-        builtInResponsesToolChoice
+        builtInResponsesToolChoice,
+        sendSignal
       )
+      if (this.isSendCancelled(sendSignal)) {
+        this.completeTaskSilently(taskId, senderSessionId)
+        return
+      }
       if (completedSuccessfully && learnToolsOnSuccess && !fallbackStarted) {
         await this.deps.onConfirmModelSupportsTools(currentProvider.id, modelId)
       }

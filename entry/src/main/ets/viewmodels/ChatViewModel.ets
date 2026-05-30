@@ -49,6 +49,7 @@ import {
   isAskUserFunctionName,
   isSearchToolFunctionName
 } from '../utils/SearchToolIdentityUtils'
+import { SendCancellationSignal } from '../utils/SendCancellationSignal'
 
 // 标题生成状态
 export interface TitleGenerationCallbacks {
@@ -529,6 +530,10 @@ export class ChatViewModel {
 
   private isCancelled(snapshot: number): boolean {
     return snapshot !== this.cancelToken
+  }
+
+  private isSendCancelled(snapshot: number, signal?: SendCancellationSignal): boolean {
+    return this.isCancelled(snapshot) || (signal !== undefined && signal.isCancelled())
   }
 
   private addPendingAIMessage(message: ChatMessage, sessionId: string): void {
@@ -1522,12 +1527,13 @@ export class ChatViewModel {
     openaiTransport?: OpenAITransport,
     maxOutputTokens?: number,
     // OpenAI Responses 内置工具 (web_search / image_generation), 仅在 transport=responses 时下发
-    builtInResponsesTools?: BuiltInResponsesToolSpec[]
+    builtInResponsesTools?: BuiltInResponsesToolSpec[],
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
     await this.persistPendingSession()
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1536,7 +1542,7 @@ export class ChatViewModel {
 	      const assistant = await this.assistantService.getCurrentAssistantForNewChat()
 	      await this.createNewSession('', assistant.id, assistant.defaultModelId, assistant.defaultProviderId)
 	    }
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1552,7 +1558,7 @@ export class ChatViewModel {
       includeHistoryAttachmentPayloads
     )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1586,7 +1592,7 @@ export class ChatViewModel {
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
       await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1606,7 +1612,7 @@ export class ChatViewModel {
       includeHistoryAttachmentPayloads,
       attachments.length
     )
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1637,7 +1643,7 @@ export class ChatViewModel {
     apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -1651,13 +1657,16 @@ export class ChatViewModel {
     const requestId = this.generateId()
     const pendingImageSaves: Promise<void>[] = []
 
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
     // 发送流式请求
 	    const requestTemperature = await this.getRequestTemperature()
 	    const effectiveMaxOutputTokens = await this.resolveEffectiveMaxOutputTokens(maxOutputTokens)
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
+      return
+    }
 	    const httpRequest = this.aiApiService.streamChatRequest(
       apiConfig,
       requestMessages,
@@ -2458,12 +2467,13 @@ ${limitedSearchContext}
     openaiTransport?: OpenAITransport,
     // OpenAI Responses 内置工具 (web_search / image_generation), 与 function tools 可并存
     builtInResponsesTools?: BuiltInResponsesToolSpec[],
-    builtInResponsesToolChoice?: OpenAIResponsesToolChoice
+    builtInResponsesToolChoice?: OpenAIResponsesToolChoice,
+    sendSignal?: SendCancellationSignal
   ): Promise<void> {
     const cancelSnapshot = this.cancelToken
     // 首次发送消息时，先持久化待处理的会话
     await this.persistPendingSession()
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2472,7 +2482,7 @@ ${limitedSearchContext}
 	      const assistant = await this.assistantService.getCurrentAssistantForNewChat()
 	      await this.createNewSession('', assistant.id, assistant.defaultModelId, assistant.defaultProviderId)
 	    }
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2488,7 +2498,7 @@ ${limitedSearchContext}
       includeHistoryAttachmentPayloads
     )
     const requestAttachments = await this.prepareOutgoingAttachments(attachments)
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2523,7 +2533,7 @@ ${limitedSearchContext}
       this.appendMessageToSessionIfMissing(snapshotSession, userMessage)
       await this.applyPlaceholderTitleIfNeeded(snapshotSessionId, snapshotSession, content, shouldAutoGenerateTitle)
     }
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2557,7 +2567,7 @@ ${limitedSearchContext}
       includeHistoryAttachmentPayloads,
       attachments.length
     )
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2588,7 +2598,7 @@ ${limitedSearchContext}
     apiConfig.modelReasoningStrategyOverride = ''
     apiConfig.modelSupportsReasoning = this.getCurrentModelSupportsReasoning(providerId, modelId)
 
-    if (this.isCancelled(cancelSnapshot)) {
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
       return
     }
 
@@ -2602,10 +2612,13 @@ ${limitedSearchContext}
     const localReasoningThrottle = this.createStreamFlusher()
     const requestId = this.generateId()
 
-	    if (this.isCancelled(cancelSnapshot)) {
+	    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
 	      return
 	    }
 	    const requestTemperature = await this.getRequestTemperature()
+    if (this.isSendCancelled(cancelSnapshot, sendSignal)) {
+      return
+    }
 
 	    // 先注册到活跃请求 Map（使用占位 httpRequest，executeToolCallLoop 内部会更新实际引用）
     // 必须在 await 之前注册，否则 stopGeneration 无法取消正在执行的请求。
@@ -2637,9 +2650,9 @@ ${limitedSearchContext}
       snapshotSession,
       shouldAutoGenerateTitle,
       requestId,
-      () => cancelled,
+      () => cancelled || this.isSendCancelled(cancelSnapshot, sendSignal),
       () => userCancelled,
-      () => toolExecutionCancelled,
+      () => toolExecutionCancelled || this.isSendCancelled(cancelSnapshot, sendSignal),
       (v: boolean) => { userCancelled = v },
       () => hasReceivedFirstChunk,
       (v: boolean) => { hasReceivedFirstChunk = v },
