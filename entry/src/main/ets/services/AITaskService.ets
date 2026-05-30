@@ -42,39 +42,6 @@ export class AITaskService {
     return AITaskService.instance
   }
 
-  // 截断内容用于标题生成（最多500字符/6行）
-  private truncateContentForTitle(content: string): string {
-    const maxChars = 500
-    const maxLines = 6
-
-    // 按行分割
-    const lines = content.split('\n')
-    let result = ''
-    let lineCount = 0
-
-    for (let i = 0; i < lines.length; i++) {
-      if (lineCount >= maxLines) {
-        break
-      }
-      const line = lines[i]
-      if (result.length + line.length + 1 > maxChars) {
-        // 截断当前行
-        const remaining = maxChars - result.length
-        if (remaining > 0) {
-          result += line.substring(0, remaining)
-        }
-        break
-      }
-      if (result !== '') {
-        result += '\n'
-      }
-      result += line
-      lineCount++
-    }
-
-    return result
-  }
-
   private truncateContentForSuggestedQuestions(content: string): string {
     const maxChars = 4000
     const maxLines = 80
@@ -126,7 +93,6 @@ export class AITaskService {
 
   // 获取标题语言（优先 App 设置，其次自动检测）
   private getTitleLocale(content: string): string {
-    // 目前使用自动检测
     return this.detectLanguage(content)
   }
 
@@ -196,41 +162,35 @@ export class AITaskService {
     if (content === '') {
       return []
     }
-    try {
-      const parsed = JSON.parse(content) as string[]
-      const questions: string[] = []
-      for (let i = 0; i < parsed.length && questions.length < 3; i++) {
-        const question = parsed[i].trim().replace(/\s+/g, ' ')
-        if (question === '' || question.length < 4 || question.length > 40) {
-          continue
-        }
-        if (questions.indexOf(question) >= 0) {
-          continue
-        }
-        questions.push(question)
-      }
-      return questions
-    } catch (error) {
-      console.warn('AITaskService', 'Failed to parse suggested questions: ' + JSON.stringify(error))
-      return []
+    const questions: string[] = []
+    const lines = content.split(/[\r\n]+/)
+    for (let i = 0; i < lines.length && questions.length < 3; i++) {
+      this.appendSuggestedQuestion(questions, lines[i])
     }
+    return questions
   }
 
-  private buildSuggestedQuestionsSystemPrompt(locale: string): string {
-    return 'You generate follow-up questions for a chat app. ' +
-      'Return only a JSON string array with 1 to 3 items. ' +
-      'Each item must be a question the user may naturally ask next, 4 to 40 characters, no numbering, no Markdown. ' +
-      'Do not repeat questions already asked in the conversation. ' +
-      'Use this language: ' + locale + '.'
+  private appendSuggestedQuestion(questions: string[], rawQuestion: string): void {
+    let question = rawQuestion.trim().replace(/\s+/g, ' ')
+    question = question.replace(/^[-*•]\s*/, '').trim()
+    question = question.replace(/^\d+[.)、]\s*/, '').trim()
+    question = question.replace(/^["'""'']+|["'""'']+$/g, '').trim()
+    if (question === '' || question.length > 40) {
+      return
+    }
+    const punctuationOnly = /^[\s\p{P}]+$/u
+    if (punctuationOnly.test(question)) {
+      return
+    }
+    if (questions.indexOf(question) >= 0) {
+      return
+    }
+    questions.push(question)
   }
 
   // 验证标题有效性
   private isValidTitle(title: string): boolean {
     if (title === '') {
-      return false
-    }
-    // 长度检查：4-20 字符
-    if (title.length < 4 || title.length > 20) {
       return false
     }
     // 不能全是标点符号
@@ -251,96 +211,26 @@ export class AITaskService {
   }
 
   private buildTitleFailureResult(
-    conversationContent: string,
-    locale: string,
     errorMessage: string,
     retryable: boolean
   ): AITitleGenerationResult {
     return {
       success: false,
-      title: this.extractFallbackTitle(conversationContent, locale),
-      usedFallback: true,
+      title: '',
+      usedFallback: false,
       errorMessage: errorMessage,
       retryable: retryable
     }
   }
 
-  // 降级方案：从用户消息提取标题（提取关键词而非原样截取）
-  private extractFallbackTitle(content: string, locale: string): string {
-    // 提取第一条用户消息
-    const lines = content.split('\n')
-    let userMessage = ''
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim()
-      if (line.startsWith('user:') || line.startsWith('USER:')) {
-        userMessage = line.substring(5).trim()
-        break
-      }
-    }
-
-    if (userMessage === '') {
-      // 如果没有找到 user: 前缀，使用第一行非空内容
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim()
-        if (line !== '') {
-          userMessage = line
-          break
-        }
-      }
-    }
-
-    if (userMessage === '') {
-      return ''
-    }
-
-    // 去除口语化前缀，提炼核心内容
-    let title = userMessage
-    const prefixes = [
-      '请问', '请帮我', '帮我', '麻烦', '请',
-      '我想知道', '我想了解', '我想问',
-      '能不能', '可以', '可不可以',
-      '怎么', '如何', '为什么', '什么是',
-      '帮忙', '告诉我',
-      'please ', 'can you ', 'could you ', 'how to ', 'what is ', 'how do '
-    ]
-    for (let i = 0; i < prefixes.length; i++) {
-      const lower = title.toLowerCase()
-      if (lower.startsWith(prefixes[i])) {
-        title = title.substring(prefixes[i].length).trim()
-        break
-      }
-    }
-
-    // 去除末尾的疑问词和标点
-    title = title.replace(/[？?。.！!，,]+$/g, '')
-    title = title.replace(/[呢吗呀啊吧嘛]+$/g, '')
-
-    // 截取合适长度
-    if (title.length > 20) {
-      title = title.substring(0, 17) + '...'
-    }
-
-    // 如果清理后太短，使用原始消息截取
-    if (title.length < 2) {
-      title = userMessage
-      if (title.length > 20) {
-        title = title.substring(0, 17) + '...'
-      }
-    }
-
-    return title
-  }
-
   async generateTitleResult(conversationContent: string, locale?: string): Promise<AITitleGenerationResult> {
     const titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
-    const truncatedContent = this.truncateContentForTitle(conversationContent)
-    const effectiveLocale = locale !== undefined && locale !== '' ? locale : this.getTitleLocale(truncatedContent)
+    const effectiveLocale = locale !== undefined && locale !== '' ? locale : this.getTitleLocale(conversationContent)
 
     if (!titleModel.isConfigured()) {
       const message = 'Title model not configured'
       console.error('AITaskService', message)
-      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
+      return this.buildTitleFailureResult(message, false)
     }
 
     // 获取供应商信息（使用异步方法，确保缓存已加载）
@@ -349,7 +239,7 @@ export class AITaskService {
     if (provider === null) {
       const message = 'Provider not found: ' + titleModel.providerId
       console.error('AITaskService', message)
-      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
+      return this.buildTitleFailureResult(message, false)
     }
 
     // 获取有效的 API Key（优先用户配置，其次预设）
@@ -357,7 +247,7 @@ export class AITaskService {
     if (effectiveApiKey === '') {
       const message = 'No API Key configured for provider: ' + provider.id
       console.error('AITaskService', message)
-      return this.buildTitleFailureResult(conversationContent, effectiveLocale, message, false)
+      return this.buildTitleFailureResult(message, false)
     }
 
     // 构建 API 配置
@@ -379,30 +269,22 @@ export class AITaskService {
       }
     }
 
-    const messages: RequestMessage[] = []
-    if (this.defaultModelService.isDefaultTitlePrompt()) {
-      messages.push(new RequestMessage('system', this.defaultModelService.getTitleSystemPrompt(effectiveLocale)))
-      messages.push(new RequestMessage('user', this.defaultModelService.getTitleUserPrompt(truncatedContent)))
-    } else {
-      messages.push(new RequestMessage('user', this.defaultModelService.getTitlePrompt(truncatedContent, effectiveLocale)))
-    }
+    const messages: RequestMessage[] = [
+      new RequestMessage('user', this.defaultModelService.getTitlePrompt(conversationContent, effectiveLocale))
+    ]
 
     try {
       const result = await this.aiApiService.sendChatRequest(
         apiConfig,
         messages,
         titleModel.modelId,
-        0.3, // 低温度以获得更稳定的输出
-        100  // 标题只需要少量 token
+        0.3,
+        100,
+        ReasoningLevel.OFF
       )
       if (result.success) {
         // 清理标题
-        let title = this.cleanTitle(result.content)
-
-        // 限制长度为 20 字符
-        if (title.length > 20) {
-          title = title.substring(0, 20)
-        }
+        const title = this.cleanTitle(result.content)
 
         // 验证标题有效性
         if (this.isValidTitle(title)) {
@@ -414,14 +296,12 @@ export class AITaskService {
             retryable: false
           }
         } else {
-          console.warn('AITaskService', 'Generated title invalid, using fallback: ' + title)
-          return this.buildTitleFailureResult(conversationContent, effectiveLocale, 'Generated title invalid', false)
+          console.warn('AITaskService', 'Generated title invalid: ' + title)
+          return this.buildTitleFailureResult('Generated title invalid', false)
         }
       } else {
         console.error('AITaskService', 'Failed to generate title: ' + result.errorMessage)
         return this.buildTitleFailureResult(
-          conversationContent,
-          effectiveLocale,
           result.errorMessage,
           this.isRetryableTitleError(result.errorMessage)
         )
@@ -430,8 +310,6 @@ export class AITaskService {
       const message = JSON.stringify(error)
       console.error('AITaskService', 'Error generating title: ' + message)
       return this.buildTitleFailureResult(
-        conversationContent,
-        effectiveLocale,
         message,
         this.isRetryableTitleError(message)
       )
@@ -445,11 +323,15 @@ export class AITaskService {
   }
 
   async generateSuggestedQuestions(conversationContent: string, locale?: string): Promise<string[]> {
-    const titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
-    const provider = await this.providerViewModel.getProviderByIdAsync(titleModel.providerId)
+    const suggestionModel = this.defaultModelService.getModel(ModelRole.SUGGESTION)
+    if (!suggestionModel.isConfigured()) {
+      console.warn('AITaskService', 'Suggestion model not configured')
+      return []
+    }
+    const provider = await this.providerViewModel.getProviderByIdAsync(suggestionModel.providerId)
 
     if (provider === null) {
-      console.error('AITaskService', 'Provider not found for suggested questions: ' + titleModel.providerId)
+      console.error('AITaskService', 'Provider not found for suggested questions: ' + suggestionModel.providerId)
       return []
     }
 
@@ -477,22 +359,21 @@ export class AITaskService {
     }
 
     for (let i = 0; i < provider.models.length; i++) {
-      if (provider.models[i].id === titleModel.modelId) {
+      if (provider.models[i].id === suggestionModel.modelId) {
         apiConfig.modelReasoningStrategyOverride = ReasoningRequestStrategy.NONE
         break
       }
     }
 
     const messages: RequestMessage[] = [
-      new RequestMessage('system', this.buildSuggestedQuestionsSystemPrompt(effectiveLocale)),
-      new RequestMessage('user', `<content>\n${truncatedContent}\n</content>`)
+      new RequestMessage('user', this.defaultModelService.getSuggestionPrompt(truncatedContent, effectiveLocale))
     ]
 
     try {
       const result = await this.aiApiService.sendChatRequest(
         apiConfig,
         messages,
-        titleModel.modelId,
+        suggestionModel.modelId,
         0.4,
         300,
         ReasoningLevel.OFF

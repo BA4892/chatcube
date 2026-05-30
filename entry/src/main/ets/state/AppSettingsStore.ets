@@ -817,6 +817,8 @@ export class AppSettingsStore {
       return s.defaultChatModel
     } else if (role === ModelRole.TITLE) {
       return s.defaultTitleModel
+    } else if (role === ModelRole.SUGGESTION) {
+      return s.defaultSuggestionModel
     } else if (role === ModelRole.TRANSLATE) {
       return s.defaultTranslateModel
     } else if (role === ModelRole.IMAGE) {
@@ -825,7 +827,7 @@ export class AppSettingsStore {
     return new DefaultModelConfig()
   }
 
-  /** 启动时加载四个 role 的 default model（幂等，多次调用合并为一个 promise） */
+  /** 启动时加载五个 role 的 default model（幂等，多次调用合并为一个 promise） */
   async ensureDefaultModelsInitialized(): Promise<void> {
     if (getAppSettingsState().defaultModelsInitialized) {
       return
@@ -861,10 +863,14 @@ export class AppSettingsStore {
       PreferenceKeys.DEFAULT_TITLE_PROVIDER_ID,
       PreferenceKeys.DEFAULT_TITLE_MODEL_NAME,
       PreferenceKeys.DEFAULT_TITLE_PROVIDER_NAME,
-      DefaultPrompts.SILICONFLOW_TITLE_MODEL,
-      DefaultPrompts.SILICONFLOW_PROVIDER_ID,
-      DefaultPrompts.SILICONFLOW_TITLE_MODEL,
-      '硅基流动'
+      '', '', '', ''
+    )
+    const suggestion = await this.loadDefaultModelFromPreferences(
+      PreferenceKeys.DEFAULT_SUGGESTION_MODEL_ID,
+      PreferenceKeys.DEFAULT_SUGGESTION_PROVIDER_ID,
+      PreferenceKeys.DEFAULT_SUGGESTION_MODEL_NAME,
+      PreferenceKeys.DEFAULT_SUGGESTION_PROVIDER_NAME,
+      '', '', '', ''
     )
     const translate = await this.loadDefaultModelFromPreferences(
       PreferenceKeys.DEFAULT_TRANSLATE_MODEL_ID,
@@ -887,6 +893,7 @@ export class AppSettingsStore {
     const s = getAppSettingsState()
     s.defaultChatModel = chat
     s.defaultTitleModel = title
+    s.defaultSuggestionModel = suggestion
     s.defaultTranslateModel = translate
     s.defaultImageModel = image
     s.defaultModelsVersion = s.defaultModelsVersion + 1
@@ -920,6 +927,8 @@ export class AppSettingsStore {
       s.defaultChatModel = config
     } else if (role === ModelRole.TITLE) {
       s.defaultTitleModel = config
+    } else if (role === ModelRole.SUGGESTION) {
+      s.defaultSuggestionModel = config
     } else if (role === ModelRole.TRANSLATE) {
       s.defaultTranslateModel = config
     } else if (role === ModelRole.IMAGE) {
@@ -943,6 +952,13 @@ export class AppSettingsStore {
         modelNameKey: PreferenceKeys.DEFAULT_TITLE_MODEL_NAME,
         providerNameKey: PreferenceKeys.DEFAULT_TITLE_PROVIDER_NAME
       }
+    } else if (role === ModelRole.SUGGESTION) {
+      return {
+        modelIdKey: PreferenceKeys.DEFAULT_SUGGESTION_MODEL_ID,
+        providerIdKey: PreferenceKeys.DEFAULT_SUGGESTION_PROVIDER_ID,
+        modelNameKey: PreferenceKeys.DEFAULT_SUGGESTION_MODEL_NAME,
+        providerNameKey: PreferenceKeys.DEFAULT_SUGGESTION_PROVIDER_NAME
+      }
     } else if (role === ModelRole.TRANSLATE) {
       return {
         modelIdKey: PreferenceKeys.DEFAULT_TRANSLATE_MODEL_ID,
@@ -962,10 +978,10 @@ export class AppSettingsStore {
   }
 
   // ============================================================================
-  // Prompt 模板（title / translate / translateTargetLanguage）
+  // Prompt 模板（title / suggestion / translate / translateTargetLanguage）
   // ============================================================================
 
-  /** 启动时加载三个 prompt 字段（幂等） */
+  /** 启动时加载四个 prompt 字段（幂等） */
   async ensurePromptsInitialized(): Promise<void> {
     if (getAppSettingsState().promptsInitialized) {
       return
@@ -985,6 +1001,8 @@ export class AppSettingsStore {
   private async doInitializePrompts(): Promise<void> {
     const title = await this.preferences.getString(
       PreferenceKeys.TITLE_PROMPT_TEMPLATE, DefaultPrompts.TITLE_PROMPT)
+    const suggestion = await this.preferences.getString(
+      PreferenceKeys.SUGGESTION_PROMPT_TEMPLATE, DefaultPrompts.SUGGESTION_PROMPT)
     const translate = await this.preferences.getString(
       PreferenceKeys.TRANSLATE_PROMPT_TEMPLATE, DefaultPrompts.TRANSLATE_PROMPT)
     const lang = await this.preferences.getString(
@@ -992,6 +1010,7 @@ export class AppSettingsStore {
 
     const s = getAppSettingsState()
     s.titlePromptTemplate = title
+    s.suggestionPromptTemplate = suggestion
     s.translatePromptTemplate = translate
     s.translateTargetLanguage = lang
     s.promptsVersion = s.promptsVersion + 1
@@ -1004,6 +1023,10 @@ export class AppSettingsStore {
 
   getTranslatePromptTemplate(): string {
     return getAppSettingsState().translatePromptTemplate
+  }
+
+  getSuggestionPromptTemplate(): string {
+    return getAppSettingsState().suggestionPromptTemplate
   }
 
   getTranslateTargetLanguage(): string {
@@ -1024,12 +1047,23 @@ export class AppSettingsStore {
     })
   }
 
+  async setSuggestionPromptTemplate(prompt: string): Promise<void> {
+    await this.preferences.setString(PreferenceKeys.SUGGESTION_PROMPT_TEMPLATE, prompt)
+    this.updatePromptField((s: AppSettingsState): void => {
+      s.suggestionPromptTemplate = prompt
+    })
+  }
+
   async resetTitlePromptTemplate(): Promise<void> {
     await this.setTitlePromptTemplate(DefaultPrompts.TITLE_PROMPT)
   }
 
   async resetTranslatePromptTemplate(): Promise<void> {
     await this.setTranslatePromptTemplate(DefaultPrompts.TRANSLATE_PROMPT)
+  }
+
+  async resetSuggestionPromptTemplate(): Promise<void> {
+    await this.setSuggestionPromptTemplate(DefaultPrompts.SUGGESTION_PROMPT)
   }
 
   private updatePromptField(mutator: (state: AppSettingsState) => void): void {

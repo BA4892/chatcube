@@ -1,5 +1,4 @@
 // 默认模型配置服务
-import { getPreferencesService, PreferencesService } from './PreferencesService'
 import { DefaultModelConfig, ModelRole } from '../models/ChatModels'
 import { DefaultPrompts } from '../config/DefaultPrompts'
 import { getAppSettingsStore, AppSettingsStore } from '../state/AppSettingsStore'
@@ -7,18 +6,16 @@ import { getAppSettingsStore, AppSettingsStore } from '../state/AppSettingsStore
 // 默认模型服务 - 单例模式
 //
 // 已迁移到 AppSettingsStore：
-// - 3 个 role 的 DefaultModelConfig（chat / title / translate）
-// - 3 个 Prompt 模板字段（title / translate 模板 + translateTargetLanguage）
+// - 5 个 role 的 DefaultModelConfig（chat / title / suggestion / translate / image）
+// - 4 个 Prompt 模板字段（title / suggestion / translate 模板 + translateTargetLanguage）
 //
-// 本服务目前只剩纯派生（System/User Prompt 格式化）+ facade 委托，
+// 本服务目前只剩 Prompt 格式化 + facade 委托，
 // 方便后续进一步拆解或合并到 Store
 export class DefaultModelService {
   private static instance: DefaultModelService | null = null
-  private preferencesService: PreferencesService
   private store: AppSettingsStore
 
   private constructor() {
-    this.preferencesService = getPreferencesService()
     this.store = getAppSettingsStore()
   }
 
@@ -52,27 +49,6 @@ export class DefaultModelService {
     await this.store.setDefaultModel(role, config)
   }
 
-  // ============================================================================
-  // 纯派生 Prompt（不依赖缓存，保留在本服务）
-  // ============================================================================
-
-  getTitleSystemPrompt(locale: string): string {
-    let prompt = DefaultPrompts.TITLE_SYSTEM_PROMPT
-    prompt = prompt.replace('{locale}', locale)
-    return prompt
-  }
-
-  getTitleUserPrompt(content: string): string {
-    let prompt = DefaultPrompts.TITLE_USER_PROMPT
-    prompt = prompt.replace('{content}', content)
-    return prompt
-  }
-
-  // ============================================================================
-  // Prompt 模板（委托 Store）
-  // ============================================================================
-
-  // 旧版兼容：自定义 Prompt 场景下的标题生成
   getTitlePrompt(content: string, locale: string): string {
     let prompt = this.store.getTitlePromptTemplate()
     prompt = prompt.replace('{content}', content)
@@ -88,8 +64,19 @@ export class DefaultModelService {
     return prompt
   }
 
+  getSuggestionPrompt(content: string, locale: string): string {
+    let prompt = this.store.getSuggestionPromptTemplate()
+    prompt = prompt.replace('{content}', content)
+    prompt = prompt.replace('{locale}', locale)
+    return prompt
+  }
+
   getTitlePromptTemplate(): string {
     return this.store.getTitlePromptTemplate()
+  }
+
+  getSuggestionPromptTemplate(): string {
+    return this.store.getSuggestionPromptTemplate()
   }
 
   getTranslatePromptTemplate(): string {
@@ -108,8 +95,16 @@ export class DefaultModelService {
     await this.store.setTranslatePromptTemplate(prompt)
   }
 
+  async setSuggestionPromptTemplate(prompt: string): Promise<void> {
+    await this.store.setSuggestionPromptTemplate(prompt)
+  }
+
   async resetTitlePrompt(): Promise<void> {
     await this.store.resetTitlePromptTemplate()
+  }
+
+  async resetSuggestionPrompt(): Promise<void> {
+    await this.store.resetSuggestionPromptTemplate()
   }
 
   async resetTranslatePrompt(): Promise<void> {
@@ -122,6 +117,10 @@ export class DefaultModelService {
 
   isDefaultTranslatePrompt(): boolean {
     return this.store.getTranslatePromptTemplate() === DefaultPrompts.TRANSLATE_PROMPT
+  }
+
+  isDefaultSuggestionPrompt(): boolean {
+    return this.store.getSuggestionPromptTemplate() === DefaultPrompts.SUGGESTION_PROMPT
   }
 }
 

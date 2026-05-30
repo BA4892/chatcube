@@ -1,4 +1,4 @@
-import { getDatabaseService, DatabaseService } from '../services/DatabaseService'
+import { getDatabaseService, DatabaseService, TokenUsageEvent } from '../services/DatabaseService'
 import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
 import { createToolPart, ensureMessageParts } from '../utils/ChatMessagePartsHelper'
 import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
@@ -557,6 +557,9 @@ export class ChatViewModel {
     // 流式完成时顺便把本轮 Responses reasoning 原文持久化到消息上。
     // 对非官方 Responses 路径来说 blob 始终为空,不影响其他模型。
     this.harvestResponsesReasoningSignature(aiMessage)
+    // 同样地,把本轮流式累积的 token 用量收割到消息上(消费即清空)。
+    // 工具循环已在每轮逐一收割,这里对非工具路径的单轮 / 工具路径的末轮兜底,重复调用安全(consume 返回 null)。
+    this.harvestStreamUsage(aiMessage)
     // 若本轮流式期间没 push 过 parts(例如非 function-calling 路径),按旧字段一次合成 parts,
     // 保证数据持久化和下游渲染都有一致的 parts 视图。
     this.ensurePartsBackfill(aiMessage)
@@ -587,6 +590,38 @@ export class ChatViewModel {
     const blob = this.aiApiService.consumeLastStreamResponsesReasoningBlob()
     if (blob !== '') {
       aiMessage.reasoningSignatureBlob = blob
+    }
+  }
+
+  // 流式完成时把 AIApiService 本轮累积的 token 用量收割到消息上。
+  // 用 += 累加:工具调用一条助手消息可能历经多轮 stream,每轮各有 usage 需累计;
+  // 单轮路径首次累加等价于赋值。consume 取走即清空,故重复收割不会重复计数。
+  private harvestStreamUsage(aiMessage: ChatMessage): void {
+    const usage = this.aiApiService.consumeLastStreamUsage()
+    if (usage === null) {
+      return
+    }
+    aiMessage.promptTokens += usage.prompt_tokens
+    aiMessage.completionTokens += usage.completion_tokens
+    aiMessage.totalTokens += usage.total_tokens
+    // 同步写一条只追加的账本事件,记录"本轮"真实消耗(非消息累计值)。
+    // 即便随后这条消息被重新生成/删除,这笔消耗仍留在账本 —— 这是"实际累计消耗"口径的统计来源。
+    if (usage.total_tokens > 0 || usage.prompt_tokens > 0 || usage.completion_tokens > 0) {
+      const event: TokenUsageEvent = {
+        id: this.generateId(),
+        sessionId: this.currentSession?.id ?? '',
+        messageId: aiMessage.id,
+        providerId: '',
+        modelId: aiMessage.modelId,
+        modelName: aiMessage.modelName,
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+        kind: 'chat',
+        createdAt: Date.now()
+      }
+      // insertTokenUsageEvent 内部已 try/catch,不会 reject,故 fire-and-forget。
+      void this.databaseService.insertTokenUsageEvent(event)
     }
   }
 
@@ -3712,6 +3747,10 @@ ${limitedSearchContext}
         return
       }
 
+      // 逐轮收割本轮 token 用量并累加到消息:下一轮 streamChatRequestWithTools 会 resetThinkingState
+      // 清空侧信道,所以必须在进入下一轮 / finalize 之前在这里取走本轮 usage。
+      this.harvestStreamUsage(aiMessage)
+
       if (outcome.hasError) {
         this.fillEmptyAIContentPlaceholder(aiMessage, outcome.error)
         aiMessage.isGenerating = false
@@ -4363,7 +4402,7 @@ ${limitedSearchContext}
   }
 
   private buildTitleConversationContent(messages: ChatMessage[]): string {
-    let content = ''
+    const lines: string[] = []
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]
       if (msg.role !== MessageRole.USER && msg.role !== MessageRole.ASSISTANT) {
@@ -4373,7 +4412,16 @@ ${limitedSearchContext}
       if (text === '') {
         continue
       }
-      content += `${msg.role}: ${text}\n`
+      lines.push(`${msg.role}: ${text}`)
+    }
+
+    const start = Math.max(0, lines.length - 4)
+    let content = ''
+    for (let i = start; i < lines.length; i++) {
+      if (content !== '') {
+        content += '\n\n'
+      }
+      content += lines[i]
     }
     return content
   }

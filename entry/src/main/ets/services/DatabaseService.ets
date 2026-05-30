@@ -11,7 +11,7 @@ import {
   SessionTitleSource
 } from '../models/ChatModels'
 import { Assistant, DEFAULT_ASSISTANT_ID, createDefaultAssistant } from '../models/AssistantModels'
-import { GeneratedMedia } from '../models/ImageGenerationModels'
+import { GeneratedMedia, GeneratedMediaType } from '../models/ImageGenerationModels'
 import { deserializeMessageParts, serializeMessageParts } from '../models/MessageParts'
 import { ensureMessageParts, buildMessagePartsFromLegacy } from '../utils/ChatMessagePartsHelper'
 import { DEFAULT_PRIMARY_COLOR } from '../config/ThemeDefaults'
@@ -36,6 +36,7 @@ export class TableNames {
 	  static readonly TOOL_EVENTS: string = 'tool_events'
 	  static readonly ASSISTANTS: string = 'assistants'
   static readonly GENERATED_MEDIA: string = 'generated_media'
+  static readonly TOKEN_USAGE_EVENTS: string = 'token_usage_events'
 	}
 
 // 模型数据接口（用于 JSON 序列化，兼容扩展格式）
@@ -234,6 +235,9 @@ export class DatabaseService {
         reasoning_content TEXT,
         reasoning_signature_blob TEXT DEFAULT '',
         parts_json TEXT DEFAULT '',
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
         FOREIGN KEY (session_id) REFERENCES ${TableNames.SESSIONS}(id)
       )
     `
@@ -320,6 +324,23 @@ export class DatabaseService {
       )
     `
 
+    // Token 用量账本:只追加,一行=一次生成(流式收割点写入一条)。
+    // 与会话/消息表解耦,重新生成或删除消息都不回收已发生的真实消耗,用于"实际累计消耗"口径的 token 统计。
+    const createTokenUsageEventsTable = `
+      CREATE TABLE IF NOT EXISTS ${TableNames.TOKEN_USAGE_EVENTS} (
+        id TEXT PRIMARY KEY,
+        session_id TEXT DEFAULT '',
+        message_id TEXT DEFAULT '',
+        provider_id TEXT DEFAULT '',
+        model_id TEXT DEFAULT '',
+        model_name TEXT DEFAULT '',
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        kind TEXT DEFAULT 'chat',
+        created_at INTEGER
+      )
+    `
     try {
       await this.rdbStore.executeSql(createSessionsTable)
 	      await this.rdbStore.executeSql(createMessagesTable)
@@ -330,6 +351,10 @@ export class DatabaseService {
       await this.rdbStore.executeSql(createGeneratedMediaTable)
       await this.rdbStore.executeSql(
         `CREATE INDEX IF NOT EXISTS idx_generated_media_created_at ON ${TableNames.GENERATED_MEDIA}(created_at DESC)`
+      )
+      await this.rdbStore.executeSql(createTokenUsageEventsTable)
+      await this.rdbStore.executeSql(
+        `CREATE INDEX IF NOT EXISTS idx_token_usage_events_created_at ON ${TableNames.TOKEN_USAGE_EVENTS}(created_at DESC)`
       )
       // 尝试添加 sort_order 字段（如果表已存在但没有该字段）
       await this.addSortOrderColumnIfNeeded()
@@ -362,6 +387,8 @@ export class DatabaseService {
       await this.addToolEventMetaColumnsIfNeeded()
       // 尝试添加消息 model_id 字段（用于图标匹配）
       await this.addMessageModelIdColumnIfNeeded()
+      // 尝试添加消息 token 用量字段(prompt/completion/total,用于使用统计)
+      await this.addMessageTokenColumnsIfNeeded()
       // 尝试添加助手采样参数列(top_p / presence_penalty / frequency_penalty)
       await this.addAssistantSamplingColumnsIfNeeded()
 	      // 迁移现有供应商数据
@@ -427,6 +454,28 @@ export class DatabaseService {
       await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN parts_json TEXT DEFAULT ''`)
     } catch (error) {
       console.info('DatabaseService', 'parts_json column may already exist')
+    }
+  }
+
+  // 添加消息 token 用量字段(prompt_tokens / completion_tokens / total_tokens,用于使用统计)
+  private async addMessageTokenColumnsIfNeeded(): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN prompt_tokens INTEGER DEFAULT 0`)
+    } catch (_error) {
+      console.info('DatabaseService', 'prompt_tokens column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN completion_tokens INTEGER DEFAULT 0`)
+    } catch (_error) {
+      console.info('DatabaseService', 'completion_tokens column may already exist')
+    }
+    try {
+      await this.rdbStore.executeSql(`ALTER TABLE ${TableNames.MESSAGES} ADD COLUMN total_tokens INTEGER DEFAULT 0`)
+    } catch (_error) {
+      console.info('DatabaseService', 'total_tokens column may already exist')
     }
   }
 
@@ -1939,7 +1988,11 @@ export class DatabaseService {
       search_query: message.searchQuery || '',
       search_engine: message.searchEngine || '',
       search_source: message.searchSource || '',
-      search_references: searchReferencesJson
+      search_references: searchReferencesJson,
+      // Token 用量(仅助手流式完成时有值,其余为 0)
+      prompt_tokens: message.promptTokens || 0,
+      completion_tokens: message.completionTokens || 0,
+      total_tokens: message.totalTokens || 0
     }
     try {
       await this.rdbStore.insert(TableNames.MESSAGES, valueBucket)
@@ -2109,6 +2162,10 @@ export class DatabaseService {
     message.searchQuery = this.safeGetString(resultSet, 'search_query')
     message.searchEngine = this.safeGetString(resultSet, 'search_engine')
     message.searchSource = this.safeGetString(resultSet, 'search_source')
+    // Token 用量(旧消息无此列,safeGetLong 回退 0)
+    message.promptTokens = this.safeGetLong(resultSet, 'prompt_tokens')
+    message.completionTokens = this.safeGetLong(resultSet, 'completion_tokens')
+    message.totalTokens = this.safeGetLong(resultSet, 'total_tokens')
 
     try {
       const searchReferencesJson = this.safeGetString(resultSet, 'search_references')
@@ -2328,6 +2385,33 @@ export class DatabaseService {
       }
     } catch (error) {
       console.error('DatabaseService', `Failed to insert generated media: ${JSON.stringify(error)}`)
+    }
+  }
+
+  // 追加一条 token 用量账本事件(只追加,不更新/去重)。
+  // 调用方在流式收割点每轮写入一条,event.id 由上层用 generateId() 保证唯一。
+  async insertTokenUsageEvent(event: TokenUsageEvent): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null) {
+      return
+    }
+    const valueBucket: relationalStore.ValuesBucket = {
+      id: event.id,
+      session_id: event.sessionId,
+      message_id: event.messageId,
+      provider_id: event.providerId,
+      model_id: event.modelId,
+      model_name: event.modelName,
+      prompt_tokens: event.promptTokens,
+      completion_tokens: event.completionTokens,
+      total_tokens: event.totalTokens,
+      kind: event.kind,
+      created_at: event.createdAt
+    }
+    try {
+      await this.rdbStore.insert(TableNames.TOKEN_USAGE_EVENTS, valueBucket)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to insert token usage event: ${JSON.stringify(error)}`)
     }
   }
 
@@ -3004,7 +3088,8 @@ export class DatabaseService {
     this.applyUsageRange(predicates, 'timestamp', rangeStartMs)
     let resultSet: relationalStore.ResultSet
     try {
-      resultSet = await this.rdbStore.query(predicates, ['role', 'model_name', 'model_id', 'timestamp'])
+      resultSet = await this.rdbStore.query(predicates,
+        ['role', 'model_name', 'model_id', 'timestamp'])
     } catch (error) {
       console.error('DatabaseService', `Failed to collect message usage rows: ${JSON.stringify(error)}`)
       return rows
@@ -3027,6 +3112,49 @@ export class DatabaseService {
         resultSet.close()
       } catch (error) {
         console.error('DatabaseService', `Failed to close message usage result set: ${JSON.stringify(error)}`)
+      }
+    }
+    return rows
+  }
+
+  // 拉取 token 用量账本行(按 created_at 范围过滤),内存聚合。
+  // 账本只追加,故这里读到的是"实际累计消耗",不受消息删除/重新生成影响。
+  private async collectTokenUsageEventRows(rangeStartMs: number): Promise<TokenUsageEventRow[]> {
+    const rows: TokenUsageEventRow[] = []
+    if (this.rdbStore === null) {
+      return rows
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.TOKEN_USAGE_EVENTS)
+    this.applyUsageRange(predicates, 'created_at', rangeStartMs)
+    let resultSet: relationalStore.ResultSet
+    try {
+      resultSet = await this.rdbStore.query(predicates,
+        ['message_id', 'model_name', 'model_id', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'created_at'])
+    } catch (error) {
+      console.error('DatabaseService', `Failed to collect token usage event rows: ${JSON.stringify(error)}`)
+      return rows
+    }
+    try {
+      try {
+        while (resultSet.goToNextRow()) {
+          rows.push({
+            messageId: this.safeGetString(resultSet, 'message_id'),
+            modelName: this.safeGetString(resultSet, 'model_name'),
+            modelId: this.safeGetString(resultSet, 'model_id'),
+            promptTokens: this.safeGetLong(resultSet, 'prompt_tokens'),
+            completionTokens: this.safeGetLong(resultSet, 'completion_tokens'),
+            totalTokens: this.safeGetLong(resultSet, 'total_tokens'),
+            createdAt: this.safeGetLong(resultSet, 'created_at')
+          })
+        }
+      } catch (error) {
+        console.error('DatabaseService', `Failed to iterate token usage event rows: ${JSON.stringify(error)}`)
+      }
+    } finally {
+      try {
+        resultSet.close()
+      } catch (error) {
+        console.error('DatabaseService', `Failed to close token usage event result set: ${JSON.stringify(error)}`)
       }
     }
     return rows
@@ -3073,7 +3201,11 @@ export class DatabaseService {
       sessionCount: 0,
       messageCount: 0,
       distinctModelCount: 0,
-      activeDayCount: 0
+      activeDayCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      tokenMessageCount: 0
     }
     if (this.rdbStore === null) {
       return result
@@ -3094,6 +3226,23 @@ export class DatabaseService {
       }
       result.distinctModelCount = modelNames.size
       result.activeDayCount = activeDays.size
+      // Token 口径=实际累计消耗:取自只追加的账本(不随消息删除/重新生成回收),与会话态指标解耦。
+      // tokenMessageCount 用账本中去重后的 message_id 数,作为"平均每条回复"的分母。
+      const eventRows = await this.collectTokenUsageEventRows(rangeStartMs)
+      const tokenMessageIds = new Map<string, boolean>()
+      for (let i = 0; i < eventRows.length; i++) {
+        const eventRow = eventRows[i]
+        if (eventRow.totalTokens <= 0) {
+          continue
+        }
+        result.totalTokens += eventRow.totalTokens
+        result.inputTokens += eventRow.promptTokens
+        result.outputTokens += eventRow.completionTokens
+        if (eventRow.messageId !== '') {
+          tokenMessageIds.set(eventRow.messageId, true)
+        }
+      }
+      result.tokenMessageCount = tokenMessageIds.size
     } catch (error) {
       console.error('DatabaseService', `Failed to get usage overview: ${JSON.stringify(error)}`)
     }
@@ -3124,6 +3273,246 @@ export class DatabaseService {
     }
     return items
   }
+
+  private buildTokenModelRankingFromEventRows(rows: TokenUsageEventRow[], limit: number): TokenModelRankingItem[] {
+    const stats = new Map<string, TokenModelRankingItem>()
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      if (row.totalTokens <= 0 || !this.isValidUsageModelName(row.modelName)) {
+        continue
+      }
+      const modelName = row.modelName.trim()
+      const existing = stats.get(modelName)
+      if (existing !== undefined) {
+        existing.totalTokens += row.totalTokens
+        existing.inputTokens += row.promptTokens
+        existing.outputTokens += row.completionTokens
+        if (existing.modelId === '' && row.modelId.trim() !== '') {
+          existing.modelId = row.modelId.trim()
+        }
+      } else {
+        stats.set(modelName, {
+          modelName: modelName,
+          modelId: row.modelId.trim(),
+          totalTokens: row.totalTokens,
+          inputTokens: row.promptTokens,
+          outputTokens: row.completionTokens
+        })
+      }
+    }
+    const items = Array.from(stats.values())
+    items.sort((a: TokenModelRankingItem, b: TokenModelRankingItem): number => {
+      if (b.totalTokens !== a.totalTokens) {
+        return b.totalTokens - a.totalTokens
+      }
+      return a.modelName.localeCompare(b.modelName)
+    })
+    const safeLimit = limit > 0 ? limit : 10
+    return items.slice(0, safeLimit)
+  }
+
+  // 获取 Token 消耗模型排行(账本求和,按 model_name 分组,口径同模型调用排行;total_tokens 降序)
+  async getTokenModelRanking(rangeStartMs: number = 0, limit: number = 10): Promise<TokenModelRankingItem[]> {
+    await this.waitForInitialization()
+    const items: TokenModelRankingItem[] = []
+    if (this.rdbStore === null) {
+      return items
+    }
+    const safeLimit = limit > 0 ? limit : 10
+    try {
+      const ranking = this.buildTokenModelRankingFromEventRows(await this.collectTokenUsageEventRows(rangeStartMs), safeLimit)
+      for (let i = 0; i < ranking.length; i++) {
+        items.push(ranking[i])
+      }
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get token model ranking: ${JSON.stringify(error)}`)
+    }
+    return items
+  }
+
+  // 把 (dayKey -> 值) 的 Map 整理成最近 dayCount 天的连续序列(本地时区,缺失天补 0)
+  private buildContinuousDailyTrend(valueByDay: Map<string, number>, dayCount: number): DailyUsagePoint[] {
+    const points: DailyUsagePoint[] = []
+    const now = new Date()
+    // 以本地零点为基准向前回溯,保证桶键与 buildLocalDayKey 一致
+    const baseMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const dayMs = 24 * 60 * 60 * 1000
+    for (let i = dayCount - 1; i >= 0; i--) {
+      const dayKey = this.buildLocalDayKey(baseMs - i * dayMs)
+      const value = valueByDay.get(dayKey)
+      points.push({ day: dayKey, value: value !== undefined ? value : 0 })
+    }
+    return points
+  }
+
+  // 获取最近 dayCount 天的每日 Token 用量趋势(本地时区分桶,账本 total_tokens 求和)
+  async getTokenDailyTrend(dayCount: number = 30): Promise<DailyUsagePoint[]> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null) {
+      return []
+    }
+    const safeDayCount = dayCount > 0 ? dayCount : 30
+    const sinceMs = Date.now() - safeDayCount * 24 * 60 * 60 * 1000
+    const valueByDay = new Map<string, number>()
+    try {
+      const rows = await this.collectTokenUsageEventRows(sinceMs)
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (row.totalTokens <= 0 || row.createdAt <= 0) {
+          continue
+        }
+        const dayKey = this.buildLocalDayKey(row.createdAt)
+        valueByDay.set(dayKey, (valueByDay.get(dayKey) ?? 0) + row.totalTokens)
+      }
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get token daily trend: ${JSON.stringify(error)}`)
+    }
+    return this.buildContinuousDailyTrend(valueByDay, safeDayCount)
+  }
+
+  // ==================== 生图统计聚合查询 ====================
+
+  // 拉取 generated_media 的轻量统计行(按 created_at 范围过滤),内存聚合
+  private async collectGeneratedMediaUsageRows(rangeStartMs: number): Promise<MediaUsageRow[]> {
+    const rows: MediaUsageRow[] = []
+    if (this.rdbStore === null) {
+      return rows
+    }
+    const predicates = new relationalStore.RdbPredicates(TableNames.GENERATED_MEDIA)
+    this.applyUsageRange(predicates, 'created_at', rangeStartMs)
+    let resultSet: relationalStore.ResultSet
+    try {
+      resultSet = await this.rdbStore.query(predicates, ['type', 'model_name', 'model_id', 'created_at'])
+    } catch (error) {
+      console.error('DatabaseService', `Failed to collect generated media rows: ${JSON.stringify(error)}`)
+      return rows
+    }
+    try {
+      try {
+        while (resultSet.goToNextRow()) {
+          rows.push({
+            type: this.safeGetString(resultSet, 'type'),
+            modelName: this.safeGetString(resultSet, 'model_name'),
+            modelId: this.safeGetString(resultSet, 'model_id'),
+            createdAt: this.safeGetLong(resultSet, 'created_at')
+          })
+        }
+      } catch (error) {
+        console.error('DatabaseService', `Failed to iterate generated media rows: ${JSON.stringify(error)}`)
+      }
+    } finally {
+      try {
+        resultSet.close()
+      } catch (error) {
+        console.error('DatabaseService', `Failed to close generated media result set: ${JSON.stringify(error)}`)
+      }
+    }
+    return rows
+  }
+
+  // 生图总览:总张数 / 文生图张数 / 改图张数 / 使用过的独立模型数
+  // 口径说明:generated_media 一行=一张图(无批次字段),统计的是"张数"而非"生成次数"
+  async getImageGenerationStats(rangeStartMs: number = 0): Promise<ImageGenerationStats> {
+    await this.waitForInitialization()
+    const result: ImageGenerationStats = {
+      total: 0,
+      generateCount: 0,
+      editCount: 0,
+      distinctModelCount: 0
+    }
+    if (this.rdbStore === null) {
+      return result
+    }
+    try {
+      const rows = await this.collectGeneratedMediaUsageRows(rangeStartMs)
+      const modelNames = new Map<string, boolean>()
+      result.total = rows.length
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (row.type === GeneratedMediaType.IMAGE_EDIT) {
+          result.editCount += 1
+        } else {
+          result.generateCount += 1
+        }
+        if (this.isValidUsageModelName(row.modelName)) {
+          modelNames.set(row.modelName.trim(), true)
+        }
+      }
+      result.distinctModelCount = modelNames.size
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get image generation stats: ${JSON.stringify(error)}`)
+    }
+    return result
+  }
+
+  // 生图模型排行(按张数,复用 ModelUsageRankingItem.count = 图片张数)
+  async getImageModelRanking(rangeStartMs: number = 0, limit: number = 10): Promise<ModelUsageRankingItem[]> {
+    await this.waitForInitialization()
+    const items: ModelUsageRankingItem[] = []
+    if (this.rdbStore === null) {
+      return items
+    }
+    const safeLimit = limit > 0 ? limit : 10
+    try {
+      const rows = await this.collectGeneratedMediaUsageRows(rangeStartMs)
+      const stats = new Map<string, ModelUsageRankingItem>()
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (!this.isValidUsageModelName(row.modelName)) {
+          continue
+        }
+        const modelName = row.modelName.trim()
+        const existing = stats.get(modelName)
+        if (existing !== undefined) {
+          existing.count += 1
+          if (existing.modelId === '' && row.modelId.trim() !== '') {
+            existing.modelId = row.modelId.trim()
+          }
+        } else {
+          stats.set(modelName, { modelName: modelName, modelId: row.modelId.trim(), count: 1 })
+        }
+      }
+      const ranked = Array.from(stats.values())
+      ranked.sort((a: ModelUsageRankingItem, b: ModelUsageRankingItem): number => {
+        if (b.count !== a.count) {
+          return b.count - a.count
+        }
+        return a.modelName.localeCompare(b.modelName)
+      })
+      const sliced = ranked.slice(0, safeLimit)
+      for (let i = 0; i < sliced.length; i++) {
+        items.push(sliced[i])
+      }
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get image model ranking: ${JSON.stringify(error)}`)
+    }
+    return items
+  }
+
+  // 最近 dayCount 天每日生图张数趋势(本地时区分桶,缺失天补 0)
+  async getImageDailyTrend(dayCount: number = 30): Promise<DailyUsagePoint[]> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null) {
+      return []
+    }
+    const safeDayCount = dayCount > 0 ? dayCount : 30
+    const sinceMs = Date.now() - safeDayCount * 24 * 60 * 60 * 1000
+    const valueByDay = new Map<string, number>()
+    try {
+      const rows = await this.collectGeneratedMediaUsageRows(sinceMs)
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (row.createdAt <= 0) {
+          continue
+        }
+        const dayKey = this.buildLocalDayKey(row.createdAt)
+        valueByDay.set(dayKey, (valueByDay.get(dayKey) ?? 0) + 1)
+      }
+    } catch (error) {
+      console.error('DatabaseService', `Failed to get image daily trend: ${JSON.stringify(error)}`)
+    }
+    return this.buildContinuousDailyTrend(valueByDay, safeDayCount)
+  }
 }
 
 // 使用统计 - 总览数据
@@ -3132,6 +3521,10 @@ export interface UsageOverviewStats {
   messageCount: number
   distinctModelCount: number
   activeDayCount: number
+  totalTokens: number        // 总 token(仅有用量记录的助手消息)
+  inputTokens: number        // 输入 token 合计
+  outputTokens: number       // 输出 token 合计
+  tokenMessageCount: number  // 有 token 记录的助手消息数(用于算"平均每条")
 }
 
 // 使用统计 - 模型排行单项
@@ -3141,11 +3534,67 @@ export interface ModelUsageRankingItem {
   count: number
 }
 
+// 使用统计 - Token 消耗模型排行单项
+export interface TokenModelRankingItem {
+  modelName: string
+  modelId: string
+  totalTokens: number
+  inputTokens: number
+  outputTokens: number
+}
+
+// 使用统计 - 每日趋势单点(day=YYYY-MM-DD 本地时区)
+export interface DailyUsagePoint {
+  day: string
+  value: number
+}
+
+// 生图统计 - 总览数据
+export interface ImageGenerationStats {
+  total: number              // 总张数
+  generateCount: number      // 文生图张数
+  editCount: number          // 改图张数
+  distinctModelCount: number // 使用过的独立模型数
+}
+
 interface UsageMessageRow {
   role: string
   modelName: string
   modelId: string
   timestamp: number
+}
+
+// Token 用量账本 - 写入事件(只追加,一行=一次生成)
+export interface TokenUsageEvent {
+  id: string
+  sessionId: string
+  messageId: string
+  providerId: string
+  modelId: string
+  modelName: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  kind: string
+  createdAt: number
+}
+
+// Token 用量账本 - 读取投影行(聚合用)
+interface TokenUsageEventRow {
+  messageId: string
+  modelName: string
+  modelId: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  createdAt: number
+}
+
+interface MediaUsageRow {
+  type: string
+  modelName: string
+  modelId: string
+  createdAt: number
 }
 
 // 工具事件数据接口

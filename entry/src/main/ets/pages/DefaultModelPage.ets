@@ -12,8 +12,6 @@ import {
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode
 } from '@kit.UIDesignKit'
-import { AppStorageKeys } from '../config/AppStorageKeys'
-import { LayoutSizeClass } from '../config/LayoutProfile'
 import { SettingsPagePresentationMode } from '../config/SettingsDetailPresentation'
 import { getSettingsPageContentMaxWidth, isSettingsPageExpandedLayout } from '../utils/SettingsPageLayoutHelper'
 import { getAppUiState } from '../state/AppUiState'
@@ -57,6 +55,7 @@ struct DefaultModelPage {
 
   @Local chatModel: DefaultModelConfig = new DefaultModelConfig()
   @Local titleModel: DefaultModelConfig = new DefaultModelConfig()
+  @Local suggestionModel: DefaultModelConfig = new DefaultModelConfig()
   @Local translateModel: DefaultModelConfig = new DefaultModelConfig()
   @Local imageModel: DefaultModelConfig = new DefaultModelConfig()
 
@@ -116,6 +115,7 @@ struct DefaultModelPage {
     await this.defaultModelService.loadConfig()
     this.chatModel = this.defaultModelService.getModel(ModelRole.CHAT)
     this.titleModel = this.defaultModelService.getModel(ModelRole.TITLE)
+    this.suggestionModel = this.defaultModelService.getModel(ModelRole.SUGGESTION)
     this.translateModel = this.defaultModelService.getModel(ModelRole.TRANSLATE)
     this.imageModel = this.defaultModelService.getModel(ModelRole.IMAGE)
   }
@@ -278,9 +278,10 @@ struct DefaultModelPage {
   CompactModelSections() {
     Column() {
       this.ChatModelSection()
-      this.ImageModelSection()
       this.TitleModelSection()
+      this.SuggestionModelSection()
       this.TranslateModelSection()
+      this.ImageModelSection()
       Column().height(40)
     }
     .width('100%')
@@ -305,12 +306,21 @@ struct DefaultModelPage {
 
       Row({ space: 16 }) {
         Column() {
-          this.ImageModelSection()
+          this.SuggestionModelSection()
         }
         .layoutWeight(1)
 
         Column() {
           this.TranslateModelSection()
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Row({ space: 16 }) {
+        Column() {
+          this.ImageModelSection()
         }
         .layoutWeight(1)
       }
@@ -364,6 +374,33 @@ struct DefaultModelPage {
           this.showModelSheet = false
           this.currentPromptRole = ModelRole.TITLE
           this.currentPrompt = this.defaultModelService.getTitlePromptTemplate()
+          this.showPromptSheet = true
+        }
+      })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  SuggestionModelSection() {
+    Column() {
+      this.SectionTitle($r('app.string.default_model_section_suggestion'))
+      ModelConfigCard({
+        roleName: $r('app.string.default_model_role_suggestion'),
+        description: $r('app.string.default_model_desc_suggestion'),
+        showPromptEdit: true,
+        isConfigured: this.suggestionModel.isConfigured(),
+        displayName: this.suggestionModel.getDisplayName(),
+        isDefaultPrompt: this.defaultModelService.isDefaultSuggestionPrompt(),
+        onCardClick: () => {
+          this.showPromptSheet = false
+          this.currentEditRole = ModelRole.SUGGESTION
+          this.showModelSheet = true
+        },
+        onPromptClick: () => {
+          this.showModelSheet = false
+          this.currentPromptRole = ModelRole.SUGGESTION
+          this.currentPrompt = this.defaultModelService.getSuggestionPromptTemplate()
           this.showPromptSheet = true
         }
       })
@@ -468,9 +505,7 @@ struct DefaultModelPage {
           this.showPromptSheet = false
         })
 
-        Text(this.currentPromptRole === ModelRole.TITLE ?
-          $r('app.string.default_model_prompt_edit_title_title') :
-          $r('app.string.default_model_prompt_edit_title_translate'))
+        Text(this.getPromptEditTitle())
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -503,6 +538,12 @@ struct DefaultModelPage {
 
         if (this.currentPromptRole === ModelRole.TITLE) {
           Text($r('app.string.default_model_prompt_title_variables_hint'))
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+            .margin({ top: 4 })
+        } else if (this.currentPromptRole === ModelRole.SUGGESTION) {
+          Text($r('app.string.default_model_prompt_suggestion_variables_hint'))
             .fontSize(12)
             .fontColor($r('app.color.text_tertiary'))
             .width('100%')
@@ -558,10 +599,21 @@ struct DefaultModelPage {
       return $r('app.string.default_model_select_chat_model')
     } else if (this.currentEditRole === ModelRole.TITLE) {
       return $r('app.string.default_model_select_title_model')
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      return $r('app.string.default_model_select_suggestion_model')
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       return $r('app.string.default_model_select_image_model')
     }
     return $r('app.string.default_model_select_translate_model')
+  }
+
+  private getPromptEditTitle(): Resource {
+    if (this.currentPromptRole === ModelRole.TITLE) {
+      return $r('app.string.default_model_prompt_edit_title_title')
+    } else if (this.currentPromptRole === ModelRole.SUGGESTION) {
+      return $r('app.string.default_model_prompt_edit_title_suggestion')
+    }
+    return $r('app.string.default_model_prompt_edit_title_translate')
   }
 
   // 获取当前选择的模型显示名称
@@ -571,6 +623,8 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      config = this.suggestionModel
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       config = this.imageModel
     } else {
@@ -589,6 +643,8 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      config = this.suggestionModel
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       config = this.imageModel
     } else {
@@ -603,6 +659,8 @@ struct DefaultModelPage {
       config = this.chatModel
     } else if (this.currentEditRole === ModelRole.TITLE) {
       config = this.titleModel
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      config = this.suggestionModel
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       config = this.imageModel
     } else {
@@ -633,6 +691,9 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      this.suggestionModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName,
+        config.providerName)
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       this.imageModel = new DefaultModelConfig(config.modelId, config.providerId, config.modelName, config.providerName)
     } else {
@@ -654,6 +715,8 @@ struct DefaultModelPage {
       this.chatModel = new DefaultModelConfig()
     } else if (this.currentEditRole === ModelRole.TITLE) {
       this.titleModel = new DefaultModelConfig()
+    } else if (this.currentEditRole === ModelRole.SUGGESTION) {
+      this.suggestionModel = new DefaultModelConfig()
     } else if (this.currentEditRole === ModelRole.IMAGE) {
       this.imageModel = new DefaultModelConfig()
     } else {
@@ -668,6 +731,9 @@ struct DefaultModelPage {
     if (this.currentPromptRole === ModelRole.TITLE) {
       await this.defaultModelService.resetTitlePrompt()
       this.currentPrompt = DefaultPrompts.TITLE_PROMPT
+    } else if (this.currentPromptRole === ModelRole.SUGGESTION) {
+      await this.defaultModelService.resetSuggestionPrompt()
+      this.currentPrompt = DefaultPrompts.SUGGESTION_PROMPT
     } else {
       await this.defaultModelService.resetTranslatePrompt()
       this.currentPrompt = DefaultPrompts.TRANSLATE_PROMPT
@@ -677,6 +743,8 @@ struct DefaultModelPage {
   private async savePrompt(): Promise<void> {
     if (this.currentPromptRole === ModelRole.TITLE) {
       await this.defaultModelService.setTitlePromptTemplate(this.currentPrompt)
+    } else if (this.currentPromptRole === ModelRole.SUGGESTION) {
+      await this.defaultModelService.setSuggestionPromptTemplate(this.currentPrompt)
     } else {
       await this.defaultModelService.setTranslatePromptTemplate(this.currentPrompt)
     }
@@ -784,7 +852,7 @@ struct ModelConfigCard {
 }
 
 @Builder
-export function DefaultModelPageBuilder(name: string, param: Object) {
+export function DefaultModelPageBuilder(_name: string, _param: Object) {
   DefaultModelPage({
     hostedInNavDestination: true
   })

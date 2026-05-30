@@ -266,6 +266,7 @@ export enum ModelRole {
   CHAT = 'chat',
   TITLE = 'title',
   TRANSLATE = 'translate',
+  SUGGESTION = 'suggestion',
   IMAGE = 'image'
 }
 
@@ -528,6 +529,10 @@ export class ChatMessage {
   // 有序消息片段(text/reasoning/tool/image...),用于支持 DeepSeek V4 / Claude thinking 等
   // 边思考边调工具的交错展示。空数组表示消息尚未迁移到 parts 结构,UI 层需回退到旧字段。
   @Trace parts: MessagePart[]
+  // Token 用量(仅 role=assistant 流式完成时回填;历史/未知消息为 0,用于使用统计)
+  @Trace promptTokens: number      // 输入 token(prompt)
+  @Trace completionTokens: number  // 输出 token(completion)
+  @Trace totalTokens: number       // 总 token(若厂商未给则回退为 prompt+completion)
 
   constructor(id: string, role: MessageRole, content: string, modelName: string = '', modelId: string = '') {
     this.id = id
@@ -549,6 +554,9 @@ export class ChatMessage {
     this.toolCallId = ''
     this.reasoningSignatureBlob = ''
     this.parts = []
+    this.promptTokens = 0
+    this.completionTokens = 0
+    this.totalTokens = 0
   }
 
   // 检查是否有推理内容

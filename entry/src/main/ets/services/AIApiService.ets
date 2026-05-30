@@ -870,6 +870,10 @@ interface OpenRouterReasoningConfig {
 }
 
 // OpenAI 请求体接口
+interface OpenAIStreamOptions {
+  include_usage: boolean
+}
+
 interface OpenAIRequestBody {
   model: string
   messages: (MessageContent | MultimodalMessageContent | ToolResultMessageContent | AssistantMessageWithToolCalls)[]
@@ -877,6 +881,7 @@ interface OpenAIRequestBody {
   max_tokens?: number
   max_completion_tokens?: number  // OpenAI gpt-5 / o-系列推理模型必须使用此字段替代 max_tokens
   stream?: boolean
+  stream_options?: OpenAIStreamOptions  // include_usage=true 时末块返回 token 用量(用于使用统计)
   reasoning_effort?: string  // OpenAI/OpenAI-compatible 推理级别: none, low, medium, high, xhigh/max
   reasoning?: OpenRouterReasoningConfig  // OpenRouter 统一推理控制
   reasoning_split?: boolean  // MiniMax 推理内容分离（reasoning_details 字段）
@@ -1247,6 +1252,8 @@ interface OpenAIResponsesStreamEvent {
   // response.image_generation_call.partial_image
   partial_image_b64?: string
   partial_image_index?: number
+  // response.completed 事件携带的完整 response 对象(含 usage)
+  response?: OpenAIResponsesResponse
 }
 
 // OpenAI 流式响应块增量
@@ -1294,6 +1301,18 @@ interface OpenAIStreamChoice {
 // OpenAI 流式响应块
 interface OpenAIStreamChunk {
   choices: OpenAIStreamChoice[]
+  // 末块(choices 为空)携带的累计用量;需请求 stream_options.include_usage=true
+  usage?: UsageInfo
+}
+
+// Anthropic 流式用量(message_start 给 input_tokens,message_delta 累计 output_tokens)
+interface AnthropicStreamUsage {
+  input_tokens?: number
+  output_tokens?: number
+}
+
+interface AnthropicStreamMessage {
+  usage?: AnthropicStreamUsage
 }
 
 // Anthropic 流式响应块增量
@@ -1307,6 +1326,10 @@ interface AnthropicStreamDelta {
 interface AnthropicStreamChunk {
   type: string
   delta?: AnthropicStreamDelta
+  // message_start 事件携带的 message 对象(含初始 usage.input_tokens)
+  message?: AnthropicStreamMessage
+  // message_delta 事件携带的累计 usage(output_tokens)
+  usage?: AnthropicStreamUsage
 }
 
 // Google 流式响应块部分
@@ -1334,9 +1357,17 @@ interface GoogleStreamCandidate {
   finishReason?: string
 }
 
+// Google 流式响应块用量(每块累计,取最后一块)
+interface GoogleUsageMetadata {
+  promptTokenCount?: number
+  candidatesTokenCount?: number
+  totalTokenCount?: number
+}
+
 // Google 流式响应块
 interface GoogleStreamChunk {
   candidates: GoogleStreamCandidate[]
+  usageMetadata?: GoogleUsageMetadata
 }
 
 // OpenAI Responses 内置工具 (hosted tool) 运行事件类型
@@ -1407,6 +1438,8 @@ interface StreamChunkResult {
   hostedToolEvent?: HostedResponsesToolEvent
   // OpenAI Responses url_citation annotation 产生的引用增量
   searchReferences?: SearchReference[]
+  // 本块解析出的 token 用量(各厂商在单次请求内均为"绝对值"语义,由 mergeStreamUsage 按字段取 max 合并)
+  usage?: UsageInfo
 }
 
 // 工具调用增量（用于流式响应累积）
@@ -1445,6 +1478,9 @@ export class AIApiService {
   // OpenAI Responses 流里收集到的完整 reasoning items(含 encrypted_content),
   // 在 onComplete 之前由 ChatViewModel 通过 consumeLastStreamResponsesReasoningBlob 取走
   private streamResponsesReasoningItems: OpenAIResponsesInputItem[] = []
+  // 本轮流式累积的 token 用量,在 onComplete 之前由 ChatViewModel 通过 consumeLastStreamUsage 取走。
+  // 各厂商单次请求内 usage 均为绝对值语义,mergeStreamUsage 按字段取 max 合并;跨工具轮的累加由 ViewModel 负责。
+  private streamUsage: UsageInfo | null = null
 
   private constructor() {
     this.httpService = getHttpService()
@@ -1460,6 +1496,7 @@ export class AIApiService {
     this.partialTagBuffer = ''
     this.streamToolCalls = new Map()
     this.streamResponsesReasoningItems = []
+    this.streamUsage = null
   }
 
   // 取走并清空本轮流式累积的 Responses reasoning items,序列化成可持久化的 JSON blob。
@@ -1471,6 +1508,46 @@ export class AIApiService {
     const blob = this.serializeResponsesReasoningItems(this.streamResponsesReasoningItems)
     this.streamResponsesReasoningItems = []
     return blob
+  }
+
+  // 把单块解析出的 usage 合并进本轮累积值:按字段取 max。
+  // 这样能统一处理 OpenAI(一次性)、Google(每块累计)、Anthropic(input 在 start / output 在 delta 累计)三种形态。
+  private mergeStreamUsage(usage: UsageInfo): void {
+    const current = this.streamUsage
+    if (current === null) {
+      this.streamUsage = {
+        prompt_tokens: usage.prompt_tokens > 0 ? usage.prompt_tokens : 0,
+        completion_tokens: usage.completion_tokens > 0 ? usage.completion_tokens : 0,
+        total_tokens: usage.total_tokens > 0 ? usage.total_tokens : 0
+      }
+      return
+    }
+    if (usage.prompt_tokens > current.prompt_tokens) {
+      current.prompt_tokens = usage.prompt_tokens
+    }
+    if (usage.completion_tokens > current.completion_tokens) {
+      current.completion_tokens = usage.completion_tokens
+    }
+    if (usage.total_tokens > current.total_tokens) {
+      current.total_tokens = usage.total_tokens
+    }
+  }
+
+  // 取走并清空本轮流式累积的 token 用量。null 表示本轮没有可用 usage。
+  // 若厂商未给 total(如 Anthropic),回退为 prompt + completion。
+  consumeLastStreamUsage(): UsageInfo | null {
+    const usage = this.streamUsage
+    this.streamUsage = null
+    if (usage === null) {
+      return null
+    }
+    if (usage.prompt_tokens <= 0 && usage.completion_tokens <= 0 && usage.total_tokens <= 0) {
+      return null
+    }
+    if (usage.total_tokens <= 0) {
+      usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
+    }
+    return usage
   }
 
   private toCompatibilityInfo(config: AIApiConfig): CompatibilityProviderInfo {
@@ -3864,7 +3941,10 @@ export class AIApiService {
       if (useOpenAIResponses) {
         (requestBody as OpenAIResponsesRequestBody).stream = true
       } else {
-        (requestBody as OpenAIRequestBody).stream = true
+        const openaiStreamBody = requestBody as OpenAIRequestBody
+        openaiStreamBody.stream = true
+        // 末块返回累计 token 用量(用于使用统计);主流 OpenAI 兼容端点均支持该字段
+        openaiStreamBody.stream_options = { include_usage: true }
       }
     } else if (config.apiStyle === ApiStyle.ANTHROPIC) {
       (requestBody as AnthropicRequestBody).stream = true
@@ -3975,7 +4055,10 @@ export class AIApiService {
       if (useOpenAIResponses) {
         (requestBody as OpenAIResponsesRequestBody).stream = true
       } else {
-        (requestBody as OpenAIRequestBody).stream = true
+        const openaiStreamBody = requestBody as OpenAIRequestBody
+        openaiStreamBody.stream = true
+        // 末块返回累计 token 用量(用于使用统计);主流 OpenAI 兼容端点均支持该字段
+        openaiStreamBody.stream_options = { include_usage: true }
       }
     } else if (config.apiStyle === ApiStyle.ANTHROPIC) {
       (requestBody as AnthropicRequestBody).stream = true
@@ -4183,6 +4266,9 @@ export class AIApiService {
         if (result.reasoningItem !== undefined) {
           this.streamResponsesReasoningItems.push(result.reasoningItem)
         }
+        if (result.usage !== undefined) {
+          this.mergeStreamUsage(result.usage)
+        }
       }
       return
     }
@@ -4227,6 +4313,9 @@ export class AIApiService {
     }
     if (result.reasoningItem !== undefined) {
       this.streamResponsesReasoningItems.push(result.reasoningItem)
+    }
+    if (result.usage !== undefined) {
+      this.mergeStreamUsage(result.usage)
     }
   }
 
@@ -4498,6 +4587,12 @@ export class AIApiService {
           ]
         } else if (event.type === 'response.completed') {
           result.finishReason = 'stop'
+          // response.completed 携带完整 response.usage,经 buildResponsesUsageInfo 归一为 UsageInfo
+          const responsesUsage = this.buildResponsesUsageInfo(
+            event.response !== undefined ? event.response.usage : undefined)
+          if (responsesUsage !== null) {
+            result.usage = responsesUsage
+          }
         } else if (event.type === 'error' && event.error !== undefined) {
           result.errorMessage = event.error.message
         }
@@ -4607,6 +4702,10 @@ export class AIApiService {
           result.finishReason = finishReason
         }
       }
+      // 末块 usage:choices 为空数组,故必须在 choices 守卫之外解析(需请求带 stream_options.include_usage)
+      if (chunk.usage !== undefined && chunk.usage !== null) {
+        result.usage = chunk.usage
+      }
     } else if (apiStyle === ApiStyle.ANTHROPIC) {
       const chunk = json as AnthropicStreamChunk
       if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
@@ -4621,8 +4720,33 @@ export class AIApiService {
         result.imageMimeType = chunk.delta.image_source.media_type
         console.info('AIApiService', `Received Anthropic image: ${chunk.delta.image_source.media_type}, size: ${chunk.delta.image_source.data.length}`)
       }
+      // message_start 给出 input_tokens(prompt);message_delta 给出累计 output_tokens(completion)
+      if (chunk.type === 'message_start' && chunk.message !== undefined && chunk.message.usage !== undefined) {
+        const startUsage = chunk.message.usage
+        result.usage = {
+          prompt_tokens: startUsage.input_tokens !== undefined ? startUsage.input_tokens : 0,
+          completion_tokens: startUsage.output_tokens !== undefined ? startUsage.output_tokens : 0,
+          total_tokens: 0
+        }
+      }
+      if (chunk.type === 'message_delta' && chunk.usage !== undefined) {
+        result.usage = {
+          prompt_tokens: 0,
+          completion_tokens: chunk.usage.output_tokens !== undefined ? chunk.usage.output_tokens : 0,
+          total_tokens: 0
+        }
+      }
     } else if (apiStyle === ApiStyle.GOOGLE) {
       const chunk = json as GoogleStreamChunk
+      // usageMetadata 在每块累计出现,按字段取 max 合并后取末块即为最终值
+      if (chunk.usageMetadata !== undefined) {
+        const meta = chunk.usageMetadata
+        result.usage = {
+          prompt_tokens: meta.promptTokenCount !== undefined ? meta.promptTokenCount : 0,
+          completion_tokens: meta.candidatesTokenCount !== undefined ? meta.candidatesTokenCount : 0,
+          total_tokens: meta.totalTokenCount !== undefined ? meta.totalTokenCount : 0
+        }
+      }
       if (chunk.candidates && chunk.candidates.length > 0) {
         const candidate = chunk.candidates[0]
         result.finishReason = candidate.finishReason
@@ -4828,6 +4952,9 @@ export class AIApiService {
         if (result.reasoningItem !== undefined) {
           this.streamResponsesReasoningItems.push(result.reasoningItem)
         }
+        if (result.usage !== undefined) {
+          this.mergeStreamUsage(result.usage)
+        }
       }
       return
     }
@@ -4865,6 +4992,9 @@ export class AIApiService {
     }
     if (result.reasoningItem !== undefined) {
       this.streamResponsesReasoningItems.push(result.reasoningItem)
+    }
+    if (result.usage !== undefined) {
+      this.mergeStreamUsage(result.usage)
     }
   }
 }

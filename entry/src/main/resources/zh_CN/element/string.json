@@ -445,6 +445,86 @@
       "value": "开始与 AI 对话后,这里会展示你的使用情况"
     },
     {
+      "name": "usage_stats_unit_token",
+      "value": ""
+    },
+    {
+      "name": "usage_stats_unit_image",
+      "value": "张"
+    },
+    {
+      "name": "usage_stats_token_overview_title",
+      "value": "Token 用量"
+    },
+    {
+      "name": "usage_stats_token_overview_subtitle",
+      "value": "仅统计本次更新后的新对话"
+    },
+    {
+      "name": "usage_stats_metric_total_tokens",
+      "value": "总 Token"
+    },
+    {
+      "name": "usage_stats_metric_input_tokens",
+      "value": "输入"
+    },
+    {
+      "name": "usage_stats_metric_output_tokens",
+      "value": "输出"
+    },
+    {
+      "name": "usage_stats_metric_avg_tokens",
+      "value": "平均每条"
+    },
+    {
+      "name": "usage_stats_token_ranking_title",
+      "value": "Token 消耗排行"
+    },
+    {
+      "name": "usage_stats_token_ranking_subtitle",
+      "value": "前 10 · 按总 Token"
+    },
+    {
+      "name": "usage_stats_token_trend_title",
+      "value": "近 30 天每日 Token"
+    },
+    {
+      "name": "usage_stats_trend_peak",
+      "value": "峰值"
+    },
+    {
+      "name": "usage_stats_image_overview_title",
+      "value": "AI 生图"
+    },
+    {
+      "name": "usage_stats_metric_image_total",
+      "value": "总张数"
+    },
+    {
+      "name": "usage_stats_metric_image_generate",
+      "value": "文生图"
+    },
+    {
+      "name": "usage_stats_metric_image_edit",
+      "value": "改图"
+    },
+    {
+      "name": "usage_stats_metric_image_models",
+      "value": "使用模型"
+    },
+    {
+      "name": "usage_stats_image_ranking_title",
+      "value": "生图模型排行"
+    },
+    {
+      "name": "usage_stats_image_ranking_subtitle",
+      "value": "前 10 · 按张数"
+    },
+    {
+      "name": "usage_stats_image_trend_title",
+      "value": "近 30 天每日生图"
+    },
+    {
       "name": "export_title",
       "value": "导出数据"
     },
@@ -1638,7 +1718,19 @@
     },
     {
       "name": "default_model_desc_title_generation",
-      "value": "自动生成对话标题"
+      "value": "需单独选择模型，用于自动生成对话标题"
+    },
+    {
+      "name": "default_model_section_suggestion",
+      "value": "推荐候选词模型"
+    },
+    {
+      "name": "default_model_role_suggestion",
+      "value": "推荐候选词"
+    },
+    {
+      "name": "default_model_desc_suggestion",
+      "value": "需单独选择模型，用于助手回复后生成聊天末尾建议"
     },
     {
       "name": "default_model_section_translate",
@@ -1677,6 +1769,10 @@
       "value": "编辑翻译 Prompt"
     },
     {
+      "name": "default_model_prompt_edit_title_suggestion",
+      "value": "编辑推荐候选词 Prompt"
+    },
+    {
       "name": "default_model_prompt_variables",
       "value": "可用变量:"
     },
@@ -1689,6 +1785,10 @@
       "value": "{source_text} - 原文\\n{target_lang} - 目标语言"
     },
     {
+      "name": "default_model_prompt_suggestion_variables_hint",
+      "value": "{content} - 对话内容\\n{locale} - 语言"
+    },
+    {
       "name": "default_model_reset_prompt",
       "value": "重置为默认"
     },
@@ -1699,6 +1799,10 @@
     {
       "name": "default_model_select_title_model",
       "value": "选择标题生成模型"
+    },
+    {
+      "name": "default_model_select_suggestion_model",
+      "value": "选择推荐候选词模型"
     },
     {
       "name": "default_model_select_translate_model",

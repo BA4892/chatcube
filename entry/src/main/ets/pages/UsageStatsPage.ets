@@ -16,18 +16,46 @@ import {
 } from '../utils/HdsVisualEffectUtil'
 import {
   getDatabaseService,
-  ModelUsageRankingItem
+  ModelUsageRankingItem,
+  TokenModelRankingItem,
+  DailyUsagePoint
 } from '../services/DatabaseService'
 
 const TAG = 'UsageStatsPage'
 const RANGE_30D_MS: number = 30 * 24 * 60 * 60 * 1000
 const RANKING_LIMIT: number = 10
+const TREND_DAYS: number = 30
 const RANGE_SWIPE_THRESHOLD: number = 72
 const RANGE_DRAG_MAX_OFFSET: number = 44
 const RANKING_ANIMATION_DELAY_MS: number = 40
 const RANKING_ANIMATION_DURATION_MS: number = 640
 
 let usageStatsPagePathStack: NavPathStack | null = null
+
+// 大数字紧凑格式化:>=1e6→x.xM,>=1e4→x.xK,否则原样。避免几十万 token 在卡片里溢出。
+// ArkTS 无千分位 API,这里用 toFixed 并去掉多余的 .0
+function formatCompactNumber(value: number): string {
+  if (value >= 1000000) {
+    return stripTrailingZero((value / 1000000).toFixed(1)) + 'M'
+  }
+  if (value >= 10000) {
+    return stripTrailingZero((value / 1000).toFixed(1)) + 'K'
+  }
+  return value.toString()
+}
+
+function stripTrailingZero(text: string): string {
+  if (text.endsWith('.0')) {
+    return text.substring(0, text.length - 2)
+  }
+  return text
+}
+
+// 排行/趋势展示用的统一数据项(把不同来源的排行映射成 名称 + 数值)
+interface RankingDisplayItem {
+  name: string
+  value: number
+}
 
 enum UsageRangeKey {
   ALL = 'all',
@@ -39,10 +67,15 @@ struct UsageMetricCard {
   @Param icon: Resource = $r('sys.symbol.circle')
   @Param title: ResourceStr = ''
   @Param value: number = 0
+  @Param valueText: string = ''
   @Param unit: ResourceStr = ''
   @Param primaryColor: string = '#4E6F9E'
   @Param primaryLightColor: string = '#D8E2EE'
   @Param surfaceColor: string = '#FFFDF8'
+
+  private displayValue(): string {
+    return this.valueText !== '' ? this.valueText : this.value.toString()
+  }
 
   build() {
     Column() {
@@ -70,10 +103,13 @@ struct UsageMetricCard {
       .alignItems(VerticalAlign.Center)
 
       Row({ space: 4 }) {
-        Text(this.value.toString())
+        Text(this.displayValue())
           .fontSize(26)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
         Text(this.unit)
           .fontSize(12)
           .fontColor($r('app.color.text_tertiary'))
@@ -87,6 +123,220 @@ struct UsageMetricCard {
     .padding(14)
     .backgroundColor(this.surfaceColor)
     .borderRadius(16)
+    .border({ width: 1, color: $r('app.color.divider') })
+    .visualEffect(buildPointLightBorderEffect())
+  }
+}
+
+// 通用排行榜卡片:名称 + 数值 + 占比进度条。三种排行(模型调用 / Token / 生图)共用。
+@ComponentV2
+struct RankingListView {
+  @Param rows: RankingDisplayItem[] = []
+  @Param compact: boolean = false       // true 时数值用 K/M 紧凑格式(Token 排行)
+  @Param themePrimary: string = '#4E6F9E'
+  @Param surfaceColor: string = '#FFFDF8'
+  @Param animationProgress: number = 0
+
+  private getMaxValue(): number {
+    let max = 0
+    for (let i = 0; i < this.rows.length; i++) {
+      if (this.rows[i].value > max) {
+        max = this.rows[i].value
+      }
+    }
+    return max
+  }
+
+  private getFraction(value: number): number {
+    const max = this.getMaxValue()
+    if (max <= 0) {
+      return 0
+    }
+    const fraction = value / max
+    return fraction < 0.04 ? 0.04 : fraction
+  }
+
+  private getAnimatedFraction(value: number): number {
+    return this.getFraction(value) * this.animationProgress
+  }
+
+  private getAnimatedValueText(value: number): string {
+    const animated = this.animationProgress >= 1 ? value : Math.floor(value * this.animationProgress)
+    return this.compact ? formatCompactNumber(animated) : animated.toString()
+  }
+
+  @Builder
+  private Row1(item: RankingDisplayItem, rank: number) {
+    Column({ space: 8 }) {
+      Row() {
+        Text(`${rank}`)
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(rank <= 3 ? this.themePrimary : $r('app.color.text_tertiary'))
+          .width(22)
+
+        Text(item.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.getAnimatedValueText(item.value))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Stack({ alignContent: Alignment.Start }) {
+        Column()
+          .width('100%')
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor($r('app.color.divider'))
+
+        Column()
+          .width(`${this.getAnimatedFraction(item.value) * 100}%`)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.themePrimary)
+      }
+      .width('100%')
+      .margin({ left: 22 })
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10, left: 14, right: 14 })
+  }
+
+  build() {
+    Column() {
+      ForEach(this.rows, (item: RankingDisplayItem, index: number) => {
+        Column() {
+          this.Row1(item, index + 1)
+          if (index < this.rows.length - 1) {
+            Divider()
+              .color($r('app.color.divider'))
+              .margin({ left: 50, right: 14 })
+          }
+        }
+      }, (item: RankingDisplayItem, index: number) => `${index}_${item.name}_${item.value}`)
+    }
+    .width('100%')
+    .backgroundColor(this.surfaceColor)
+    .borderRadius(18)
+    .clip(true)
+    .border({ width: 1, color: $r('app.color.divider') })
+    .visualEffect(buildPointLightBorderEffect())
+  }
+}
+
+// 近 N 天每日用量柱状趋势图。沿用排行进度条的视觉语言(圆角条 + 主题色 + 入场动画)。
+@ComponentV2
+struct UsageTrendChart {
+  @Param points: DailyUsagePoint[] = []
+  @Param compact: boolean = false       // 峰值标注是否用 K/M(Token 用)
+  @Param themePrimary: string = '#4E6F9E'
+  @Param themePrimaryLight: string = '#D8E2EE'
+  @Param surfaceColor: string = '#FFFDF8'
+  @Param animationProgress: number = 0
+
+  private static readonly BAR_AREA_HEIGHT: number = 96
+  private static readonly MIN_BAR_HEIGHT: number = 3
+
+  private getMaxValue(): number {
+    let max = 0
+    for (let i = 0; i < this.points.length; i++) {
+      if (this.points[i].value > max) {
+        max = this.points[i].value
+      }
+    }
+    return max
+  }
+
+  private getBarHeight(value: number): number {
+    const max = this.getMaxValue()
+    if (max <= 0) {
+      return UsageTrendChart.MIN_BAR_HEIGHT
+    }
+    const h = (value / max) * UsageTrendChart.BAR_AREA_HEIGHT * this.animationProgress
+    return h < UsageTrendChart.MIN_BAR_HEIGHT ? UsageTrendChart.MIN_BAR_HEIGHT : h
+  }
+
+  // YYYY-MM-DD -> MM-DD
+  private shortDay(day: string): string {
+    return day.length >= 10 ? day.substring(5) : day
+  }
+
+  private firstDay(): string {
+    return this.points.length > 0 ? this.shortDay(this.points[0].day) : ''
+  }
+
+  private midDay(): string {
+    return this.points.length > 0 ? this.shortDay(this.points[Math.floor(this.points.length / 2)].day) : ''
+  }
+
+  private lastDay(): string {
+    return this.points.length > 0 ? this.shortDay(this.points[this.points.length - 1].day) : ''
+  }
+
+  private peakText(): string {
+    const max = this.getMaxValue()
+    return this.compact ? formatCompactNumber(max) : max.toString()
+  }
+
+  build() {
+    Column() {
+      Row() {
+        Text($r('app.string.usage_stats_trend_peak'))
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+        Text(this.peakText())
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.themePrimary)
+          .margin({ left: 4 })
+        Blank()
+      }
+      .width('100%')
+
+      Row({ space: 2 }) {
+        ForEach(this.points, (point: DailyUsagePoint) => {
+          Column()
+            .layoutWeight(1)
+            .height(this.getBarHeight(point.value))
+            .borderRadius(2)
+            .backgroundColor(point.value > 0 ? this.themePrimary : this.themePrimaryLight)
+        }, (point: DailyUsagePoint, index: number) => `${index}_${point.day}_${point.value}`)
+      }
+      .width('100%')
+      .height(UsageTrendChart.BAR_AREA_HEIGHT)
+      .alignItems(VerticalAlign.Bottom)
+      .margin({ top: 10 })
+
+      Row() {
+        Text(this.firstDay())
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+        Blank()
+        Text(this.midDay())
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+        Blank()
+        Text(this.lastDay())
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+      .margin({ top: 8 })
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(this.surfaceColor)
+    .borderRadius(18)
     .border({ width: 1, color: $r('app.color.divider') })
     .visualEffect(buildPointLightBorderEffect())
   }
@@ -136,6 +386,20 @@ struct UsageStatsPage {
   @Local distinctModelCount: number = 0
   @Local activeDayCount: number = 0
   @Local ranking: ModelUsageRankingItem[] = []
+  // Token 用量
+  @Local totalTokens: number = 0
+  @Local inputTokens: number = 0
+  @Local outputTokens: number = 0
+  @Local avgTokensPerReply: number = 0
+  @Local tokenRanking: TokenModelRankingItem[] = []
+  @Local tokenTrend: DailyUsagePoint[] = []
+  // 生图统计
+  @Local imageTotal: number = 0
+  @Local imageGenerate: number = 0
+  @Local imageEdit: number = 0
+  @Local imageModelCount: number = 0
+  @Local imageRanking: ModelUsageRankingItem[] = []
+  @Local imageTrend: DailyUsagePoint[] = []
   @Local isLoading: boolean = true
   @Local rankingAnimationProgress: number = 0
   @Local rangeSwipeOffsetX: number = 0
@@ -175,6 +439,12 @@ struct UsageStatsPage {
       const rangeStart = this.getRangeStartMs()
       const overview = await db.getUsageOverview(rangeStart)
       const ranking = await db.getModelUsageRanking(rangeStart, RANKING_LIMIT)
+      const tokenRanking = await db.getTokenModelRanking(rangeStart, RANKING_LIMIT)
+      const imageStats = await db.getImageGenerationStats(rangeStart)
+      const imageRanking = await db.getImageModelRanking(rangeStart, RANKING_LIMIT)
+      // 趋势固定"近 N 天",不随 ALL / 近30天 切换变化
+      const tokenTrend = await db.getTokenDailyTrend(TREND_DAYS)
+      const imageTrend = await db.getImageDailyTrend(TREND_DAYS)
       if (loadToken !== this.statsLoadToken) {
         return
       }
@@ -183,6 +453,19 @@ struct UsageStatsPage {
       this.distinctModelCount = overview.distinctModelCount
       this.activeDayCount = overview.activeDayCount
       this.ranking = ranking
+      this.totalTokens = overview.totalTokens
+      this.inputTokens = overview.inputTokens
+      this.outputTokens = overview.outputTokens
+      this.avgTokensPerReply = overview.tokenMessageCount > 0 ?
+        Math.round(overview.totalTokens / overview.tokenMessageCount) : 0
+      this.tokenRanking = tokenRanking
+      this.tokenTrend = tokenTrend
+      this.imageTotal = imageStats.total
+      this.imageGenerate = imageStats.generateCount
+      this.imageEdit = imageStats.editCount
+      this.imageModelCount = imageStats.distinctModelCount
+      this.imageRanking = imageRanking
+      this.imageTrend = imageTrend
       this.startRankingAnimation()
     } catch (error) {
       console.error(TAG, `Failed to load usage stats: ${JSON.stringify(error)}`)
@@ -202,7 +485,7 @@ struct UsageStatsPage {
 
   private startRankingAnimation(): void {
     this.clearRankingAnimationTimer()
-    if (this.ranking.length === 0) {
+    if (this.isEmpty()) {
       this.rankingAnimationProgress = 1
       return
     }
@@ -241,52 +524,54 @@ struct UsageStatsPage {
       })
   }
 
-  private getMaxRankingCount(): number {
-    let max = 0
-    for (let i = 0; i < this.ranking.length; i++) {
-      const c = this.ranking[i].count
-      if (c > max) {
-        max = c
-      }
+  private displayModelName(modelName: string, modelId: string): string {
+    if (modelName !== '') {
+      return modelName
     }
-    return max
-  }
-
-  private getRankingFraction(count: number): number {
-    const max = this.getMaxRankingCount()
-    if (max <= 0) {
-      return 0
-    }
-    const fraction = count / max
-    if (fraction < 0.04) {
-      return 0.04
-    }
-    return fraction
-  }
-
-  private getAnimatedRankingFraction(count: number): number {
-    return this.getRankingFraction(count) * this.rankingAnimationProgress
-  }
-
-  private getAnimatedRankingCount(count: number): number {
-    if (this.rankingAnimationProgress >= 1) {
-      return count
-    }
-    return Math.floor(count * this.rankingAnimationProgress)
-  }
-
-  private getRankingDisplayName(item: ModelUsageRankingItem): string {
-    if (item.modelName !== '') {
-      return item.modelName
-    }
-    if (item.modelId !== '') {
-      return item.modelId
+    if (modelId !== '') {
+      return modelId
     }
     return '—'
   }
 
+  private modelRankingRows(): RankingDisplayItem[] {
+    const rows: RankingDisplayItem[] = []
+    for (let i = 0; i < this.ranking.length; i++) {
+      const item = this.ranking[i]
+      rows.push({ name: this.displayModelName(item.modelName, item.modelId), value: item.count })
+    }
+    return rows
+  }
+
+  private tokenRankingRows(): RankingDisplayItem[] {
+    const rows: RankingDisplayItem[] = []
+    for (let i = 0; i < this.tokenRanking.length; i++) {
+      const item = this.tokenRanking[i]
+      rows.push({ name: this.displayModelName(item.modelName, item.modelId), value: item.totalTokens })
+    }
+    return rows
+  }
+
+  private imageRankingRows(): RankingDisplayItem[] {
+    const rows: RankingDisplayItem[] = []
+    for (let i = 0; i < this.imageRanking.length; i++) {
+      const item = this.imageRanking[i]
+      rows.push({ name: this.displayModelName(item.modelName, item.modelId), value: item.count })
+    }
+    return rows
+  }
+
+  private hasTrendData(points: DailyUsagePoint[]): boolean {
+    for (let i = 0; i < points.length; i++) {
+      if (points[i].value > 0) {
+        return true
+      }
+    }
+    return false
+  }
+
   private isEmpty(): boolean {
-    return this.ranking.length === 0 && this.messageCount === 0
+    return this.messageCount === 0 && this.ranking.length === 0 && this.imageTotal === 0
   }
 
   private switchRange(rangeKey: UsageRangeKey): void {
@@ -489,73 +774,119 @@ struct UsageStatsPage {
   }
 
   @Builder
-  private RankingRow(item: ModelUsageRankingItem, rank: number) {
-    Column({ space: 8 }) {
-      Row() {
-        Text(`${rank}`)
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(rank <= 3 ? this.themePrimary : $r('app.color.text_tertiary'))
-          .width(22)
-
-        Text(this.getRankingDisplayName(item))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(`${this.getAnimatedRankingCount(item.count)}`)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-          .margin({ left: 8 })
+  private TokenMetricsGrid() {
+    Column({ space: 10 }) {
+      Row({ space: 10 }) {
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.character_textbox'),
+            title: $r('app.string.usage_stats_metric_total_tokens'),
+            valueText: formatCompactNumber(this.totalTokens),
+            unit: $r('app.string.usage_stats_unit_token'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.chevron_up'),
+            title: $r('app.string.usage_stats_metric_input_tokens'),
+            valueText: formatCompactNumber(this.inputTokens),
+            unit: $r('app.string.usage_stats_unit_token'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
 
-      // 进度条
-      Stack({ alignContent: Alignment.Start }) {
-        Column()
-          .width('100%')
-          .height(6)
-          .borderRadius(3)
-          .backgroundColor($r('app.color.divider'))
-
-        Column()
-          .width(`${this.getAnimatedRankingFraction(item.count) * 100}%`)
-          .height(6)
-          .borderRadius(3)
-          .backgroundColor(this.themePrimary)
+      Row({ space: 10 }) {
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.chevron_down'),
+            title: $r('app.string.usage_stats_metric_output_tokens'),
+            valueText: formatCompactNumber(this.outputTokens),
+            unit: $r('app.string.usage_stats_unit_token'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.ellipsis_message'),
+            title: $r('app.string.usage_stats_metric_avg_tokens'),
+            valueText: formatCompactNumber(this.avgTokensPerReply),
+            unit: $r('app.string.usage_stats_unit_token'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
       }
       .width('100%')
-      .margin({ left: 22 })
     }
     .width('100%')
-    .padding({ top: 10, bottom: 10, left: 14, right: 14 })
   }
 
   @Builder
-  private RankingCard() {
-    Column() {
-      ForEach(this.ranking, (item: ModelUsageRankingItem, index: number) => {
+  private ImageMetricsGrid() {
+    Column({ space: 10 }) {
+      Row({ space: 10 }) {
         Column() {
-          this.RankingRow(item, index + 1)
-          if (index < this.ranking.length - 1) {
-            Divider()
-              .color($r('app.color.divider'))
-              .margin({ left: 50, right: 14 })
-          }
-        }
-      }, (item: ModelUsageRankingItem, index: number) => `${index}_${item.modelName}_${item.modelId}`)
+          UsageMetricCard({
+            icon: $r('sys.symbol.picture'),
+            title: $r('app.string.usage_stats_metric_image_total'),
+            value: this.imageTotal,
+            unit: $r('app.string.usage_stats_unit_image'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.wand_and_stars'),
+            title: $r('app.string.usage_stats_metric_image_generate'),
+            value: this.imageGenerate,
+            unit: $r('app.string.usage_stats_unit_image'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+      }
+      .width('100%')
+
+      Row({ space: 10 }) {
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.picture_star_fill'),
+            title: $r('app.string.usage_stats_metric_image_edit'),
+            value: this.imageEdit,
+            unit: $r('app.string.usage_stats_unit_image'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+        Column() {
+          UsageMetricCard({
+            icon: $r('sys.symbol.square_stack_3d'),
+            title: $r('app.string.usage_stats_metric_image_models'),
+            value: this.imageModelCount,
+            unit: $r('app.string.usage_stats_unit_count'),
+            primaryColor: this.themePrimary,
+            primaryLightColor: this.themePrimaryLight,
+            surfaceColor: this.themeSurface
+          })
+        }.layoutWeight(1)
+      }
+      .width('100%')
     }
     .width('100%')
-    .backgroundColor(this.themeSurface)
-    .borderRadius(18)
-    .clip(true)
-    .border({ width: 1, color: $r('app.color.divider') })
-    .visualEffect(buildPointLightBorderEffect())
   }
 
   @Builder
@@ -604,15 +935,106 @@ struct UsageStatsPage {
             .width('100%')
             .margin({ top: 6 })
 
-            // 模型排行
+            // 模型调用排行
             if (this.ranking.length > 0) {
               Column() {
                 this.SectionTitle($r('app.string.usage_stats_ranking_title'),
                   $r('app.string.usage_stats_ranking_subtitle'))
-                this.RankingCard()
+                RankingListView({
+                  rows: this.modelRankingRows(),
+                  compact: false,
+                  themePrimary: this.themePrimary,
+                  surfaceColor: this.themeSurface,
+                  animationProgress: this.rankingAnimationProgress
+                })
               }
               .width('100%')
               .margin({ top: 18 })
+            }
+
+            // Token 用量
+            if (this.totalTokens > 0) {
+              Column() {
+                this.SectionTitle($r('app.string.usage_stats_token_overview_title'),
+                  $r('app.string.usage_stats_token_overview_subtitle'))
+                this.TokenMetricsGrid()
+              }
+              .width('100%')
+              .margin({ top: 18 })
+
+              if (this.tokenRanking.length > 0) {
+                Column() {
+                  this.SectionTitle($r('app.string.usage_stats_token_ranking_title'),
+                    $r('app.string.usage_stats_token_ranking_subtitle'))
+                  RankingListView({
+                    rows: this.tokenRankingRows(),
+                    compact: true,
+                    themePrimary: this.themePrimary,
+                    surfaceColor: this.themeSurface,
+                    animationProgress: this.rankingAnimationProgress
+                  })
+                }
+                .width('100%')
+                .margin({ top: 18 })
+              }
+
+              if (this.hasTrendData(this.tokenTrend)) {
+                Column() {
+                  this.SectionTitle($r('app.string.usage_stats_token_trend_title'), null)
+                  UsageTrendChart({
+                    points: this.tokenTrend,
+                    compact: true,
+                    themePrimary: this.themePrimary,
+                    themePrimaryLight: this.themePrimaryLight,
+                    surfaceColor: this.themeSurface,
+                    animationProgress: this.rankingAnimationProgress
+                  })
+                }
+                .width('100%')
+                .margin({ top: 18 })
+              }
+            }
+
+            // AI 生图
+            if (this.imageTotal > 0) {
+              Column() {
+                this.SectionTitle($r('app.string.usage_stats_image_overview_title'), null)
+                this.ImageMetricsGrid()
+              }
+              .width('100%')
+              .margin({ top: 18 })
+
+              if (this.imageRanking.length > 0) {
+                Column() {
+                  this.SectionTitle($r('app.string.usage_stats_image_ranking_title'),
+                    $r('app.string.usage_stats_image_ranking_subtitle'))
+                  RankingListView({
+                    rows: this.imageRankingRows(),
+                    compact: false,
+                    themePrimary: this.themePrimary,
+                    surfaceColor: this.themeSurface,
+                    animationProgress: this.rankingAnimationProgress
+                  })
+                }
+                .width('100%')
+                .margin({ top: 18 })
+              }
+
+              if (this.hasTrendData(this.imageTrend)) {
+                Column() {
+                  this.SectionTitle($r('app.string.usage_stats_image_trend_title'), null)
+                  UsageTrendChart({
+                    points: this.imageTrend,
+                    compact: false,
+                    themePrimary: this.themePrimary,
+                    themePrimaryLight: this.themePrimaryLight,
+                    surfaceColor: this.themeSurface,
+                    animationProgress: this.rankingAnimationProgress
+                  })
+                }
+                .width('100%')
+                .margin({ top: 18 })
+              }
             }
           }
 

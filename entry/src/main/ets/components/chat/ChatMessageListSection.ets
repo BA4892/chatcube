@@ -512,6 +512,19 @@ export struct ChatMessageListSection {
             })
           }, (item: ChatMessageRowData): string => item.key)
 
+          if (!this.isEditingMessage && !this.isMultiSelectMode && this.suggestedQuestions.length > 0) {
+            ListItem({ style: ListItemStyle.NONE }) {
+              ChatSuggestedQuestionsSection({
+                questions: this.suggestedQuestions,
+                selectedQuestion: this.inputText,
+                contentMaxWidth: this.getEffectiveContentMaxWidth(),
+                onQuestionClick: (question: string): void => {
+                  this.onSuggestedQuestionClick(question)
+                }
+              })
+            }
+          }
+
           if (!this.isEditingMessage && this.showDraftPreview) {
             ListItem({ style: ListItemStyle.NONE }) {
               Row() {
@@ -534,18 +547,6 @@ export struct ChatMessageListSection {
               .justifyContent(FlexAlign.Center)
             }
             .padding({ left: 14, right: 14, top: 5, bottom: 5 })
-          }
-
-          if (!this.isEditingMessage && !this.isMultiSelectMode && this.suggestedQuestions.length > 0) {
-            ListItem({ style: ListItemStyle.NONE }) {
-              ChatSuggestedQuestionsSection({
-                questions: this.suggestedQuestions,
-                contentMaxWidth: this.getEffectiveContentMaxWidth(),
-                onQuestionClick: (question: string): void => {
-                  this.onSuggestedQuestionClick(question)
-                }
-              })
-            }
           }
 
           ListItem({ style: ListItemStyle.NONE }) {

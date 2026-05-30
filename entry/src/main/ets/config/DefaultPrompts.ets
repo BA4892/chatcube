@@ -1,45 +1,18 @@
 // 默认 Prompt 模板
 
 export class DefaultPrompts {
-  // 标题生成 System Prompt（角色设定 + 规则 + 示例）
-  static readonly TITLE_SYSTEM_PROMPT: string = `你是对话标题生成器。你的任务是为一段对话提炼一个简短的主题标题。
+  // 标题生成 Prompt（参考 RikkaHub 的标题摘要提示词）
+  static readonly TITLE_PROMPT: string = `I will give you some dialogue content in the \`<content>\` block.
+You need to summarize the conversation between user and assistant into a short title.
+1. The title language should be consistent with the user's primary language
+2. Do not use punctuation or other special symbols
+3. Reply directly with the title
+4. Summarize using {locale} language
+5. The title should not exceed 10 characters
 
-核心规则：
-1. 提炼对话的核心话题或主题，而不是复述用户的提问
-2. 标题应概括"在聊什么"，而非"问了什么"
-3. 长度：4-20个字符
-4. 使用{locale}
-5. 不使用标点符号和引号
-6. 只输出标题，不要任何解释
-
-示例：
-用户问"帮我写一个Python快速排序" → 标题：Python快速排序
-用户问"JavaScript中map和forEach有什么区别" → 标题：map与forEach区别
-用户问"最近总是失眠怎么办" → 标题：失眠调理建议
-用户问"帮我翻译这段话成英文" → 标题：中英翻译
-用户问"React的useEffect怎么用" → 标题：useEffect用法
-用户问"今天上海天气怎么样" → 标题：上海天气查询
-用户问"推荐几本科幻小说" → 标题：科幻小说推荐
-用户问"这段代码为什么报错" → 标题：代码错误排查`
-
-  // 标题生成 User Prompt（对话内容）
-  static readonly TITLE_USER_PROMPT: string = `对话内容：
+<content>
 {content}
-
-请输出标题：`
-
-  // 旧版标题 Prompt（保留兼容性）
-  static readonly TITLE_PROMPT: string = `请为以下对话生成一个简短的标题。
-
-要求：
-1. 标题长度：4-20个字符
-2. 使用{locale}语言
-3. 不使用标点符号
-4. 提炼对话的核心话题，不要复述用户的提问
-5. 直接输出标题，不要解释
-
-对话内容：
-{content}`
+</content>`
 
   // 翻译 Prompt
   static readonly TRANSLATE_PROMPT: string = `You are a translation expert, skilled in translating various languages, and maintaining accuracy, faithfulness, and elegance in translation.
@@ -50,11 +23,26 @@ Please translate the <source_text> section:
 {source_text}
 </source_text>`
 
+  // 推荐候选词 Prompt（参考 RikkaHub 的用户视角续聊建议）
+  static readonly SUGGESTION_PROMPT: string = `I will provide you with some chat content in the \`<content>\` block, including conversations between the User and the AI assistant.
+You need to act as the **User** to reply to the assistant, generating 3~5 appropriate and contextually relevant responses to the assistant.
+
+Rules:
+1. Reply directly with suggestions, do not add any formatting, and separate suggestions with newlines, no need to add markdown list formats.
+2. Use {locale} language.
+3. Ensure each suggestion is valid.
+4. Each suggestion should not exceed 10 characters.
+5. Imitate the user's previous conversational style.
+6. Act as a User, not an Assistant!
+
+<content>
+{content}
+</content>`
+
   // 默认翻译目标语言
   static readonly DEFAULT_TARGET_LANGUAGE: string = 'Chinese'
 
   // 硅基流动默认配置（免费模型）
   static readonly SILICONFLOW_PROVIDER_ID: string = 'siliconflow'
-  static readonly SILICONFLOW_TITLE_MODEL: string = 'Qwen/Qwen3-8B'
   static readonly SILICONFLOW_TRANSLATE_MODEL: string = 'THUDM/GLM-4-9B-0414'
 }

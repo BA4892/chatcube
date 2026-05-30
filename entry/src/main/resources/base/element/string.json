@@ -445,6 +445,86 @@
       "value": "Start chatting with AI and your usage will show up here"
     },
     {
+      "name": "usage_stats_unit_token",
+      "value": ""
+    },
+    {
+      "name": "usage_stats_unit_image",
+      "value": ""
+    },
+    {
+      "name": "usage_stats_token_overview_title",
+      "value": "Token Usage"
+    },
+    {
+      "name": "usage_stats_token_overview_subtitle",
+      "value": "Counts new chats after this update only"
+    },
+    {
+      "name": "usage_stats_metric_total_tokens",
+      "value": "Total tokens"
+    },
+    {
+      "name": "usage_stats_metric_input_tokens",
+      "value": "Input"
+    },
+    {
+      "name": "usage_stats_metric_output_tokens",
+      "value": "Output"
+    },
+    {
+      "name": "usage_stats_metric_avg_tokens",
+      "value": "Avg / reply"
+    },
+    {
+      "name": "usage_stats_token_ranking_title",
+      "value": "Tokens by model"
+    },
+    {
+      "name": "usage_stats_token_ranking_subtitle",
+      "value": "Top 10 · by total tokens"
+    },
+    {
+      "name": "usage_stats_token_trend_title",
+      "value": "Daily tokens · last 30 days"
+    },
+    {
+      "name": "usage_stats_trend_peak",
+      "value": "Peak"
+    },
+    {
+      "name": "usage_stats_image_overview_title",
+      "value": "Image Generation"
+    },
+    {
+      "name": "usage_stats_metric_image_total",
+      "value": "Images"
+    },
+    {
+      "name": "usage_stats_metric_image_generate",
+      "value": "Generated"
+    },
+    {
+      "name": "usage_stats_metric_image_edit",
+      "value": "Edited"
+    },
+    {
+      "name": "usage_stats_metric_image_models",
+      "value": "Models"
+    },
+    {
+      "name": "usage_stats_image_ranking_title",
+      "value": "Images by model"
+    },
+    {
+      "name": "usage_stats_image_ranking_subtitle",
+      "value": "Top 10 · by image count"
+    },
+    {
+      "name": "usage_stats_image_trend_title",
+      "value": "Daily images · last 30 days"
+    },
+    {
       "name": "export_title",
       "value": "Export Data"
     },
@@ -1638,7 +1718,19 @@
     },
     {
       "name": "default_model_desc_title_generation",
-      "value": "Automatically generate conversation titles"
+      "value": "Choose a separate model to generate conversation titles"
+    },
+    {
+      "name": "default_model_section_suggestion",
+      "value": "Suggested Questions Model"
+    },
+    {
+      "name": "default_model_role_suggestion",
+      "value": "Suggested Questions"
+    },
+    {
+      "name": "default_model_desc_suggestion",
+      "value": "Choose a separate model to generate chat-end suggestions"
     },
     {
       "name": "default_model_section_translate",
@@ -1677,6 +1769,10 @@
       "value": "Edit Translation Prompt"
     },
     {
+      "name": "default_model_prompt_edit_title_suggestion",
+      "value": "Edit Suggested Questions Prompt"
+    },
+    {
       "name": "default_model_prompt_variables",
       "value": "Available variables:"
     },
@@ -1689,6 +1785,10 @@
       "value": "{source_text} - Source text\\n{target_lang} - Target language"
     },
     {
+      "name": "default_model_prompt_suggestion_variables_hint",
+      "value": "{content} - Conversation content\\n{locale} - Locale"
+    },
+    {
       "name": "default_model_reset_prompt",
       "value": "Reset to default"
     },
@@ -1699,6 +1799,10 @@
     {
       "name": "default_model_select_title_model",
       "value": "Select title generation model"
+    },
+    {
+      "name": "default_model_select_suggestion_model",
+      "value": "Select suggested questions model"
     },
     {
       "name": "default_model_select_translate_model",

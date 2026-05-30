@@ -24,6 +24,31 @@ export function buildPointLightBorderEffect(sourceBright: boolean = false): uiEf
     .buildEffect()
 }
 
+export function buildDualEdgeFlowLightBorderEffect(): uiEffect.VisualEffect {
+  return new hdsEffect.HdsEffectBuilder()
+    .shaderEffect({
+      effectType: hdsEffect.EffectType.DUAL_EDGE_FLOW_LIGHT,
+      animation: {
+        duration: 4000,
+        iterations: -1,
+        autoPlay: true
+      },
+      params: {
+        firstEdgeFlowLight: {
+          startPos: 0,
+          endPos: 1,
+          color: '#1AD0F1'
+        },
+        secondEdgeFlowLight: {
+          startPos: 0.5,
+          endPos: 1.5,
+          color: '#FFA4E5'
+        }
+      }
+    })
+    .buildEffect()
+}
+
 export class HdsTopNavigationBlurOptions {
   startPaddingVp: number = 0
   endPaddingVp: number = 0

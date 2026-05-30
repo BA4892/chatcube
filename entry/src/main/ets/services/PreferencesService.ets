@@ -23,6 +23,10 @@ export class PreferenceKeys {
   static readonly DEFAULT_TITLE_PROVIDER_ID: string = 'default_title_provider_id'
   static readonly DEFAULT_TITLE_MODEL_NAME: string = 'default_title_model_name'
   static readonly DEFAULT_TITLE_PROVIDER_NAME: string = 'default_title_provider_name'
+  static readonly DEFAULT_SUGGESTION_MODEL_ID: string = 'default_suggestion_model_id'
+  static readonly DEFAULT_SUGGESTION_PROVIDER_ID: string = 'default_suggestion_provider_id'
+  static readonly DEFAULT_SUGGESTION_MODEL_NAME: string = 'default_suggestion_model_name'
+  static readonly DEFAULT_SUGGESTION_PROVIDER_NAME: string = 'default_suggestion_provider_name'
   static readonly DEFAULT_TRANSLATE_MODEL_ID: string = 'default_translate_model_id'
   static readonly DEFAULT_TRANSLATE_PROVIDER_ID: string = 'default_translate_provider_id'
   static readonly DEFAULT_TRANSLATE_MODEL_NAME: string = 'default_translate_model_name'
@@ -39,6 +43,7 @@ export class PreferenceKeys {
 
   // Prompt 配置
   static readonly TITLE_PROMPT_TEMPLATE: string = 'title_prompt_template'
+  static readonly SUGGESTION_PROMPT_TEMPLATE: string = 'suggestion_prompt_template'
   static readonly TRANSLATE_PROMPT_TEMPLATE: string = 'translate_prompt_template'
   static readonly TRANSLATE_TARGET_LANGUAGE: string = 'translate_target_language'
   static readonly CUSTOM_SYSTEM_PROMPT: string = 'custom_system_prompt'
