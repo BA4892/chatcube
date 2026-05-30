@@ -675,7 +675,6 @@ export struct ChatPage {
     }
     const seq = this.suggestedQuestionGenerationSeq + 1
     this.suggestedQuestionGenerationSeq = seq
-    const shouldStayAtBottom = this.isAtBottom
     this.chatViewModel.generateSuggestedQuestionsForSession(sessionId).then((questions: string[]): void => {
       if (seq !== this.suggestedQuestionGenerationSeq || this.sessionId !== sessionId) {
         return
@@ -685,7 +684,7 @@ export struct ChatPage {
       }
       this.suggestedQuestions = [...questions]
       this.markMessageListChanged()
-      if (questions.length > 0 && shouldStayAtBottom) {
+      if (questions.length > 0 && this.getScrollUiFlow().shouldKeepBottomPinned()) {
         this.alignListToBottomAfterLayout()
       }
     }).catch((error: Error): void => {
@@ -2647,7 +2646,7 @@ export struct ChatPage {
                   }
                   this.isInputFocused = true
                   setTimeout(() => {
-                    this.getScrollUiFlow().alignToBottomAfterLayout()
+                    this.getScrollUiFlow().alignToBottomIfPinned()
                   }, 200)
                 }
               },
