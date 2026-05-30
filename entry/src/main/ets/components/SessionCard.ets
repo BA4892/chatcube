@@ -6,7 +6,9 @@ import {
   SESSION_DRAFT_TAG_TEXT
 } from '../utils/ChatSessionDisplayHelper'
 import { getAppUiState } from '../state/AppUiState'
-import { buildPointLightBorderEffect } from '../utils/HdsVisualEffectUtil'
+import { buildPointLightBorderEffect, getCurrentMaterialBlurStyle } from '../utils/HdsVisualEffectUtil'
+import { withColorAlpha } from '../utils/ColorAlphaUtils'
+import { SymbolGlyphModifier } from '@kit.ArkUI'
 
 @ComponentV2
 export struct SessionCard {
@@ -39,6 +41,9 @@ export struct SessionCard {
   private get themeTextTertiary(): string {
     return getAppUiState().themeTextTertiary
   }
+  private get materialType(): number {
+    return getAppUiState().materialType
+  }
   @Param uiVisualEnhanced: boolean = false
   @Event onTap: () => void = () => {}
   @Event onDelete: () => void = () => {}
@@ -63,6 +68,13 @@ export struct SessionCard {
 
   private hasDraftPreview(): boolean {
     return hasSessionDraftContent(this.session)
+  }
+
+  private getContextMenuBackgroundColor(): string {
+    if (this.materialType === 0) {
+      return this.themeSurface
+    }
+    return withColorAlpha(this.themeSurface, this.isDarkMode ? 'E8' : 'D9')
   }
 
   @Builder
@@ -97,73 +109,37 @@ export struct SessionCard {
   @Builder
   SessionContextMenu() {
     Menu() {
-      MenuItem({ startIcon: $r('sys.symbol.checkmark_circle'), content: $r('app.string.menu_multi_select') })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_circle')).fontSize(16),
+        content: $r('app.string.menu_multi_select')
+      })
         .onClick(() => {
           this.onMultiSelect()
         })
-      MenuItem({ startIcon: $r('sys.symbol.share'), content: $r('app.string.menu_share') })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.share')).fontSize(16),
+        content: $r('app.string.menu_share')
+      })
         .onClick(() => {
           this.onShare()
         })
-      MenuItem({ startIcon: $r('sys.symbol.heart'), content: this.getFavoriteMenuText() })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.heart')).fontSize(16),
+        content: this.getFavoriteMenuText()
+      })
         .onClick(() => {
           this.onToggleFavorite()
         })
-      MenuItem({ startIcon: $r('sys.symbol.trash'), content: $r('app.string.delete') })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.trash')).fontSize(16)
+          .fontColor([$r('app.color.status_error')]),
+        content: $r('app.string.delete')
+      })
         .contentFontColor('#FF3B30')
         .onClick(() => {
           this.onDelete()
         })
     }
-  }
-
-  @Builder
-  SessionPreview() {
-    Row() {
-      Column() {
-        SymbolGlyph($r('sys.symbol.ellipsis_message_fill'))
-          .fontSize(18)
-          .fontColor([this.themePrimary])
-      }
-      .width(36)
-      .height(36)
-      .borderRadius(9)
-      .backgroundColor(this.themePrimaryLight)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-
-      Column() {
-        Text(this.session.title)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.themeTextPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        if (this.getPreviewText() !== '') {
-          Row() {
-            this.PreviewTextContent()
-          }
-          .width('100%')
-            .margin({ top: 2 })
-        } else {
-          Text($r('app.string.session_no_preview'))
-            .fontSize(12)
-            .fontColor(this.themeTextSecondary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 2 })
-        }
-      }
-      .alignItems(HorizontalAlign.Start)
-      .margin({ left: 10 })
-      .layoutWeight(1)
-    }
-    .width(290)
-    .padding(12)
-    .backgroundColor(this.themeSurface)
-    .border({ width: 1, color: this.themeDivider })
-    .borderRadius(12)
   }
 
   @Builder
@@ -276,7 +252,14 @@ export struct SessionCard {
       this.onTap()
     })
     .bindContextMenu(this.enableContextMenu ? this.SessionContextMenu : undefined, ResponseType.LongPress, {
-      preview: this.SessionPreview
+      preview: MenuPreviewMode.IMAGE,
+      previewBorderRadius: 12,
+      previewAnimationOptions: {
+        scale: [1, 1.04]
+      },
+      backgroundColor: this.getContextMenuBackgroundColor(),
+      backgroundBlurStyle: getCurrentMaterialBlurStyle(),
+      borderRadius: 16
     })
   }
 
@@ -360,4 +343,3 @@ export struct SessionCard {
     return `${Math.floor(this.getRelativeDiff(timestamp) / (24 * 60 * 60 * 1000))}`
   }
 }
-
