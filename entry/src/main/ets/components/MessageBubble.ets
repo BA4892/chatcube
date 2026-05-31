@@ -645,8 +645,8 @@ export struct MessageBubble {
 
   private shouldEnableMarkdownTextSelection(): boolean {
     // lv-markdown-in 懒渲染在文本选择开启时会自动回退普通渲染。
-    // 不再让文本选择能力随生成态切换,避免完成瞬间重配 MarkdownController 导致二次重排。
-    return false
+    // 生成中优先保证长文实时渲染性能,结束后恢复文本选择/复制能力。
+    return !this.message.isGenerating
   }
 
   private applyMarkdownLazyRender(controller: MarkdownController): void {
