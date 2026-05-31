@@ -8,12 +8,12 @@ import {
   SearchReference
 } from '../models/ChatModels'
 import { Markdown, MarkdownController, MarkdownPlugin, PluginNode } from '@luvi/lv-markdown-in'
-import { webview } from '@kit.ArkWeb'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { shouldShowAssistantMessageToolbar } from '../utils/MessageBubbleDisplayUtils'
 import { AskUserCard } from './AskUserCard'
+import { CodePreviewSheet, getCodePreviewSheetTitle } from './CodePreviewSheet'
 import { TypingDots } from './TypingDots'
 import { CubeSpinnerBubble, CubeSpinnerLight } from './loading/CubeSpinner'
 import { AssistantAvatarView } from './AssistantAvatar'
@@ -41,6 +41,14 @@ import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { fingerprintLongString } from '../utils/MessageSignatureUtils'
 import { buildToolArgumentsPreview, buildToolResultPreview } from '../utils/ToolPayloadSummaryUtils'
+import { ChatMarkdownPreprocessor } from '../utils/ChatMarkdownPreprocessor'
+import {
+  CODE_PREVIEW_PLUGIN_KEY,
+  CODE_PREVIEW_PLUGIN_PATTERN,
+  CodePreviewBlock,
+  CodePreviewMarkerInjector,
+  CodePreviewRegistry
+} from '../utils/CodePreviewMarkerInjector'
 import { image } from '@kit.ImageKit'
 import { fileIo } from '@kit.CoreFileKit'
 import { fileUri } from '@kit.CoreFileKit'
@@ -64,22 +72,6 @@ interface ImageAttachmentEntry {
 interface ImagePartPreviewEntry {
   src: string
   previewId: string
-}
-
-interface CodePreviewBlock {
-  kind: string
-  language: string
-  code: string
-}
-
-interface CodePreviewMermaidPayload {
-  code: string
-  dark: boolean
-  primary: string
-  primaryLight: string
-  background: string
-  text: string
-  line: string
 }
 
 interface ToolSearchResultItemPayload {
@@ -114,10 +106,6 @@ interface AskUserTimelineAnswer {
 
 const TOOL_ARGUMENT_DETAIL_MAX_LENGTH = 1200
 const TOOL_RESULT_DETAIL_MAX_LENGTH = 1800
-const CODE_PREVIEW_PLUGIN_KEY = 'cube_code_preview'
-const CODE_PREVIEW_PLUGIN_PATTERN = '^\\[\\[cube-chat-preview:([A-Za-z0-9_]+):(html|mermaid):(\\d+)\\]\\]$'
-const CODE_PREVIEW_MARKER_PREFIX = '[[cube-chat-preview:'
-const MERMAID_PREVIEW_URL = 'resource://rawfile/mermaid/mermaid-preview.html'
 
 @ComponentV2
 export struct MessageBubble {
@@ -221,7 +209,7 @@ export struct MessageBubble {
   private cachedHasPreviewTextContent: boolean = false
   private cachedHasMessageTextContent: boolean = false
   private cachedHasToolbarPayload: boolean = false
-  private cachedReadonlyTranslatedText: string = ''
+  private cachedTranslatedText: string = ''
   private cachedPreviewImageEntries: ImageAttachmentEntry[] = []
   private cachedMessageImageEntries: ImageAttachmentEntry[] = []
   private cachedMessageFileAttachments: MessageAttachment[] = []
@@ -230,12 +218,8 @@ export struct MessageBubble {
   private derivedCacheSignature: string = ''
   private markdownRuntimeOptionsSignature: string = ''
   private finalizedMarkdownRenderTextCache: Map<string, string> = new Map()
-  private codePreviewBlocksByScope: Map<string, CodePreviewBlock[]> = new Map()
+  private codePreviewRegistry: CodePreviewRegistry = new CodePreviewRegistry()
   private codePreviewMarkdownPlugins: MarkdownPlugin[] = []
-  private codePreviewHtmlWebController: webview.WebviewController = new webview.WebviewController()
-  private codePreviewMermaidWebController: webview.WebviewController = new webview.WebviewController()
-  private isCodePreviewMermaidWebReady: boolean = false
-  private isCodePreviewMermaidPageReady: boolean = false
 
   @Event onRegenerate: () => void = () => {}
   @Event onCopy: () => void = () => {}
@@ -355,7 +339,7 @@ export struct MessageBubble {
     this.partMarkdownControllers.clear()
     this.markdownRuntimeOptionsSignature = ''
     this.finalizedMarkdownRenderTextCache.clear()
-    this.codePreviewBlocksByScope.clear()
+    this.codePreviewRegistry.clearAll()
     this.codePreviewMarkdownPlugins = []
   }
 
@@ -432,7 +416,7 @@ export struct MessageBubble {
     this.partMarkdownControllers.clear()
     this.markdownRuntimeOptionsSignature = ''
     this.finalizedMarkdownRenderTextCache.clear()
-    this.codePreviewBlocksByScope.clear()
+    this.codePreviewRegistry.clearAll()
     this.showCodePreview = false
     this.codePreviewKind = ''
     this.codePreviewCode = ''
@@ -646,7 +630,7 @@ export struct MessageBubble {
     this.cachedHasPreviewTextContent = this.cachedDisplayContent.length > 0
     this.cachedHasMessageTextContent = this.message.content.trim().length > 0
     this.cachedHasToolbarPayload = this.cachedHasMessageTextContent || this.message.hasAttachments()
-    this.cachedReadonlyTranslatedText = this.convertTaskListToReadonly(this.translatedText)
+    this.cachedTranslatedText = this.translatedText
     this.cachedPreviewImageEntries = this.buildImageAttachmentEntries(this.previewAttachments)
     this.cachedMessageImageEntries = this.buildImageAttachmentEntries(this.message.attachments, true)
     this.cachedMessageFileAttachments = this.getFileAttachments(this.message.attachments)
@@ -1269,14 +1253,14 @@ export struct MessageBubble {
     return this.cachedHasToolbarPayload
   }
 
-  private getReadonlyTranslatedText(): string {
+  private getTranslatedText(): string {
     this.ensureDerivedRenderCaches()
-    return this.cachedReadonlyTranslatedText
+    return this.cachedTranslatedText
   }
 
   private getMarkdownRenderText(content: string, scopeKey: string): string {
     if (content.length === 0) {
-      this.codePreviewBlocksByScope.delete(scopeKey)
+      this.codePreviewRegistry.clear(scopeKey)
       return content
     }
     if (this.message.isGenerating) {
@@ -1293,8 +1277,8 @@ export struct MessageBubble {
   }
 
   private buildMarkdownRenderText(content: string, scopeKey: string): string {
-    const normalized = this.convertTaskListToReadonly(content)
-    return this.injectCodePreviewMarkers(normalized, scopeKey)
+    const normalized = ChatMarkdownPreprocessor.preprocess(content)
+    return CodePreviewMarkerInjector.inject(normalized, scopeKey, this.codePreviewRegistry)
   }
 
   private getCodePreviewMarkdownPlugins(): MarkdownPlugin[] {
@@ -1321,104 +1305,6 @@ export struct MessageBubble {
     return 'reasoning_' + part.reasoningCreatedAt.toString()
   }
 
-  private buildCodePreviewMarker(scopeKey: string, kind: string, index: number): string {
-    return CODE_PREVIEW_MARKER_PREFIX + scopeKey + ':' + kind + ':' + index.toString() + ']]'
-  }
-
-  private getCodeFenceInfo(line: string): string | null {
-    let cursor = 0
-    while (cursor < line.length && line.charAt(cursor) === ' ') {
-      cursor++
-    }
-    if (cursor > 3 || line.substring(cursor, cursor + 3) !== '```') {
-      return null
-    }
-    let fenceEnd = cursor
-    while (fenceEnd < line.length && line.charAt(fenceEnd) === '`') {
-      fenceEnd++
-    }
-    return line.substring(fenceEnd)
-  }
-
-  private isClosingCodeFenceLine(line: string): boolean {
-    const info = this.getCodeFenceInfo(line)
-    return info !== null && info.trim().length === 0
-  }
-
-  private normalizeCodeFenceLanguage(info: string): string {
-    const trimmed = info.trim()
-    if (trimmed === '') {
-      return ''
-    }
-    const spaceIndex = trimmed.search(/\s/)
-    const language = spaceIndex >= 0 ? trimmed.substring(0, spaceIndex) : trimmed
-    return language.length > 32 ? language.substring(0, 32) : language
-  }
-
-  private getCodePreviewKindForLanguage(language: string): string {
-    const normalized = language.toLowerCase()
-    if (normalized === 'html' || normalized === 'htm') {
-      return 'html'
-    }
-    if (normalized === 'mermaid') {
-      return 'mermaid'
-    }
-    return ''
-  }
-
-  private appendPreviewCodeLine(blocks: CodePreviewBlock[], blockIndex: number, line: string, hasTrailingNewline: boolean): void {
-    if (blockIndex < 0 || blockIndex >= blocks.length) {
-      return
-    }
-    blocks[blockIndex].code += hasTrailingNewline ? line + '\n' : line
-  }
-
-  private injectCodePreviewMarkers(content: string, scopeKey: string): string {
-    const lines = content.split('\n')
-    const output: string[] = []
-    const blocks: CodePreviewBlock[] = []
-    let inFence = false
-    let activePreviewIndex = -1
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      const hasTrailingNewline = i < lines.length - 1
-      if (!inFence) {
-        const info = this.getCodeFenceInfo(line)
-        if (info !== null) {
-          const language = this.normalizeCodeFenceLanguage(info)
-          const kind = this.getCodePreviewKindForLanguage(language)
-          activePreviewIndex = -1
-          if (kind !== '') {
-            activePreviewIndex = blocks.length
-            blocks.push({
-              kind: kind,
-              language: language,
-              code: ''
-            })
-            output.push(this.buildCodePreviewMarker(scopeKey, kind, activePreviewIndex))
-          }
-          inFence = true
-        }
-        output.push(line)
-        continue
-      }
-
-      if (this.isClosingCodeFenceLine(line)) {
-        inFence = false
-        activePreviewIndex = -1
-        output.push(line)
-        continue
-      }
-
-      this.appendPreviewCodeLine(blocks, activePreviewIndex, line, hasTrailingNewline)
-      output.push(line)
-    }
-
-    this.codePreviewBlocksByScope.set(scopeKey, blocks)
-    return output.join('\n')
-  }
-
   private getPluginGroup(node: PluginNode, index: number): string {
     if (node.groups === undefined || index < 0 || index >= node.groups.length) {
       return ''
@@ -1433,11 +1319,10 @@ export struct MessageBubble {
     if (scopeKey === '' || kind === '' || Number.isNaN(index)) {
       return null
     }
-    const blocks = this.codePreviewBlocksByScope.get(scopeKey)
-    if (blocks === undefined || index < 0 || index >= blocks.length) {
+    const block = this.codePreviewRegistry.get(scopeKey, index)
+    if (block === null) {
       return null
     }
-    const block = blocks[index]
     if (block.kind !== kind) {
       return null
     }
@@ -1465,90 +1350,12 @@ export struct MessageBubble {
     return this.isCodePreviewPluginEnabled(node) ? '点击打开' : '等待代码'
   }
 
-  private getCodePreviewSheetTitle(): string {
-    if (this.codePreviewKind === '') {
-      return '预览'
-    }
-    return this.getCodePreviewKindLabel(this.codePreviewKind) + ' 预览'
-  }
-
-  private getCodePreviewBackgroundColor(): string {
-    return this.isDarkMode ? '#000000' : '#FFFFFF'
-  }
-
-  private getCodePreviewTextColor(): string {
-    return this.isDarkMode ? '#E8E8E8' : '#222222'
-  }
-
-  private getCodePreviewLineColor(): string {
-    return this.isDarkMode ? '#A8A8A8' : '#666666'
-  }
-
-  private getCodePreviewHtmlDataUrl(): string {
-    const bgColor = this.getCodePreviewBackgroundColor()
-    const textColor = this.getCodePreviewTextColor()
-    const wrappedHtml = '<!DOCTYPE html><html><head>' +
-      '<meta charset="utf-8">' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">' +
-      '<style>' +
-      '* { box-sizing: border-box; }' +
-      'html, body { width: 100%; min-height: 100%; margin: 0; padding: 12px; ' +
-      'font-family: HarmonyOS Sans, -apple-system, sans-serif; background: ' + bgColor + '; color: ' + textColor + '; }' +
-      'img { max-width: 100%; height: auto; }' +
-      'table { border-collapse: collapse; width: 100%; }' +
-      'th, td { border: 1px solid ' + (this.isDarkMode ? '#3A3A3A' : '#DDDDDD') + '; padding: 8px; text-align: left; }' +
-      'th { background: ' + (this.isDarkMode ? '#171717' : '#F5F5F5') + '; }' +
-      'a { color: ' + (this.isDarkMode ? '#9CBFE8' : '#4E6F9E') + '; }' +
-      'pre, code { font-family: monospace; }' +
-      'pre { padding: 12px; border-radius: 8px; overflow-x: auto; background: ' +
-      (this.isDarkMode ? '#101010' : '#F6F8FA') + '; }' +
-      '</style></head><body>' +
-      this.codePreviewCode +
-      '</body></html>'
-    return 'data:text/html;charset=utf-8,' + encodeURIComponent(wrappedHtml)
-  }
-
-  private getCodePreviewMermaidRenderScript(): string {
-    const payload: CodePreviewMermaidPayload = {
-      code: this.codePreviewCode,
-      dark: this.isDarkMode,
-      primary: this.themePrimary,
-      primaryLight: this.themePrimaryLight,
-      background: this.getCodePreviewBackgroundColor(),
-      text: this.getCodePreviewTextColor(),
-      line: this.getCodePreviewLineColor()
-    }
-    return 'window.renderMermaid(' + JSON.stringify(payload) + ')'
-  }
-
-  private renderCodePreviewMermaid(): void {
-    if (!this.isCodePreviewMermaidWebReady || !this.isCodePreviewMermaidPageReady) {
-      return
-    }
-    try {
-      this.codePreviewMermaidWebController.runJavaScript(this.getCodePreviewMermaidRenderScript())
-        .catch((error: Error) => {
-          hilog.error(DOMAIN, TAG, `Render code preview Mermaid failed: ${JSON.stringify(error)}`)
-        })
-    } catch (error) {
-      hilog.error(DOMAIN, TAG, `Run code preview Mermaid script failed: ${JSON.stringify(error)}`)
-    }
-  }
-
-  private resetCodePreviewWebRuntime(): void {
-    this.codePreviewHtmlWebController = new webview.WebviewController()
-    this.codePreviewMermaidWebController = new webview.WebviewController()
-    this.isCodePreviewMermaidWebReady = false
-    this.isCodePreviewMermaidPageReady = false
-  }
-
   private openCodePreviewFromPluginNode(node: PluginNode): void {
     const block = this.getCodePreviewBlockFromNode(node)
     if (block === null || block.code.trim().length === 0) {
       showToast(this.getUIContext(), pickLocalizedText('代码还在生成中', 'Code is still generating'))
       return
     }
-    this.resetCodePreviewWebRuntime()
     this.codePreviewKind = block.kind
     this.codePreviewCode = block.code
     this.showCodePreview = true
@@ -1588,33 +1395,10 @@ export struct MessageBubble {
 
   @Builder
   CodePreviewSheetBuilder() {
-    Column() {
-      if (this.codePreviewKind === 'mermaid') {
-        Web({ src: MERMAID_PREVIEW_URL, controller: this.codePreviewMermaidWebController })
-          .width('100%')
-          .layoutWeight(1)
-          .onControllerAttached(() => {
-            this.isCodePreviewMermaidWebReady = true
-          })
-          .onPageEnd(() => {
-            this.isCodePreviewMermaidPageReady = true
-            this.renderCodePreviewMermaid()
-          })
-          .javaScriptAccess(true)
-          .fileAccess(false)
-          .backgroundColor(this.getCodePreviewBackgroundColor())
-      } else {
-        Web({ src: this.getCodePreviewHtmlDataUrl(), controller: this.codePreviewHtmlWebController })
-          .width('100%')
-          .layoutWeight(1)
-          .javaScriptAccess(true)
-          .domStorageAccess(true)
-          .backgroundColor(this.getCodePreviewBackgroundColor())
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(this.getCodePreviewBackgroundColor())
+    CodePreviewSheet({
+      kind: this.codePreviewKind,
+      code: this.codePreviewCode
+    })
   }
 
   private shouldShowUserToolbar(): boolean {
@@ -2294,11 +2078,10 @@ export struct MessageBubble {
           detents: [SheetSize.LARGE],
           dragBar: true,
           showClose: true,
-          title: { title: this.getCodePreviewSheetTitle() },
+          title: { title: getCodePreviewSheetTitle(this.codePreviewKind) },
           onDisappear: () => {
             this.codePreviewKind = ''
             this.codePreviewCode = ''
-            this.resetCodePreviewWebRuntime()
           }
         })
     }
@@ -2423,7 +2206,7 @@ export struct MessageBubble {
             Column() {
               Markdown({
                 controller: this.translationMarkdownController,
-                text: this.getMarkdownRenderText(this.getReadonlyTranslatedText(), 'translation'),
+                text: this.getMarkdownRenderText(this.getTranslatedText(), 'translation'),
                 plugins: this.getCodePreviewMarkdownPlugins()
               })
                 .constraintSize({ maxWidth: '100%' })
@@ -3755,85 +3538,6 @@ export struct MessageBubble {
       part.toolPermissionLevel
     )
     return buildToolTitle(toolCall)
-  }
-
-  /**
-   * 将 Markdown 任务列表语法转换为只读字符
-   * 避免 lv-markdown-in 渲染出可交互的 checkbox
-   * - [ ] → - ☐ (空心方框)
-   * - [x] 或 - [X] → - ☑ (勾选方框)
-   */
-  private convertTaskListToReadonly(content: string): string {
-    if (content.length === 0) {
-      return content
-    }
-    // 替换未完成任务: - [ ] 或 * [ ]
-    let result = content.replace(/^(\s*[-*])\s*\[ \]/gm, '$1 ☐')
-    // 替换已完成任务: - [x] 或 - [X] 或 * [x] 或 * [X]
-    result = result.replace(/^(\s*[-*])\s*\[[xX]\]/gm, '$1 ☑')
-    // 转换 LaTeX 分隔符: \[...\] -> $$...$$ , \(...\) -> $...$
-    // 部分模型(如 OpenAI 系列)使用 \[...\] 和 \(...\) 格式，lv-markdown-in 只识别 $/$$ 格式
-    result = this.normalizeLatexDelimiters(result)
-    result = this.convertHeadingsWithLatex(result)
-    return result
-  }
-
-  /**
-   * lv-markdown-in 不渲染 Markdown 标题(##)内嵌的 LaTeX 公式，也不渲染加粗(**)内的 LaTeX。
-   * 将含 LaTeX 的标题拆分：纯文本部分保留为标题，LaTeX 及后续内容移至下方独立段落渲染。
-   */
-  private convertHeadingsWithLatex(content: string): string {
-    const codeBlocks: string[] = []
-    let result = content.replace(/```[\s\S]*?```/g, (m: string): string => {
-      codeBlocks.push(m)
-      return `\u0000HCB${(codeBlocks.length - 1).toString()}\u0000`
-    })
-
-    result = result.replace(
-      /^(#{1,6})\s+(.+)$/gm,
-      (match: string, hashes: string, text: string): string => {
-        if (!/\$.+?\$/.test(text)) {
-          return match
-        }
-        const firstDollar = text.indexOf('$')
-        const headingText = text.substring(0, firstDollar).trimEnd()
-        const latexAndRest = text.substring(firstDollar)
-
-        if (headingText.length > 0) {
-          return `${hashes} ${headingText}\n\n${latexAndRest}`
-        }
-        return latexAndRest
-      }
-    )
-
-    result = result.replace(/\u0000HCB(\d+)\u0000/g, (_m: string, idx: string): string => {
-      return codeBlocks[parseInt(idx)]
-    })
-    return result
-  }
-
-  private normalizeLatexDelimiters(content: string): string {
-    // 先保护代码块内容，避免误转换
-    const codeBlocks: string[] = []
-    let protected_ = content.replace(/```[\s\S]*?```|`[^`\n]+`/g, (match: string): string => {
-      codeBlocks.push(match)
-      return `\u0000CODE${(codeBlocks.length - 1).toString()}\u0000`
-    })
-
-    // 块级公式: \[...\] -> $$...$$
-    protected_ = protected_.replace(/\\\[([\s\S]*?)\\\]/g, (_match: string, p1: string): string => {
-      return `$$${p1}$$`
-    })
-    // 行内公式: \(...\) -> $...$
-    protected_ = protected_.replace(/\\\(([\s\S]*?)\\\)/g, (_match: string, p1: string): string => {
-      return `$${p1}$`
-    })
-
-    // 恢复代码块
-    protected_ = protected_.replace(/\u0000CODE(\d+)\u0000/g, (_match: string, idx: string): string => {
-      return codeBlocks[parseInt(idx)]
-    })
-    return protected_
   }
 
   private shouldHideToolInteractionCard(toolCall: ToolCall): boolean {
