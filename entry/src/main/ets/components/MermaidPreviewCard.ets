@@ -45,7 +45,7 @@ export struct MermaidPreviewCard {
   }
 
   private getPreviewBackground(): string {
-    return this.isDarkMode ? '#1a1a1a' : '#ffffff'
+    return this.isDarkMode ? '#000000' : '#ffffff'
   }
 
   private getPreviewTextColor(): string {

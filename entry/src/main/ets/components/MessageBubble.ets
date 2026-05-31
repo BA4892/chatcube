@@ -7,14 +7,13 @@ import {
   ToolResult,
   SearchReference
 } from '../models/ChatModels'
-import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
+import { Markdown, MarkdownController, MarkdownPlugin, PluginNode } from '@luvi/lv-markdown-in'
+import { webview } from '@kit.ArkWeb'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
 import { shouldShowAssistantMessageToolbar } from '../utils/MessageBubbleDisplayUtils'
 import { AskUserCard } from './AskUserCard'
-import { HtmlPreviewCard } from './HtmlPreviewCard'
-import { MermaidPreviewCard } from './MermaidPreviewCard'
 import { TypingDots } from './TypingDots'
 import { CubeSpinnerBubble, CubeSpinnerLight } from './loading/CubeSpinner'
 import { AssistantAvatarView } from './AssistantAvatar'
@@ -57,20 +56,6 @@ interface TranslateLanguage {
   nativeName: string
 }
 
-enum ContentSegmentType {
-  MARKDOWN = 'markdown',
-  HTML = 'html',
-  MERMAID = 'mermaid',
-  CODE = 'code'
-}
-
-// 内容分段（用于可预览代码块内联渲染）
-interface ContentSegment {
-  type: ContentSegmentType
-  renderContent: string
-  language?: string
-}
-
 interface ImageAttachmentEntry {
   attachment: MessageAttachment
   originalIndex: number
@@ -79,6 +64,22 @@ interface ImageAttachmentEntry {
 interface ImagePartPreviewEntry {
   src: string
   previewId: string
+}
+
+interface CodePreviewBlock {
+  kind: string
+  language: string
+  code: string
+}
+
+interface CodePreviewMermaidPayload {
+  code: string
+  dark: boolean
+  primary: string
+  primaryLight: string
+  background: string
+  text: string
+  line: string
 }
 
 interface ToolSearchResultItemPayload {
@@ -113,6 +114,10 @@ interface AskUserTimelineAnswer {
 
 const TOOL_ARGUMENT_DETAIL_MAX_LENGTH = 1200
 const TOOL_RESULT_DETAIL_MAX_LENGTH = 1800
+const CODE_PREVIEW_PLUGIN_KEY = 'cube_code_preview'
+const CODE_PREVIEW_PLUGIN_PATTERN = '^\\[\\[cube-chat-preview:([A-Za-z0-9_]+):(html|mermaid):(\\d+)\\]\\]$'
+const CODE_PREVIEW_MARKER_PREFIX = '[[cube-chat-preview:'
+const MERMAID_PREVIEW_URL = 'resource://rawfile/mermaid/mermaid-preview.html'
 
 @ComponentV2
 export struct MessageBubble {
@@ -156,6 +161,9 @@ export struct MessageBubble {
   @Local latexPreviewOffsetY: number = 0
   @Local latexPreviewLastOffsetX: number = 0
   @Local latexPreviewLastOffsetY: number = 0
+  @Local showCodePreview: boolean = false
+  @Local codePreviewKind: string = ''
+  @Local codePreviewCode: string = ''
   // 深色模式状态（用于主题适配）
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
@@ -186,7 +194,6 @@ export struct MessageBubble {
   private reasoningMarkdownController: MarkdownController = new MarkdownController()
   private translationMarkdownController: MarkdownController = new MarkdownController()
   private partMarkdownControllers: Map<string, MarkdownController> = new Map()
-  private partMarkdownControllerTexts: Map<string, string> = new Map()
   private multiSelectTouchStartX: number = 0
   private multiSelectTouchStartY: number = 0
   private multiSelectTouchActive: boolean = false
@@ -223,6 +230,12 @@ export struct MessageBubble {
   private derivedCacheSignature: string = ''
   private markdownRuntimeOptionsSignature: string = ''
   private finalizedMarkdownRenderTextCache: Map<string, string> = new Map()
+  private codePreviewBlocksByScope: Map<string, CodePreviewBlock[]> = new Map()
+  private codePreviewMarkdownPlugins: MarkdownPlugin[] = []
+  private codePreviewHtmlWebController: webview.WebviewController = new webview.WebviewController()
+  private codePreviewMermaidWebController: webview.WebviewController = new webview.WebviewController()
+  private isCodePreviewMermaidWebReady: boolean = false
+  private isCodePreviewMermaidPageReady: boolean = false
 
   @Event onRegenerate: () => void = () => {}
   @Event onCopy: () => void = () => {}
@@ -317,10 +330,9 @@ export struct MessageBubble {
   }
 
   aboutToAppear(): void {
+    this.recreateMarkdownControllers()
     this.syncMessageScopedState()
     this.syncDerivedRenderCaches()
-    // 翻译内容动态变化，使用新的 Controller
-    this.translationMarkdownController = new MarkdownController()
 
     // 配置 Markdown 样式
     this.configureMarkdownStyles()
@@ -334,6 +346,17 @@ export struct MessageBubble {
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
     this.stopSearchStepPulse()
+  }
+
+  private recreateMarkdownControllers(): void {
+    this.markdownController = new MarkdownController()
+    this.reasoningMarkdownController = new MarkdownController()
+    this.translationMarkdownController = new MarkdownController()
+    this.partMarkdownControllers.clear()
+    this.markdownRuntimeOptionsSignature = ''
+    this.finalizedMarkdownRenderTextCache.clear()
+    this.codePreviewBlocksByScope.clear()
+    this.codePreviewMarkdownPlugins = []
   }
 
   // 消息状态变化回调（优化跳动点动画性能）
@@ -407,9 +430,12 @@ export struct MessageBubble {
     this.isTranslationExpanded = true
     this.currentTranslateLang = ''
     this.partMarkdownControllers.clear()
-    this.partMarkdownControllerTexts.clear()
     this.markdownRuntimeOptionsSignature = ''
     this.finalizedMarkdownRenderTextCache.clear()
+    this.codePreviewBlocksByScope.clear()
+    this.showCodePreview = false
+    this.codePreviewKind = ''
+    this.codePreviewCode = ''
     // latex 预览状态: 切换消息时若上一条打开过预览, 必须复位避免新消息加载旧 pixelMap
     this.showLatexPreview = false
     this.latexPreviewPixelMap = null
@@ -634,13 +660,13 @@ export struct MessageBubble {
 
   private shouldEnableMarkdownTextSelection(): boolean {
     // lv-markdown-in 懒渲染在文本选择开启时会自动回退普通渲染。
-    // 生成中优先保证长文实时渲染性能，结束后恢复文本选择/复制能力。
-    return !this.message.isGenerating
+    // 不再让文本选择能力随生成态切换,避免完成瞬间重配 MarkdownController 导致二次重排。
+    return false
   }
 
   private applyMarkdownLazyRender(controller: MarkdownController): void {
     controller
-      .setLazyRender(true)
+      .setLazyRender(this.message.isGenerating)
       .setLazyPreloadBlockCount(3)
   }
 
@@ -925,24 +951,16 @@ export struct MessageBubble {
   private getPartMarkdownController(
     blockIndex: number,
     partIndex: number,
-    segmentIndex: number,
-    content: string
+    segmentIndex: number
   ): MarkdownController {
     const key = this.message.id + '_' + blockIndex.toString() + '_' + partIndex.toString() + '_' + segmentIndex.toString()
     let controller = this.partMarkdownControllers.get(key)
-    const previousText = this.partMarkdownControllerTexts.get(key)
-    if (controller === undefined || previousText !== content) {
+    if (controller === undefined) {
       controller = new MarkdownController()
       this.configurePartMarkdownController(controller)
       this.partMarkdownControllers.set(key, controller)
-      this.partMarkdownControllerTexts.set(key, content)
     }
     return controller
-  }
-
-  // 生成中统一走 V2 单 Markdown 增量渲染; 终态仍走 V1 稳定路径。
-  private shouldUseStreamRendererV2(): boolean {
-    return this.message.isGenerating
   }
 
   @Monitor('themeRenderKey')
@@ -1052,152 +1070,6 @@ export struct MessageBubble {
     return this.cachedDisplayContent
   }
 
-  // 检查内容是否包含完整的 HTML 代码块
-  private hasHtmlBlocks(content: string): boolean {
-    return /```html?\s*\n[\s\S]*?```/i.test(content)
-  }
-
-  private hasMermaidBlocks(content: string): boolean {
-    return /```mermaid\s*\n[\s\S]*?```/i.test(content)
-  }
-
-  private hasPreviewableCodeBlocks(content: string): boolean {
-    return this.hasHtmlBlocks(content) || this.hasMermaidBlocks(content)
-  }
-
-  private isCodeFenceAtLineStart(content: string, index: number): boolean {
-    if (index < 0 || index >= content.length) {
-      return false
-    }
-    if (content.substring(index, index + 3) !== '```') {
-      return false
-    }
-    let lineStart = index
-    while (lineStart > 0 && content.charAt(lineStart - 1) !== '\n') {
-      lineStart--
-    }
-    const prefix = content.substring(lineStart, index)
-    return prefix.length <= 3 && prefix.trim().length === 0
-  }
-
-  private isClosingCodeFenceLine(line: string): boolean {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('```')) {
-      return false
-    }
-    for (let i = 0; i < trimmed.length; i++) {
-      if (trimmed.charAt(i) !== '`') {
-        return false
-      }
-    }
-    return true
-  }
-
-  private findNextCodeFenceStart(content: string, startIndex: number): number {
-    let index = content.indexOf('```', startIndex)
-    while (index >= 0) {
-      if (this.isCodeFenceAtLineStart(content, index)) {
-        return index
-      }
-      index = content.indexOf('```', index + 3)
-    }
-    return -1
-  }
-
-  private findClosingCodeFenceStart(content: string, startIndex: number): number {
-    let index = this.findNextCodeFenceStart(content, startIndex)
-    while (index >= 0) {
-      const lineEnd = content.indexOf('\n', index)
-      const fenceLine = content.substring(index, lineEnd >= 0 ? lineEnd : content.length).trim()
-      if (this.isClosingCodeFenceLine(fenceLine)) {
-        return index
-      }
-      index = this.findNextCodeFenceStart(content, index + 3)
-    }
-    return -1
-  }
-
-  private normalizeCodeFenceLanguage(info: string): string {
-    const trimmed = info.trim()
-    if (trimmed === '') {
-      return ''
-    }
-    const spaceIndex = trimmed.search(/\s/)
-    const language = spaceIndex >= 0 ? trimmed.substring(0, spaceIndex) : trimmed
-    return language.length > 24 ? language.substring(0, 24) : language
-  }
-
-  private pushStreamingMarkdownSegment(segments: ContentSegment[], content: string): void {
-    if (content.trim().length === 0) {
-      return
-    }
-    segments.push({
-      type: ContentSegmentType.MARKDOWN,
-      renderContent: content
-    } as ContentSegment)
-  }
-
-  private splitStreamingContentToSegments(content: string): ContentSegment[] {
-    const segments: ContentSegment[] = []
-    let cursor = 0
-    let fenceStart = this.findNextCodeFenceStart(content, cursor)
-
-    while (fenceStart >= 0) {
-      this.pushStreamingMarkdownSegment(segments, content.substring(cursor, fenceStart))
-      const openerLineEnd = content.indexOf('\n', fenceStart)
-      const infoEnd = openerLineEnd >= 0 ? openerLineEnd : content.length
-      const language = this.normalizeCodeFenceLanguage(content.substring(fenceStart + 3, infoEnd))
-
-      if (openerLineEnd < 0) {
-        segments.push({
-          type: ContentSegmentType.CODE,
-          renderContent: '',
-          language: language
-        } as ContentSegment)
-        cursor = content.length
-        break
-      }
-
-      const codeStart = openerLineEnd + 1
-      const closingFenceStart = this.findClosingCodeFenceStart(content, codeStart)
-      if (closingFenceStart >= 0) {
-        segments.push({
-          type: ContentSegmentType.CODE,
-          renderContent: content.substring(codeStart, closingFenceStart),
-          language: language
-        } as ContentSegment)
-        const closingLineEnd = content.indexOf('\n', closingFenceStart)
-        cursor = closingLineEnd >= 0 ? closingLineEnd + 1 : content.length
-      } else {
-        segments.push({
-          type: ContentSegmentType.CODE,
-          renderContent: content.substring(codeStart),
-          language: language
-        } as ContentSegment)
-        cursor = content.length
-        break
-      }
-
-      fenceStart = this.findNextCodeFenceStart(content, cursor)
-    }
-
-    if (cursor < content.length) {
-      this.pushStreamingMarkdownSegment(segments, content.substring(cursor))
-    }
-    return segments
-  }
-
-  private hasStreamingCodeFence(content: string): boolean {
-    return this.findNextCodeFenceStart(content, 0) >= 0
-  }
-
-  private getStreamingCodeBlockTitle(language: string | undefined): string {
-    if (language === undefined || language.trim() === '') {
-      return '代码'
-    }
-    return language.trim()
-  }
-
   private normalizeMarkdownImageSource(src: string): string {
     let normalized = src.trim()
     if (normalized.startsWith('<') && normalized.endsWith('>')) {
@@ -1240,45 +1112,6 @@ export struct MessageBubble {
 
     this.onImageClick(images, imageIndex, [])
     return true
-  }
-
-  // 将内容按可预览代码块边界分段，用于内联预览渲染
-  private splitContentToSegments(content: string): ContentSegment[] {
-    const segments: ContentSegment[] = []
-    const pattern = /```(html?|mermaid)\s*\n([\s\S]*?)```/gi
-    let lastIndex = 0
-    let match = pattern.exec(content)
-
-    while (match !== null) {
-      const matchIndex = match.index
-      // 添加可预览代码块之前的文本段
-      if (matchIndex > lastIndex) {
-        const textContent = content.substring(lastIndex, matchIndex)
-        if (textContent.trim().length > 0) {
-          segments.push({
-            type: ContentSegmentType.MARKDOWN,
-            renderContent: this.convertTaskListToReadonly(textContent)
-          } as ContentSegment)
-        }
-      }
-      const segmentType = match[1].toLowerCase() === 'mermaid' ? ContentSegmentType.MERMAID : ContentSegmentType.HTML
-      segments.push({ type: segmentType, renderContent: match[2] } as ContentSegment)
-      lastIndex = matchIndex + match[0].length
-      match = pattern.exec(content)
-    }
-
-    // 添加最后一个可预览代码块之后的剩余文本
-    if (lastIndex < content.length) {
-      const remaining = content.substring(lastIndex)
-      if (remaining.trim().length > 0) {
-        segments.push({
-          type: ContentSegmentType.MARKDOWN,
-          renderContent: this.convertTaskListToReadonly(remaining)
-        } as ContentSegment)
-      }
-    }
-
-    return segments
   }
 
   // 是否有显示附件（编辑模式下使用预览附件）
@@ -1441,22 +1274,347 @@ export struct MessageBubble {
     return this.cachedReadonlyTranslatedText
   }
 
-  private isMarkdownOutputFinalized(): boolean {
-    // 手动停止会把 isGenerating 置为 false；只要不再吐字，就进入最终态规范化。
-    return !this.message.isGenerating
-  }
-
-  private getMarkdownRenderText(content: string): string {
-    if (!this.isMarkdownOutputFinalized()) {
+  private getMarkdownRenderText(content: string, scopeKey: string): string {
+    if (content.length === 0) {
+      this.codePreviewBlocksByScope.delete(scopeKey)
       return content
     }
-    const cachedText = this.finalizedMarkdownRenderTextCache.get(content)
+    if (this.message.isGenerating) {
+      return this.buildMarkdownRenderText(content, scopeKey)
+    }
+    const cacheKey = scopeKey + '\n' + content
+    const cachedText = this.finalizedMarkdownRenderTextCache.get(cacheKey)
     if (cachedText !== undefined) {
       return cachedText
     }
-    const renderText = this.convertTaskListToReadonly(content)
-    this.finalizedMarkdownRenderTextCache.set(content, renderText)
+    const renderText = this.buildMarkdownRenderText(content, scopeKey)
+    this.finalizedMarkdownRenderTextCache.set(cacheKey, renderText)
     return renderText
+  }
+
+  private buildMarkdownRenderText(content: string, scopeKey: string): string {
+    const normalized = this.convertTaskListToReadonly(content)
+    return this.injectCodePreviewMarkers(normalized, scopeKey)
+  }
+
+  private getCodePreviewMarkdownPlugins(): MarkdownPlugin[] {
+    if (this.codePreviewMarkdownPlugins.length === 0) {
+      this.codePreviewMarkdownPlugins = [{
+        key: CODE_PREVIEW_PLUGIN_KEY,
+        display: 'block',
+        pattern: CODE_PREVIEW_PLUGIN_PATTERN,
+        matchMode: 'full-line',
+        selectable: false,
+        render: (node: PluginNode): void => {
+          this.CodePreviewPluginBuilder(node)
+        }
+      } as MarkdownPlugin]
+    }
+    return this.codePreviewMarkdownPlugins
+  }
+
+  private getPartMarkdownScopeKey(blockIndex: number, partIndex: number): string {
+    return 'part_' + blockIndex.toString() + '_' + partIndex.toString()
+  }
+
+  private getReasoningMarkdownScopeKey(part: MessagePart): string {
+    return 'reasoning_' + part.reasoningCreatedAt.toString()
+  }
+
+  private buildCodePreviewMarker(scopeKey: string, kind: string, index: number): string {
+    return CODE_PREVIEW_MARKER_PREFIX + scopeKey + ':' + kind + ':' + index.toString() + ']]'
+  }
+
+  private getCodeFenceInfo(line: string): string | null {
+    let cursor = 0
+    while (cursor < line.length && line.charAt(cursor) === ' ') {
+      cursor++
+    }
+    if (cursor > 3 || line.substring(cursor, cursor + 3) !== '```') {
+      return null
+    }
+    let fenceEnd = cursor
+    while (fenceEnd < line.length && line.charAt(fenceEnd) === '`') {
+      fenceEnd++
+    }
+    return line.substring(fenceEnd)
+  }
+
+  private isClosingCodeFenceLine(line: string): boolean {
+    const info = this.getCodeFenceInfo(line)
+    return info !== null && info.trim().length === 0
+  }
+
+  private normalizeCodeFenceLanguage(info: string): string {
+    const trimmed = info.trim()
+    if (trimmed === '') {
+      return ''
+    }
+    const spaceIndex = trimmed.search(/\s/)
+    const language = spaceIndex >= 0 ? trimmed.substring(0, spaceIndex) : trimmed
+    return language.length > 32 ? language.substring(0, 32) : language
+  }
+
+  private getCodePreviewKindForLanguage(language: string): string {
+    const normalized = language.toLowerCase()
+    if (normalized === 'html' || normalized === 'htm') {
+      return 'html'
+    }
+    if (normalized === 'mermaid') {
+      return 'mermaid'
+    }
+    return ''
+  }
+
+  private appendPreviewCodeLine(blocks: CodePreviewBlock[], blockIndex: number, line: string, hasTrailingNewline: boolean): void {
+    if (blockIndex < 0 || blockIndex >= blocks.length) {
+      return
+    }
+    blocks[blockIndex].code += hasTrailingNewline ? line + '\n' : line
+  }
+
+  private injectCodePreviewMarkers(content: string, scopeKey: string): string {
+    const lines = content.split('\n')
+    const output: string[] = []
+    const blocks: CodePreviewBlock[] = []
+    let inFence = false
+    let activePreviewIndex = -1
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const hasTrailingNewline = i < lines.length - 1
+      if (!inFence) {
+        const info = this.getCodeFenceInfo(line)
+        if (info !== null) {
+          const language = this.normalizeCodeFenceLanguage(info)
+          const kind = this.getCodePreviewKindForLanguage(language)
+          activePreviewIndex = -1
+          if (kind !== '') {
+            activePreviewIndex = blocks.length
+            blocks.push({
+              kind: kind,
+              language: language,
+              code: ''
+            })
+            output.push(this.buildCodePreviewMarker(scopeKey, kind, activePreviewIndex))
+          }
+          inFence = true
+        }
+        output.push(line)
+        continue
+      }
+
+      if (this.isClosingCodeFenceLine(line)) {
+        inFence = false
+        activePreviewIndex = -1
+        output.push(line)
+        continue
+      }
+
+      this.appendPreviewCodeLine(blocks, activePreviewIndex, line, hasTrailingNewline)
+      output.push(line)
+    }
+
+    this.codePreviewBlocksByScope.set(scopeKey, blocks)
+    return output.join('\n')
+  }
+
+  private getPluginGroup(node: PluginNode, index: number): string {
+    if (node.groups === undefined || index < 0 || index >= node.groups.length) {
+      return ''
+    }
+    return node.groups[index]
+  }
+
+  private getCodePreviewBlockFromNode(node: PluginNode): CodePreviewBlock | null {
+    const scopeKey = this.getPluginGroup(node, 0)
+    const kind = this.getPluginGroup(node, 1)
+    const index = Number.parseInt(this.getPluginGroup(node, 2))
+    if (scopeKey === '' || kind === '' || Number.isNaN(index)) {
+      return null
+    }
+    const blocks = this.codePreviewBlocksByScope.get(scopeKey)
+    if (blocks === undefined || index < 0 || index >= blocks.length) {
+      return null
+    }
+    const block = blocks[index]
+    if (block.kind !== kind) {
+      return null
+    }
+    return block
+  }
+
+  private getCodePreviewKindLabel(kind: string): string {
+    return kind === 'mermaid' ? 'Mermaid' : 'HTML'
+  }
+
+  private getCodePreviewPluginTitle(node: PluginNode): string {
+    const block = this.getCodePreviewBlockFromNode(node)
+    if (block === null) {
+      return '预览'
+    }
+    return '预览 ' + this.getCodePreviewKindLabel(block.kind)
+  }
+
+  private isCodePreviewPluginEnabled(node: PluginNode): boolean {
+    const block = this.getCodePreviewBlockFromNode(node)
+    return block !== null && block.code.trim().length > 0
+  }
+
+  private getCodePreviewPluginSubtitle(node: PluginNode): string {
+    return this.isCodePreviewPluginEnabled(node) ? '点击打开' : '等待代码'
+  }
+
+  private getCodePreviewSheetTitle(): string {
+    if (this.codePreviewKind === '') {
+      return '预览'
+    }
+    return this.getCodePreviewKindLabel(this.codePreviewKind) + ' 预览'
+  }
+
+  private getCodePreviewBackgroundColor(): string {
+    return this.isDarkMode ? '#000000' : '#FFFFFF'
+  }
+
+  private getCodePreviewTextColor(): string {
+    return this.isDarkMode ? '#E8E8E8' : '#222222'
+  }
+
+  private getCodePreviewLineColor(): string {
+    return this.isDarkMode ? '#A8A8A8' : '#666666'
+  }
+
+  private getCodePreviewHtmlDataUrl(): string {
+    const bgColor = this.getCodePreviewBackgroundColor()
+    const textColor = this.getCodePreviewTextColor()
+    const wrappedHtml = '<!DOCTYPE html><html><head>' +
+      '<meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">' +
+      '<style>' +
+      '* { box-sizing: border-box; }' +
+      'html, body { width: 100%; min-height: 100%; margin: 0; padding: 12px; ' +
+      'font-family: HarmonyOS Sans, -apple-system, sans-serif; background: ' + bgColor + '; color: ' + textColor + '; }' +
+      'img { max-width: 100%; height: auto; }' +
+      'table { border-collapse: collapse; width: 100%; }' +
+      'th, td { border: 1px solid ' + (this.isDarkMode ? '#3A3A3A' : '#DDDDDD') + '; padding: 8px; text-align: left; }' +
+      'th { background: ' + (this.isDarkMode ? '#171717' : '#F5F5F5') + '; }' +
+      'a { color: ' + (this.isDarkMode ? '#9CBFE8' : '#4E6F9E') + '; }' +
+      'pre, code { font-family: monospace; }' +
+      'pre { padding: 12px; border-radius: 8px; overflow-x: auto; background: ' +
+      (this.isDarkMode ? '#101010' : '#F6F8FA') + '; }' +
+      '</style></head><body>' +
+      this.codePreviewCode +
+      '</body></html>'
+    return 'data:text/html;charset=utf-8,' + encodeURIComponent(wrappedHtml)
+  }
+
+  private getCodePreviewMermaidRenderScript(): string {
+    const payload: CodePreviewMermaidPayload = {
+      code: this.codePreviewCode,
+      dark: this.isDarkMode,
+      primary: this.themePrimary,
+      primaryLight: this.themePrimaryLight,
+      background: this.getCodePreviewBackgroundColor(),
+      text: this.getCodePreviewTextColor(),
+      line: this.getCodePreviewLineColor()
+    }
+    return 'window.renderMermaid(' + JSON.stringify(payload) + ')'
+  }
+
+  private renderCodePreviewMermaid(): void {
+    if (!this.isCodePreviewMermaidWebReady || !this.isCodePreviewMermaidPageReady) {
+      return
+    }
+    try {
+      this.codePreviewMermaidWebController.runJavaScript(this.getCodePreviewMermaidRenderScript())
+        .catch((error: Error) => {
+          hilog.error(DOMAIN, TAG, `Render code preview Mermaid failed: ${JSON.stringify(error)}`)
+        })
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, `Run code preview Mermaid script failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private resetCodePreviewWebRuntime(): void {
+    this.codePreviewHtmlWebController = new webview.WebviewController()
+    this.codePreviewMermaidWebController = new webview.WebviewController()
+    this.isCodePreviewMermaidWebReady = false
+    this.isCodePreviewMermaidPageReady = false
+  }
+
+  private openCodePreviewFromPluginNode(node: PluginNode): void {
+    const block = this.getCodePreviewBlockFromNode(node)
+    if (block === null || block.code.trim().length === 0) {
+      showToast(this.getUIContext(), pickLocalizedText('代码还在生成中', 'Code is still generating'))
+      return
+    }
+    this.resetCodePreviewWebRuntime()
+    this.codePreviewKind = block.kind
+    this.codePreviewCode = block.code
+    this.showCodePreview = true
+  }
+
+  @Builder
+  CodePreviewPluginBuilder(node: PluginNode) {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.eye'))
+        .fontSize(15)
+        .fontColor([this.themePrimary])
+
+      Text(this.getCodePreviewPluginTitle(node))
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.themePrimary)
+
+      Blank()
+
+      Text(this.getCodePreviewPluginSubtitle(node))
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .height(36)
+    .padding({ left: 12, right: 12 })
+    .margin({ top: 4, bottom: 4 })
+    .borderRadius(10)
+    .border({ width: 0.5, color: withColorAlpha(this.themePrimary, this.isDarkMode ? '70' : '50') })
+    .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '20' : '12'))
+    .opacity(this.isCodePreviewPluginEnabled(node) ? 1 : 0.55)
+    .enabled(this.isCodePreviewPluginEnabled(node))
+    .onClick(() => {
+      this.openCodePreviewFromPluginNode(node)
+    })
+  }
+
+  @Builder
+  CodePreviewSheetBuilder() {
+    Column() {
+      if (this.codePreviewKind === 'mermaid') {
+        Web({ src: MERMAID_PREVIEW_URL, controller: this.codePreviewMermaidWebController })
+          .width('100%')
+          .layoutWeight(1)
+          .onControllerAttached(() => {
+            this.isCodePreviewMermaidWebReady = true
+          })
+          .onPageEnd(() => {
+            this.isCodePreviewMermaidPageReady = true
+            this.renderCodePreviewMermaid()
+          })
+          .javaScriptAccess(true)
+          .fileAccess(false)
+          .backgroundColor(this.getCodePreviewBackgroundColor())
+      } else {
+        Web({ src: this.getCodePreviewHtmlDataUrl(), controller: this.codePreviewHtmlWebController })
+          .width('100%')
+          .layoutWeight(1)
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .backgroundColor(this.getCodePreviewBackgroundColor())
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.getCodePreviewBackgroundColor())
   }
 
   private shouldShowUserToolbar(): boolean {
@@ -2127,6 +2285,22 @@ export struct MessageBubble {
       .enabled(!this.isMultiSelectMode)
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showCodePreview, this.CodePreviewSheetBuilder(), {
+          height: SheetSize.LARGE,
+          detents: [SheetSize.LARGE],
+          dragBar: true,
+          showClose: true,
+          title: { title: this.getCodePreviewSheetTitle() },
+          onDisappear: () => {
+            this.codePreviewKind = ''
+            this.codePreviewCode = ''
+            this.resetCodePreviewWebRuntime()
+          }
+        })
     }
     .width('100%')
     .constraintSize({ maxWidth: '100%' })
@@ -2249,7 +2423,8 @@ export struct MessageBubble {
             Column() {
               Markdown({
                 controller: this.translationMarkdownController,
-                text: this.getReadonlyTranslatedText()
+                text: this.getMarkdownRenderText(this.getReadonlyTranslatedText(), 'translation'),
+                plugins: this.getCodePreviewMarkdownPlugins()
               })
                 .constraintSize({ maxWidth: '100%' })
                 .backgroundColor(Color.Transparent)
@@ -2951,141 +3126,17 @@ export struct MessageBubble {
 	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
 	      if (part.text.trim() !== '') {
-	        if (this.shouldUseStreamRendererV2()) {
-	          this.PartTextContentV2(part, blockIndex, partIndex)
-	        } else if (this.message.isGenerating && this.hasStreamingCodeFence(part.text)) {
-	          ForEach(this.splitStreamingContentToSegments(part.text),
-	            (segment: ContentSegment, index: number) => {
-	              if (segment.type === ContentSegmentType.CODE) {
-	                this.StreamingCodeBlock(segment)
-	              } else {
-	                Markdown({
-	                  controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
-	                  text: segment.renderContent
-	                })
-	                  .width('100%')
-	                  .backgroundColor(Color.Transparent)
-	              }
-	            },
-	            (segment: ContentSegment, index: number) => {
-	              return 'stream_part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
-	                segment.type + '_' + index.toString() + '_' + segment.renderContent.length.toString()
-	            }
-	          )
-	        } else if (!this.message.isGenerating && this.hasPreviewableCodeBlocks(part.text)) {
-	          ForEach(this.splitContentToSegments(part.text),
-	            (segment: ContentSegment, index: number) => {
-	              if (segment.type === ContentSegmentType.HTML) {
-	                HtmlPreviewCard({
-	                  htmlCode: segment.renderContent,
-	                  onCopyCode: (code: string) => {
-	                    this.copyToClipboard(code)
-	                    showToast(this.getUIContext(), $r('app.string.copy_success'))
-	                  }
-	                })
-	              } else if (segment.type === ContentSegmentType.MERMAID) {
-	                MermaidPreviewCard({
-	                  mermaidCode: segment.renderContent,
-	                  onCopyCode: (code: string) => {
-	                    this.copyToClipboard(code)
-	                    showToast(this.getUIContext(), $r('app.string.copy_success'))
-	                  }
-	                })
-	              } else {
-	                Markdown({
-	                  controller: this.getPartMarkdownController(blockIndex, partIndex, index, segment.renderContent),
-	                  text: segment.renderContent
-	                })
-	                  .width('100%')
-	                  .backgroundColor(Color.Transparent)
-	              }
-	            },
-	            (segment: ContentSegment, index: number) => {
-	              return 'part_segment_' + blockIndex.toString() + '_' + partIndex.toString() + '_' +
-	                segment.type + '_' + index.toString()
-	            }
-	          )
-	        } else {
-	          Markdown({
-	            controller: this.getPartMarkdownController(blockIndex, partIndex, -1, this.getMarkdownRenderText(part.text)),
-	            text: this.getMarkdownRenderText(part.text)
-	          })
-	            .width('100%')
-	            .backgroundColor(Color.Transparent)
-	            .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
-	        }
+	        Markdown({
+	          controller: this.getPartMarkdownController(blockIndex, partIndex, -1),
+	          text: this.getMarkdownRenderText(part.text, this.getPartMarkdownScopeKey(blockIndex, partIndex)),
+	          plugins: this.getCodePreviewMarkdownPlugins()
+	        })
+	          .width('100%')
+	          .backgroundColor(Color.Transparent)
 	      }
 	    }
 	    .width('100%')
 	  }
-
-  // ===== V2 流式渲染 =====
-  // PartTextContentV2 由 PartTextContent 在普通正文生成中分派进来.
-  // 注意: 父 Builder 已访问 part.text 建立 @Trace 依赖, 这里再访问一次以确保子 Builder 与之绑定不掉链.
-  @Builder
-  PartTextContentV2(part: MessagePart, blockIndex: number, partIndex: number) {
-    Column() {
-      // 触发 part.text @Trace 订阅
-      if (part.text.length > 0) {
-        // 单一 Markdown 渲染: 依赖 lv-markdown-in 的增量渲染能力
-        Markdown({
-          controller: this.getPartMarkdownController(blockIndex, partIndex, -1, part.text),
-          text: part.text
-        })
-          .width('100%')
-          .backgroundColor(Color.Transparent)
-      }
-    }
-    .width('100%')
-  }
-
-  @Builder
-  StreamingCodeBlock(segment: ContentSegment) {
-    Column() {
-      Row() {
-        Text(this.getStreamingCodeBlockTitle(segment.language))
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.isDarkMode ? '#D7C4A9' : '#8F5E45')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-
-        Row() {
-          SymbolGlyph($r('sys.symbol.checkmark_square_on_square'))
-            .fontSize(14)
-            .fontColor([$r('app.color.text_tertiary')])
-        }
-        .width(28)
-        .height(28)
-        .borderRadius(14)
-        .justifyContent(FlexAlign.Center)
-        .opacity(segment.renderContent.length > 0 ? 1 : 0.45)
-        .enabled(segment.renderContent.length > 0)
-        .onClick(() => {
-          this.copyToClipboard(segment.renderContent)
-        })
-      }
-      .width('100%')
-      .height(34)
-      .padding({ left: 12, right: 8 })
-      .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '1C' : '12'))
-
-      Text(segment.renderContent.length > 0 ? segment.renderContent : ' ')
-        .fontSize(Math.max(11, this.chatFontSize - 3))
-        .fontFamily('monospace')
-        .fontColor(this.isDarkMode ? '#E0E0E0' : '#333333')
-        .lineHeight(Math.round(Math.max(11, this.chatFontSize - 3) * 1.5))
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 10, bottom: 12 })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.code_background'))
-    .borderRadius(10)
-    .border({ width: 0.5, color: $r('app.color.markdown_table_border') })
-    .clip(true)
-    .margin({ top: 4, bottom: 8 })
-  }
 
 	  // 交错 thinking 的时间线视图: 左侧竖线 + 依次渲染 reasoning / tool 步骤。
 	  // 为了最小改动,这里不复用 ChainOfThought 组件,直接在 MessageBubble 里内联 Row/Column。
@@ -3195,7 +3246,8 @@ export struct MessageBubble {
         Column() {
           Markdown({
             controller: this.reasoningMarkdownController,
-            text: this.getMarkdownRenderText(step.text)
+            text: this.getMarkdownRenderText(step.text, this.getReasoningMarkdownScopeKey(step)),
+            plugins: this.getCodePreviewMarkdownPlugins()
           })
             .constraintSize({ maxWidth: '100%' })
             .backgroundColor(Color.Transparent)
