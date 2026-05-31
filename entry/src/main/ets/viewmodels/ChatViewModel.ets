@@ -1,5 +1,11 @@
 import { getDatabaseService, DatabaseService, TokenUsageEvent } from '../services/DatabaseService'
-import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
+import {
+  MessagePart,
+  MessagePartKind,
+  ToolPartStatus,
+  deserializeMessageParts,
+  serializeMessageParts
+} from '../models/MessageParts'
 import { createToolPart, ensureMessageParts } from '../utils/ChatMessagePartsHelper'
 import { getEffectiveCapabilities } from '../utils/ModelCapabilityDeriver'
 import {
@@ -369,6 +375,148 @@ export class ChatViewModel {
         cloned[i].base64Data = ''
       }
     }
+    return cloned
+  }
+
+  private registerForkedPath(pathMap: Map<string, string>, sourcePath: string, targetPath: string): void {
+    if (sourcePath === '' || targetPath === '') {
+      return
+    }
+    pathMap.set(sourcePath, targetPath)
+    pathMap.set('file://' + sourcePath, 'file://' + targetPath)
+  }
+
+  private rewriteForkedPath(value: string, pathMap: Map<string, string>): string {
+    if (value === '') {
+      return value
+    }
+    const direct = pathMap.get(value)
+    if (direct !== undefined) {
+      return direct
+    }
+    if (value.startsWith('file://')) {
+      const rawPath = value.substring('file://'.length)
+      const mapped = pathMap.get(rawPath)
+      if (mapped !== undefined) {
+        return 'file://' + mapped
+      }
+    }
+    return value
+  }
+
+  private cloneMessagePartsForFork(parts: MessagePart[], pathMap: Map<string, string>): MessagePart[] {
+    const cloned = deserializeMessageParts(serializeMessageParts(parts))
+    for (let i = 0; i < cloned.length; i++) {
+      cloned[i].mediaUrl = this.rewriteForkedPath(cloned[i].mediaUrl, pathMap)
+    }
+    return cloned
+  }
+
+  private async cloneAttachmentsForFork(
+    attachments: MessageAttachment[],
+    pathMap: Map<string, string>
+  ): Promise<MessageAttachment[]> {
+    const cloned: MessageAttachment[] = []
+    for (let i = 0; i < attachments.length; i++) {
+      const source = attachments[i]
+      const attachment = new MessageAttachment(
+        this.generateId(),
+        source.type,
+        source.name,
+        source.filePath,
+        source.mimeType,
+        source.size
+      )
+      attachment.processState = source.processState
+      attachment.parseEngine = source.parseEngine
+      attachment.parsedText = source.parsedText
+      attachment.parseError = source.parseError
+
+      if (source.filePath !== '') {
+        const copiedPath = await this.attachmentStorageService.importExistingAttachment(source.filePath, attachment)
+        if (copiedPath !== '') {
+          attachment.filePath = copiedPath
+          this.registerForkedPath(pathMap, source.filePath, copiedPath)
+        } else {
+          console.warn('ChatViewModel', `Fork attachment copy failed, reuse source path: ${source.filePath}`)
+          this.registerForkedPath(pathMap, source.filePath, source.filePath)
+        }
+      }
+      cloned.push(attachment)
+    }
+    return cloned
+  }
+
+  private cloneSearchReferencesForFork(references: SearchReference[]): SearchReference[] {
+    const cloned: SearchReference[] = []
+    for (let i = 0; i < references.length; i++) {
+      const ref = new SearchReference(
+        references[i].id,
+        references[i].title,
+        references[i].url,
+        references[i].snippet
+      )
+      ref.timestamp = references[i].timestamp
+      cloned.push(ref)
+    }
+    return cloned
+  }
+
+  private cloneToolCallsForFork(toolCalls: ToolCall[]): ToolCall[] {
+    const cloned: ToolCall[] = []
+    for (let i = 0; i < toolCalls.length; i++) {
+      const call = new ToolCall(
+        toolCalls[i].id,
+        toolCalls[i].functionName,
+        toolCalls[i].arguments,
+        toolCalls[i].toolId,
+        toolCalls[i].displayName,
+        toolCalls[i].sourceType,
+        toolCalls[i].sourceLabel,
+        toolCalls[i].permissionLevel,
+        toolCalls[i].approvalPolicy
+      )
+      call.approvalState = toolCalls[i].approvalState
+      call.approvalReason = toolCalls[i].approvalReason
+      cloned.push(call)
+    }
+    return cloned
+  }
+
+  private cloneToolResultsForFork(toolResults: ToolResult[]): ToolResult[] {
+    const cloned: ToolResult[] = []
+    for (let i = 0; i < toolResults.length; i++) {
+      cloned.push(new ToolResult(
+        toolResults[i].toolCallId,
+        toolResults[i].content,
+        toolResults[i].isError,
+        toolResults[i].displayName,
+        toolResults[i].sourceLabel
+      ))
+    }
+    return cloned
+  }
+
+  private async cloneMessageForFork(source: ChatMessage): Promise<ChatMessage> {
+    const pathMap: Map<string, string> = new Map()
+    const cloned = new ChatMessage(this.generateId(), source.role, source.content, source.modelName, source.modelId)
+    cloned.timestamp = source.timestamp
+    cloned.reasoningContent = source.reasoningContent
+    cloned.reasoningSignatureBlob = source.reasoningSignatureBlob
+    cloned.searchQuery = source.searchQuery
+    cloned.searchEngine = source.searchEngine
+    cloned.searchSource = source.searchSource
+    cloned.promptTokens = source.promptTokens
+    cloned.completionTokens = source.completionTokens
+    cloned.totalTokens = source.totalTokens
+    cloned.toolCallId = source.toolCallId
+    cloned.attachments = await this.cloneAttachmentsForFork(source.attachments, pathMap)
+    cloned.parts = this.cloneMessagePartsForFork(source.parts, pathMap)
+    cloned.searchReferences = this.cloneSearchReferencesForFork(source.searchReferences)
+    cloned.toolCalls = this.cloneToolCallsForFork(source.toolCalls)
+    cloned.toolResults = this.cloneToolResultsForFork(source.toolResults)
+    cloned.isGenerating = false
+    cloned.isSearching = false
     return cloned
   }
 
@@ -1344,6 +1492,69 @@ export class ChatViewModel {
 	    this.currentSession = this.sessionStore.getCurrentSession()
 	    return session
 	  }
+
+  private buildForkSessionTitle(sourceTitle: string, suffix: string): string {
+    const baseTitle = sourceTitle.trim() !== '' ? sourceTitle.trim() : '新对话'
+    const normalizedSuffix = suffix.trim() !== '' ? suffix : '（分支）'
+    if (baseTitle.endsWith(normalizedSuffix)) {
+      return baseTitle
+    }
+    return baseTitle + normalizedSuffix
+  }
+
+  async forkSessionAtMessage(messageId: string, titleSuffix: string = '（分支）'): Promise<ChatSession | null> {
+    const sourceSession = this.sessionStore.getCurrentSession()
+    if (sourceSession === null || messageId === '') {
+      return null
+    }
+
+    const targetIndex = sourceSession.messages.findIndex((message: ChatMessage) => message.id === messageId)
+    if (targetIndex < 0) {
+      console.warn('ChatViewModel', `Cannot fork session, message not found: ${messageId}`)
+      return null
+    }
+
+    let forkedSession: ChatSession | null = null
+    const insertedMessageIds: string[] = []
+    try {
+      forkedSession = await this.createNewSession(
+        this.buildForkSessionTitle(sourceSession.title, titleSuffix),
+        sourceSession.assistantId,
+        sourceSession.modelId,
+        sourceSession.providerId
+      )
+      forkedSession.titleSource = SessionTitleSource.MANUAL
+      forkedSession.draftText = ''
+      forkedSession.draftAttachments = []
+      forkedSession.suggestedQuestions = []
+
+      for (let i = 0; i <= targetIndex; i++) {
+        const sourceMessage = sourceSession.messages[i]
+        const clonedMessage = await this.cloneMessageForFork(sourceMessage)
+        await this.databaseService.addMessage(forkedSession.id, clonedMessage, false)
+        await this.databaseService.copyToolEventsForMessage(sourceMessage.id, forkedSession.id, clonedMessage.id)
+        forkedSession.messages.push(clonedMessage)
+        insertedMessageIds.push(clonedMessage.id)
+      }
+
+      await this.databaseService.refreshSessionSummaryForSession(forkedSession.id)
+      forkedSession.updatedAt = Date.now()
+      await this.databaseService.updateSession(forkedSession)
+      const loaded = await this.loadSession(forkedSession.id)
+      return loaded
+    } catch (error) {
+      console.error('ChatViewModel', `Failed to fork session: ${JSON.stringify(error)}`)
+      if (insertedMessageIds.length > 0) {
+        await this.databaseService.deleteMessagesByIds(insertedMessageIds)
+      }
+      if (forkedSession !== null) {
+        await this.sessionStore.deleteSession(forkedSession.id)
+      }
+      this.sessionStore.setCurrentSession(sourceSession)
+      this.currentSession = sourceSession
+      return null
+    }
+  }
 
   // 持久化待处理的会话
   private async persistPendingSession(): Promise<void> {

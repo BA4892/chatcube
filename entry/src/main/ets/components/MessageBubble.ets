@@ -227,6 +227,7 @@ export struct MessageBubble {
   @Event onEdit: () => void = () => {}
   @Event onCancelEdit: () => void = () => {}  // 取消编辑回调
   @Event onShareMessage: () => void = () => {}
+  @Event onForkMessage: () => void = () => {}
   @Event onTranslate: (content: string, targetLang: string, callback: (result: string, errorMessage: string) => void) => void = () => {}
   // 图片点击预览回调
   @Event onImageClick: (images: Array<string>, index: number, sourceIds: Array<string>) => void =
@@ -1868,6 +1869,10 @@ export struct MessageBubble {
         .contentFont({ size: 14 })
         .onClick(() => { this.onShareMessage() })
 
+      MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.message_badge_plus')).fontSize(16), content: $r('app.string.menu_create_branch') })
+        .contentFont({ size: 14 })
+        .onClick(() => { this.onForkMessage() })
+
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_circle')).fontSize(16), content: $r('app.string.menu_multi_select') })
         .contentFont({ size: 14 })
         .onClick(() => { this.onEnterMultiSelect(this.message.id) })
@@ -1897,6 +1902,10 @@ export struct MessageBubble {
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.share')).fontSize(16), content: $r('app.string.menu_share') })
         .contentFont({ size: 14 })
         .onClick(() => { this.onShareMessage() })
+
+      MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.message_badge_plus')).fontSize(16), content: $r('app.string.menu_create_branch') })
+        .contentFont({ size: 14 })
+        .onClick(() => { this.onForkMessage() })
 
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_circle')).fontSize(16), content: $r('app.string.menu_multi_select') })
         .contentFont({ size: 14 })

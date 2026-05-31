@@ -961,6 +961,22 @@
       "value": "分享"
     },
     {
+      "name": "menu_create_branch",
+      "value": "创建分支"
+    },
+    {
+      "name": "create_branch_success",
+      "value": "已创建分支"
+    },
+    {
+      "name": "create_branch_failed",
+      "value": "创建分支失败"
+    },
+    {
+      "name": "create_branch_blocked_generating",
+      "value": "请先停止生成，再创建分支"
+    },
+    {
       "name": "menu_favorite",
       "value": "收藏"
     },

@@ -161,6 +161,7 @@ export struct ChatPage {
   @Local editingModelProvider: ModelProvider | null = null
   @Local isLoading: boolean = false
   @Local isSending: boolean = false
+  private isForkingMessage: boolean = false
   // 应用是否退到后台（用于处理生成中返回桌面/关闭应用）
   private get appInBackground(): boolean {
     return getAppUiState().appInBackground
@@ -2442,6 +2443,9 @@ export struct ChatPage {
           },
           onShareMessage: (message: ChatMessage): void => {
             this.handleShareSingleMessage(message)
+          },
+          onForkMessage: (message: ChatMessage): void => {
+            void this.handleForkMessage(message)
           },
           onTranslate: (content: string, targetLang: string,
             callback: (result: string, errorMessage: string) => void): void => {
@@ -4751,6 +4755,60 @@ export struct ChatPage {
   private handleShareSingleMessage(message: ChatMessage): void {
     this.getSelectionFlow().enterModeWithMessage(message.id)
     this.handleShareSelectedMessages()
+  }
+
+  private hasBlockingRuntimeForFork(): boolean {
+    this.syncSendingStateFromRuntime()
+    if (this.activeSendSignal !== null || this.isSending || this.currentTaskId !== '') {
+      return true
+    }
+    if (this.sessionId !== '' && this.chatViewModel.hasActiveRequestForSession(this.sessionId)) {
+      return true
+    }
+    if (this.showToolExecutionApprovalSheet) {
+      return true
+    }
+    return this.sessionId !== '' && ServiceRegistry.toolExecution().hasPendingInteractionForSession(this.sessionId)
+  }
+
+  private async handleForkMessage(message: ChatMessage): Promise<void> {
+    if (this.isForkingMessage) {
+      return
+    }
+    if (this.hasBlockingRuntimeForFork()) {
+      this.showChatSnack($r('app.string.create_branch_blocked_generating'), 2400, SnackBarTone.DEFAULT)
+      return
+    }
+
+    this.isForkingMessage = true
+    try {
+      await this.flushDraftAutosave(true)
+      this.resetInlineEditState()
+      this.clearSuggestedQuestionsInMemory()
+      const forkedSession = await this.chatViewModel.forkSessionAtMessage(
+        message.id,
+        pickLocalizedText('（分支）', ' (branch)')
+      )
+      if (forkedSession === null) {
+        this.showChatSnack($r('app.string.create_branch_failed'), 2400, SnackBarTone.ERROR)
+        return
+      }
+
+      this.routeParams = {
+        sessionId: forkedSession.id,
+        sessionTitle: forkedSession.title,
+        modelId: forkedSession.modelId,
+        providerId: forkedSession.providerId
+      }
+      this.isNewChatTransition = false
+      await this.loadData()
+      this.showChatSnack($r('app.string.create_branch_success'), 2000, SnackBarTone.SUCCESS)
+    } catch (error) {
+      console.error('ChatPage', `Failed to create branch: ${JSON.stringify(error)}`)
+      this.showChatSnack($r('app.string.create_branch_failed'), 2400, SnackBarTone.ERROR)
+    } finally {
+      this.isForkingMessage = false
+    }
   }
 
   // 进入多选模式

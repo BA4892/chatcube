@@ -1764,6 +1764,33 @@ export class DatabaseService {
       return
     }
     try {
+      const messageIds: string[] = []
+      const queryPredicates = new relationalStore.RdbPredicates(TableNames.MESSAGES)
+      queryPredicates.equalTo('session_id', sessionId)
+      const resultSet = await this.rdbStore.query(queryPredicates)
+      try {
+        while (resultSet.goToNextRow()) {
+          messageIds.push(resultSet.getString(resultSet.getColumnIndex('id')))
+        }
+      } finally {
+        resultSet.close()
+      }
+
+      // 删除会话关联工具事件和附件记录。附件文件本身仍按现有策略保留，避免误删复用文件。
+      const toolEventPredicates = new relationalStore.RdbPredicates(TableNames.TOOL_EVENTS)
+      toolEventPredicates.equalTo('session_id', sessionId)
+      await this.rdbStore.delete(toolEventPredicates)
+
+      if (messageIds.length > 0) {
+        const chunkSize = 200
+        for (let start = 0; start < messageIds.length; start += chunkSize) {
+          const chunk = messageIds.slice(start, start + chunkSize)
+          const attachmentPredicates = new relationalStore.RdbPredicates(TableNames.ATTACHMENTS)
+          attachmentPredicates.in('message_id', chunk)
+          await this.rdbStore.delete(attachmentPredicates)
+        }
+      }
+
       // 删除消息
       const messagePredicates = new relationalStore.RdbPredicates(TableNames.MESSAGES)
       messagePredicates.equalTo('session_id', sessionId)
@@ -2888,6 +2915,44 @@ export class DatabaseService {
     }
 
     return events
+  }
+
+  async copyToolEventsForMessage(
+    sourceMessageId: string,
+    targetSessionId: string,
+    targetMessageId: string
+  ): Promise<void> {
+    const events = await this.getToolEvents(sourceMessageId)
+    if (events.length === 0 || this.rdbStore === null) {
+      return
+    }
+
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i]
+      const eventId = `${targetMessageId}_${event.toolCallId}_${i}_${Date.now()}`
+      const valueBucket: relationalStore.ValuesBucket = {
+        id: eventId,
+        session_id: targetSessionId,
+        message_id: targetMessageId,
+        tool_call_id: event.toolCallId,
+        tool_name: event.toolName,
+        tool_display_name: event.toolDisplayName,
+        source_label: event.sourceLabel,
+        source_type: event.sourceType,
+        permission_level: event.permissionLevel,
+        tool_arguments: event.toolArguments,
+        tool_result: event.toolResult,
+        status: event.status,
+        created_at: event.createdAt,
+        completed_at: event.completedAt
+      }
+
+      try {
+        await this.rdbStore.insert(TableNames.TOOL_EVENTS, valueBucket)
+      } catch (error) {
+        console.error('DatabaseService', `Failed to copy tool event: ${JSON.stringify(error)}`)
+      }
+    }
   }
 
   // 获取会话的所有工具事件

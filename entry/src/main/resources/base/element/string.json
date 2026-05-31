@@ -961,6 +961,22 @@
       "value": "Share"
     },
     {
+      "name": "menu_create_branch",
+      "value": "Create branch"
+    },
+    {
+      "name": "create_branch_success",
+      "value": "Branch created"
+    },
+    {
+      "name": "create_branch_failed",
+      "value": "Failed to create branch"
+    },
+    {
+      "name": "create_branch_blocked_generating",
+      "value": "Stop generation before creating a branch"
+    },
+    {
       "name": "menu_favorite",
       "value": "Favorite"
     },

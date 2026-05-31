@@ -45,6 +45,7 @@ export struct ChatMessageListSection {
   @Event onCancelEdit: () => void = (): void => {}
   @Event onSuggestedQuestionClick: (question: string) => void = (_question: string): void => {}
   @Event onShareMessage: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
+  @Event onForkMessage: (message: ChatMessage) => void = (_message: ChatMessage): void => {}
   @Event onTranslate: (content: string, targetLang: string, callback: (result: string, errorMessage: string) => void) => void =
     (_content: string, _targetLang: string, _callback: (result: string, errorMessage: string) => void): void => {}
   @Event onImageClick: (images: Array<string>, imageIndex: number, sourceIds: Array<string>) => void =
@@ -462,6 +463,9 @@ export struct ChatMessageListSection {
                     },
                     onShareMessage: () => {
                       this.onShareMessage(item.message)
+                    },
+                    onForkMessage: () => {
+                      this.onForkMessage(item.message)
                     },
                     onTranslate: (content: string, targetLang: string,
                       callback: (result: string, errorMessage: string) => void): void => {
