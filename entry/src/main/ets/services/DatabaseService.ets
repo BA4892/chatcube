@@ -26,6 +26,7 @@ const DB_CONFIG: relationalStore.StoreConfig = {
   name: 'chatbox.db',
   securityLevel: relationalStore.SecurityLevel.S1
 }
+const DB_BATCH_CHUNK_SIZE = 200
 
 // 表名常量
 export class TableNames {
@@ -1975,31 +1976,27 @@ export class DatabaseService {
 
   // ============ 消息操作 ============
 
-  // 添加消息
-  async addMessage(sessionId: string, message: ChatMessage, refreshSummary: boolean = true): Promise<void> {
-    await this.waitForInitialization()
-    if (this.rdbStore === null) {
-      return
+  private buildSearchReferencesJson(message: ChatMessage): string {
+    if (message.searchReferences.length === 0) {
+      return ''
     }
+
+    const refsArray: SearchReferenceJsonData[] = []
+    for (let i = 0; i < message.searchReferences.length; i++) {
+      const ref = message.searchReferences[i]
+      refsArray.push({
+        id: ref.id,
+        title: ref.title,
+        url: ref.url,
+        snippet: ref.snippet,
+        timestamp: ref.timestamp
+      })
+    }
+    return JSON.stringify(refsArray)
+  }
+
+  private buildMessageValueBucket(sessionId: string, message: ChatMessage): relationalStore.ValuesBucket {
     ensureMessageParts(message)
-
-    // 将 searchReferences 数组序列化为 JSON 字符串
-    let searchReferencesJson = ''
-    if (message.searchReferences.length > 0) {
-      const refsArray: SearchReferenceJsonData[] = []
-      for (let i = 0; i < message.searchReferences.length; i++) {
-        const ref = message.searchReferences[i]
-        refsArray.push({
-          id: ref.id,
-          title: ref.title,
-          url: ref.url,
-          snippet: ref.snippet,
-          timestamp: ref.timestamp
-        })
-      }
-      searchReferencesJson = JSON.stringify(refsArray)
-    }
-
     const valueBucket: relationalStore.ValuesBucket = {
       id: message.id,
       session_id: sessionId,
@@ -2011,16 +2008,67 @@ export class DatabaseService {
       reasoning_content: message.reasoningContent,
       reasoning_signature_blob: message.reasoningSignatureBlob || '',
       parts_json: serializeMessageParts(message.parts),
-      // 保存搜索引用数据
       search_query: message.searchQuery || '',
       search_engine: message.searchEngine || '',
       search_source: message.searchSource || '',
-      search_references: searchReferencesJson,
-      // Token 用量(仅助手流式完成时有值,其余为 0)
+      search_references: this.buildSearchReferencesJson(message),
       prompt_tokens: message.promptTokens || 0,
       completion_tokens: message.completionTokens || 0,
       total_tokens: message.totalTokens || 0
     }
+    return valueBucket
+  }
+
+  private async batchInsertValueBuckets(
+    tableName: string,
+    valueBuckets: relationalStore.ValuesBucket[]
+  ): Promise<void> {
+    if (this.rdbStore === null || valueBuckets.length === 0) {
+      return
+    }
+
+    for (let start = 0; start < valueBuckets.length; start += DB_BATCH_CHUNK_SIZE) {
+      const chunk = valueBuckets.slice(start, start + DB_BATCH_CHUNK_SIZE)
+      await this.rdbStore.batchInsert(tableName, chunk)
+    }
+  }
+
+  private async insertValueBucketsIndividually(
+    tableName: string,
+    valueBuckets: relationalStore.ValuesBucket[],
+    errorLabel: string
+  ): Promise<void> {
+    if (this.rdbStore === null) {
+      return
+    }
+
+    for (let i = 0; i < valueBuckets.length; i++) {
+      try {
+        await this.rdbStore.insert(tableName, valueBuckets[i])
+      } catch (error) {
+        console.error('DatabaseService', `${errorLabel}: ${JSON.stringify(error)}`)
+      }
+    }
+  }
+
+  private buildAttachmentValueBuckets(
+    messageId: string,
+    attachments: MessageAttachment[]
+  ): relationalStore.ValuesBucket[] {
+    const valueBuckets: relationalStore.ValuesBucket[] = []
+    for (let i = 0; i < attachments.length; i++) {
+      valueBuckets.push(this.buildAttachmentValueBucket(messageId, attachments[i]))
+    }
+    return valueBuckets
+  }
+
+  // 添加消息
+  async addMessage(sessionId: string, message: ChatMessage, refreshSummary: boolean = true): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null) {
+      return
+    }
+    const valueBucket = this.buildMessageValueBucket(sessionId, message)
     try {
       await this.rdbStore.insert(TableNames.MESSAGES, valueBucket)
 
@@ -2038,6 +2086,37 @@ export class DatabaseService {
       }
     } catch (error) {
       console.error('DatabaseService', `Failed to add message: ${JSON.stringify(error)}`)
+    }
+  }
+
+  async addMessages(sessionId: string, messages: ChatMessage[], refreshSummary: boolean = true): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null || messages.length === 0) {
+      return
+    }
+
+    const messageBuckets: relationalStore.ValuesBucket[] = []
+    const attachmentBuckets: relationalStore.ValuesBucket[] = []
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i]
+      messageBuckets.push(this.buildMessageValueBucket(sessionId, message))
+      if (message.attachments.length > 0) {
+        const buckets = this.buildAttachmentValueBuckets(message.id, message.attachments)
+        for (let j = 0; j < buckets.length; j++) {
+          attachmentBuckets.push(buckets[j])
+        }
+      }
+    }
+
+    try {
+      await this.batchInsertValueBuckets(TableNames.MESSAGES, messageBuckets)
+      await this.batchInsertValueBuckets(TableNames.ATTACHMENTS, attachmentBuckets)
+      if (refreshSummary) {
+        await this.refreshSessionSummary(sessionId)
+      }
+    } catch (error) {
+      console.error('DatabaseService', `Failed to add messages: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to add messages: ${JSON.stringify(error)}`)
     }
   }
 
@@ -2876,45 +2955,82 @@ export class DatabaseService {
     }
   }
 
-  // 获取消息相关的工具事件
-  async getToolEvents(messageId: string): Promise<ToolEventData[]> {
-    await this.waitForInitialization()
-    if (this.rdbStore === null) {
-      return []
+  private buildToolEventDataFromResultSet(resultSet: relationalStore.ResultSet): ToolEventData {
+    const eventData: ToolEventData = {
+      id: this.safeGetString(resultSet, 'id'),
+      sessionId: this.safeGetString(resultSet, 'session_id'),
+      messageId: this.safeGetString(resultSet, 'message_id'),
+      toolCallId: this.safeGetString(resultSet, 'tool_call_id'),
+      toolName: this.safeGetString(resultSet, 'tool_name'),
+      toolDisplayName: this.safeGetString(resultSet, 'tool_display_name'),
+      sourceLabel: this.safeGetString(resultSet, 'source_label'),
+      sourceType: this.safeGetString(resultSet, 'source_type'),
+      permissionLevel: this.safeGetString(resultSet, 'permission_level', 'read'),
+      toolArguments: this.safeGetString(resultSet, 'tool_arguments'),
+      toolResult: this.safeGetString(resultSet, 'tool_result'),
+      status: this.safeGetString(resultSet, 'status'),
+      createdAt: this.safeGetLong(resultSet, 'created_at'),
+      completedAt: this.safeGetLong(resultSet, 'completed_at')
+    }
+    return eventData
+  }
+
+  private async queryToolEventsByMessageIds(messageIds: string[]): Promise<ToolEventData[]> {
+    const events: ToolEventData[] = []
+    if (this.rdbStore === null || messageIds.length === 0) {
+      return events
     }
 
-    const events: ToolEventData[] = []
-    const predicates = new relationalStore.RdbPredicates(TableNames.TOOL_EVENTS)
-    predicates.equalTo('message_id', messageId)
-    predicates.orderByAsc('created_at')
+    for (let start = 0; start < messageIds.length; start += DB_BATCH_CHUNK_SIZE) {
+      const chunk = messageIds.slice(start, start + DB_BATCH_CHUNK_SIZE)
+      const predicates = new relationalStore.RdbPredicates(TableNames.TOOL_EVENTS)
+      predicates.in('message_id', chunk)
+      predicates.orderByAsc('created_at')
 
-    try {
-      const resultSet = await this.rdbStore.query(predicates)
-      while (resultSet.goToNextRow()) {
-        const eventData: ToolEventData = {
-          id: resultSet.getString(resultSet.getColumnIndex('id')),
-          sessionId: resultSet.getString(resultSet.getColumnIndex('session_id')),
-          messageId: resultSet.getString(resultSet.getColumnIndex('message_id')),
-          toolCallId: resultSet.getString(resultSet.getColumnIndex('tool_call_id')),
-          toolName: resultSet.getString(resultSet.getColumnIndex('tool_name')),
-          toolDisplayName: this.safeGetString(resultSet, 'tool_display_name'),
-          sourceLabel: this.safeGetString(resultSet, 'source_label'),
-          sourceType: this.safeGetString(resultSet, 'source_type'),
-          permissionLevel: this.safeGetString(resultSet, 'permission_level', 'read'),
-          toolArguments: resultSet.getString(resultSet.getColumnIndex('tool_arguments')),
-          toolResult: resultSet.getString(resultSet.getColumnIndex('tool_result')),
-          status: resultSet.getString(resultSet.getColumnIndex('status')),
-          createdAt: resultSet.getLong(resultSet.getColumnIndex('created_at')),
-          completedAt: resultSet.getLong(resultSet.getColumnIndex('completed_at'))
+      try {
+        const resultSet = await this.rdbStore.query(predicates)
+        while (resultSet.goToNextRow()) {
+          events.push(this.buildToolEventDataFromResultSet(resultSet))
         }
-        events.push(eventData)
+        resultSet.close()
+      } catch (error) {
+        console.error('DatabaseService', `Failed to batch get tool events: ${JSON.stringify(error)}`)
       }
-      resultSet.close()
-    } catch (error) {
-      console.error('DatabaseService', `Failed to get tool events: ${JSON.stringify(error)}`)
     }
 
     return events
+  }
+
+  private buildCopiedToolEventValueBucket(
+    event: ToolEventData,
+    targetSessionId: string,
+    targetMessageId: string,
+    eventIndex: number
+  ): relationalStore.ValuesBucket {
+    const sourceEventId = event.id !== '' ? event.id : `${event.toolCallId}_${eventIndex}`
+    const valueBucket: relationalStore.ValuesBucket = {
+      id: `${targetMessageId}_${sourceEventId}`,
+      session_id: targetSessionId,
+      message_id: targetMessageId,
+      tool_call_id: event.toolCallId,
+      tool_name: event.toolName,
+      tool_display_name: event.toolDisplayName,
+      source_label: event.sourceLabel,
+      source_type: event.sourceType,
+      permission_level: event.permissionLevel,
+      tool_arguments: event.toolArguments,
+      tool_result: event.toolResult,
+      status: event.status,
+      created_at: event.createdAt,
+      completed_at: event.completedAt
+    }
+    return valueBucket
+  }
+
+  // 获取消息相关的工具事件
+  async getToolEvents(messageId: string): Promise<ToolEventData[]> {
+    await this.waitForInitialization()
+    return await this.queryToolEventsByMessageIds([messageId])
   }
 
   async copyToolEventsForMessage(
@@ -2922,36 +3038,48 @@ export class DatabaseService {
     targetSessionId: string,
     targetMessageId: string
   ): Promise<void> {
-    const events = await this.getToolEvents(sourceMessageId)
+    const sourceToTargetMessageIds = new Map<string, string>()
+    sourceToTargetMessageIds.set(sourceMessageId, targetMessageId)
+    await this.copyToolEventsForMessages(sourceToTargetMessageIds, targetSessionId)
+  }
+
+  async copyToolEventsForMessages(
+    sourceToTargetMessageIds: Map<string, string>,
+    targetSessionId: string
+  ): Promise<void> {
+    await this.waitForInitialization()
+    if (this.rdbStore === null || sourceToTargetMessageIds.size === 0) {
+      return
+    }
+
+    const events = await this.queryToolEventsByMessageIds(Array.from(sourceToTargetMessageIds.keys()))
     if (events.length === 0 || this.rdbStore === null) {
       return
     }
 
+    const valueBuckets: relationalStore.ValuesBucket[] = []
     for (let i = 0; i < events.length; i++) {
       const event = events[i]
-      const eventId = `${targetMessageId}_${event.toolCallId}_${i}_${Date.now()}`
-      const valueBucket: relationalStore.ValuesBucket = {
-        id: eventId,
-        session_id: targetSessionId,
-        message_id: targetMessageId,
-        tool_call_id: event.toolCallId,
-        tool_name: event.toolName,
-        tool_display_name: event.toolDisplayName,
-        source_label: event.sourceLabel,
-        source_type: event.sourceType,
-        permission_level: event.permissionLevel,
-        tool_arguments: event.toolArguments,
-        tool_result: event.toolResult,
-        status: event.status,
-        created_at: event.createdAt,
-        completed_at: event.completedAt
+      const targetMessageId = sourceToTargetMessageIds.get(event.messageId)
+      if (targetMessageId === undefined) {
+        continue
       }
+      valueBuckets.push(this.buildCopiedToolEventValueBucket(event, targetSessionId, targetMessageId, i))
+    }
 
-      try {
-        await this.rdbStore.insert(TableNames.TOOL_EVENTS, valueBucket)
-      } catch (error) {
-        console.error('DatabaseService', `Failed to copy tool event: ${JSON.stringify(error)}`)
-      }
+    if (valueBuckets.length === 0) {
+      return
+    }
+
+    try {
+      await this.batchInsertValueBuckets(TableNames.TOOL_EVENTS, valueBuckets)
+    } catch (error) {
+      console.error('DatabaseService', `Failed to batch copy tool events: ${JSON.stringify(error)}`)
+      await this.insertValueBucketsIndividually(
+        TableNames.TOOL_EVENTS,
+        valueBuckets,
+        'Failed to copy tool event'
+      )
     }
   }
 
@@ -2970,23 +3098,7 @@ export class DatabaseService {
     try {
       const resultSet = await this.rdbStore.query(predicates)
       while (resultSet.goToNextRow()) {
-        const eventData: ToolEventData = {
-          id: resultSet.getString(resultSet.getColumnIndex('id')),
-          sessionId: resultSet.getString(resultSet.getColumnIndex('session_id')),
-          messageId: resultSet.getString(resultSet.getColumnIndex('message_id')),
-          toolCallId: resultSet.getString(resultSet.getColumnIndex('tool_call_id')),
-          toolName: resultSet.getString(resultSet.getColumnIndex('tool_name')),
-          toolDisplayName: this.safeGetString(resultSet, 'tool_display_name'),
-          sourceLabel: this.safeGetString(resultSet, 'source_label'),
-          sourceType: this.safeGetString(resultSet, 'source_type'),
-          permissionLevel: this.safeGetString(resultSet, 'permission_level', 'read'),
-          toolArguments: resultSet.getString(resultSet.getColumnIndex('tool_arguments')),
-          toolResult: resultSet.getString(resultSet.getColumnIndex('tool_result')),
-          status: resultSet.getString(resultSet.getColumnIndex('status')),
-          createdAt: resultSet.getLong(resultSet.getColumnIndex('created_at')),
-          completedAt: resultSet.getLong(resultSet.getColumnIndex('completed_at'))
-        }
-        events.push(eventData)
+        events.push(this.buildToolEventDataFromResultSet(resultSet))
       }
       resultSet.close()
     } catch (error) {
@@ -3014,23 +3126,7 @@ export class DatabaseService {
         if (count >= limit) {
           break
         }
-        const eventData: ToolEventData = {
-          id: resultSet.getString(resultSet.getColumnIndex('id')),
-          sessionId: resultSet.getString(resultSet.getColumnIndex('session_id')),
-          messageId: resultSet.getString(resultSet.getColumnIndex('message_id')),
-          toolCallId: resultSet.getString(resultSet.getColumnIndex('tool_call_id')),
-          toolName: resultSet.getString(resultSet.getColumnIndex('tool_name')),
-          toolDisplayName: this.safeGetString(resultSet, 'tool_display_name'),
-          sourceLabel: this.safeGetString(resultSet, 'source_label'),
-          sourceType: this.safeGetString(resultSet, 'source_type'),
-          permissionLevel: this.safeGetString(resultSet, 'permission_level', 'read'),
-          toolArguments: resultSet.getString(resultSet.getColumnIndex('tool_arguments')),
-          toolResult: resultSet.getString(resultSet.getColumnIndex('tool_result')),
-          status: resultSet.getString(resultSet.getColumnIndex('status')),
-          createdAt: resultSet.getLong(resultSet.getColumnIndex('created_at')),
-          completedAt: resultSet.getLong(resultSet.getColumnIndex('completed_at'))
-        }
-        events.push(eventData)
+        events.push(this.buildToolEventDataFromResultSet(resultSet))
         count = count + 1
       }
       resultSet.close()

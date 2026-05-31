@@ -126,6 +126,7 @@ const OPENAI_RESPONSES_WEB_SEARCH_PREFIX = 'hws'
 const OPENAI_RESPONSES_IMAGE_GENERATION_PREFIX = 'hig'
 const OPENAI_RESPONSES_TOOL_SEQUENCE_OFFSET = 0
 const OPENAI_RESPONSES_IMAGE_SEQUENCE_OFFSET = 1
+const FORK_ATTACHMENT_COPY_CONCURRENCY = 2
 
 // 聊天状态管理
 export class ChatViewModel {
@@ -412,38 +413,85 @@ export class ChatViewModel {
     return cloned
   }
 
+  private cloneAttachmentMetadataForFork(source: MessageAttachment): MessageAttachment {
+    const attachment = new MessageAttachment(
+      this.generateId(),
+      source.type,
+      source.name,
+      source.filePath,
+      source.mimeType,
+      source.size
+    )
+    attachment.processState = source.processState
+    attachment.parseEngine = source.parseEngine
+    attachment.parsedText = source.parsedText
+    attachment.parseError = source.parseError
+    return attachment
+  }
+
+  private async copyAttachmentFileForFork(
+    source: MessageAttachment,
+    attachment: MessageAttachment,
+    pathMap: Map<string, string>
+  ): Promise<void> {
+    if (source.filePath === '') {
+      return
+    }
+
+    const copiedPath = await this.attachmentStorageService.importExistingAttachment(source.filePath, attachment)
+    if (copiedPath !== '') {
+      attachment.filePath = copiedPath
+      this.registerForkedPath(pathMap, source.filePath, copiedPath)
+    } else {
+      console.warn('ChatViewModel', `Fork attachment copy failed, reuse source path: ${source.filePath}`)
+      this.registerForkedPath(pathMap, source.filePath, source.filePath)
+    }
+  }
+
+  private async copyAttachmentFilesForFork(
+    sources: MessageAttachment[],
+    targets: MessageAttachment[],
+    pathMap: Map<string, string>
+  ): Promise<void> {
+    if (sources.length === 0) {
+      return
+    }
+
+    let nextIndex = 0
+    const workerCount = Math.min(FORK_ATTACHMENT_COPY_CONCURRENCY, sources.length)
+    const runWorker = async (): Promise<void> => {
+      while (nextIndex < sources.length) {
+        const index = nextIndex
+        nextIndex = nextIndex + 1
+        await this.copyAttachmentFileForFork(sources[index], targets[index], pathMap)
+      }
+    }
+
+    const workers: Promise<void>[] = []
+    for (let i = 0; i < workerCount; i++) {
+      workers.push(runWorker())
+    }
+    await Promise.all(workers)
+  }
+
   private async cloneAttachmentsForFork(
     attachments: MessageAttachment[],
     pathMap: Map<string, string>
   ): Promise<MessageAttachment[]> {
     const cloned: MessageAttachment[] = []
+    const sourcesToCopy: MessageAttachment[] = []
+    const targetsToCopy: MessageAttachment[] = []
     for (let i = 0; i < attachments.length; i++) {
       const source = attachments[i]
-      const attachment = new MessageAttachment(
-        this.generateId(),
-        source.type,
-        source.name,
-        source.filePath,
-        source.mimeType,
-        source.size
-      )
-      attachment.processState = source.processState
-      attachment.parseEngine = source.parseEngine
-      attachment.parsedText = source.parsedText
-      attachment.parseError = source.parseError
-
-      if (source.filePath !== '') {
-        const copiedPath = await this.attachmentStorageService.importExistingAttachment(source.filePath, attachment)
-        if (copiedPath !== '') {
-          attachment.filePath = copiedPath
-          this.registerForkedPath(pathMap, source.filePath, copiedPath)
-        } else {
-          console.warn('ChatViewModel', `Fork attachment copy failed, reuse source path: ${source.filePath}`)
-          this.registerForkedPath(pathMap, source.filePath, source.filePath)
-        }
-      }
+      const attachment = this.cloneAttachmentMetadataForFork(source)
       cloned.push(attachment)
+      if (source.filePath !== '') {
+        sourcesToCopy.push(source)
+        targetsToCopy.push(attachment)
+      }
     }
+
+    await this.copyAttachmentFilesForFork(sourcesToCopy, targetsToCopy, pathMap)
     return cloned
   }
 
@@ -1528,15 +1576,19 @@ export class ChatViewModel {
       forkedSession.draftAttachments = []
       forkedSession.suggestedQuestions = []
 
+      const clonedMessages: ChatMessage[] = []
+      const sourceToTargetMessageIds = new Map<string, string>()
       for (let i = 0; i <= targetIndex; i++) {
         const sourceMessage = sourceSession.messages[i]
         const clonedMessage = await this.cloneMessageForFork(sourceMessage)
-        await this.databaseService.addMessage(forkedSession.id, clonedMessage, false)
-        await this.databaseService.copyToolEventsForMessage(sourceMessage.id, forkedSession.id, clonedMessage.id)
-        forkedSession.messages.push(clonedMessage)
+        clonedMessages.push(clonedMessage)
+        sourceToTargetMessageIds.set(sourceMessage.id, clonedMessage.id)
         insertedMessageIds.push(clonedMessage.id)
       }
 
+      await this.databaseService.addMessages(forkedSession.id, clonedMessages, false)
+      await this.databaseService.copyToolEventsForMessages(sourceToTargetMessageIds, forkedSession.id)
+      forkedSession.messages = clonedMessages
       await this.databaseService.refreshSessionSummaryForSession(forkedSession.id)
       forkedSession.updatedAt = Date.now()
       await this.databaseService.updateSession(forkedSession)
