@@ -12,6 +12,8 @@ export class IndexSettingsSheetActionCallbacks {
   onToggleChatInputEnterKeySend: (value: boolean) => Promise<void> = async (_value: boolean): Promise<void> => {}
   onToggleChatSuggestedQuestionsEnabled: (value: boolean) => Promise<void> =
     async (_value: boolean): Promise<void> => {}
+  onToggleExperimentalMarkdownHybridEnabled: (value: boolean) => Promise<void> =
+    async (_value: boolean): Promise<void> => {}
   onOpenSystemNotificationSettings: () => void = (): void => {}
 }
 
@@ -26,6 +28,7 @@ export class IndexSettingsSheetCoordinatorBindOptions {
   onNotifyOnFailedUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onChatInputEnterKeySendUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onChatSuggestedQuestionsEnabledUpdated: (value: boolean) => void = (_value: boolean): void => {}
+  onExperimentalMarkdownHybridUpdated: (value: boolean) => void = (_value: boolean): void => {}
   onOpenSystemNotificationSettings: () => void = (): void => {}
 }
 
@@ -82,6 +85,11 @@ export class IndexSettingsSheetCoordinator {
     callbacks.onToggleChatSuggestedQuestionsEnabled = async (value: boolean): Promise<void> => {
       options.onChatSuggestedQuestionsEnabledUpdated(value)
       await this.settingsManager.setChatSuggestedQuestionsEnabled(value)
+    }
+
+    callbacks.onToggleExperimentalMarkdownHybridEnabled = async (value: boolean): Promise<void> => {
+      options.onExperimentalMarkdownHybridUpdated(value)
+      await this.settingsManager.setExperimentalMarkdownHybridEnabled(value)
     }
 
     callbacks.onOpenSystemNotificationSettings = (): void => {

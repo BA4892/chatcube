@@ -61,6 +61,9 @@ export class AppStorageKeys {
   // 聊天字体大小
   static readonly CHAT_FONT_SIZE: string = 'chat_font_size'
 
+  // 实验性 Markdown 渲染器
+  static readonly EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED: string = 'experimental_markdown_hybrid_enabled'
+
   // 聊天输入设置
   static readonly CHAT_INPUT_ENTER_KEY_SEND: string = 'chat_input_enter_key_send'
   static readonly CHAT_SUGGESTED_QUESTIONS_ENABLED: string = 'chat_suggested_questions_enabled'

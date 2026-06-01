@@ -15,6 +15,7 @@ import { shouldShowAssistantMessageToolbar } from '../utils/MessageBubbleDisplay
 import { AskUserCard } from './AskUserCard'
 import { CodePreviewSheet, getCodePreviewSheetTitle } from './CodePreviewSheet'
 import { TypingDots } from './TypingDots'
+import { ChatMarkdownHybridRenderer } from './ChatMarkdownHybridRenderer'
 import { CubeSpinnerBubble, CubeSpinnerLight } from './loading/CubeSpinner'
 import { AssistantAvatarView } from './AssistantAvatar'
 import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
@@ -152,6 +153,8 @@ export struct MessageBubble {
   @Local showCodePreview: boolean = false
   @Local codePreviewKind: string = ''
   @Local codePreviewCode: string = ''
+  @Local showTextSelectionSheet: boolean = false
+  @Local textSelectionSheetContent: string = ''
   // 深色模式状态（用于主题适配）
   private get isDarkMode(): boolean {
     return getAppUiState().isDarkMode
@@ -990,6 +993,20 @@ export struct MessageBubble {
       } else {
         this.AssistantMessage()
       }
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showTextSelectionSheet, this.TextSelectionSheetBuilder(), {
+          height: SheetSize.LARGE,
+          detents: [SheetSize.LARGE],
+          dragBar: true,
+          showClose: true,
+          onDisappear: () => {
+            this.showTextSelectionSheet = false
+            this.textSelectionSheetContent = ''
+          }
+        })
     }
     .width('100%')
     // 入退场动画: 仅 opacity, 不再用方向性 translate。
@@ -1282,6 +1299,10 @@ export struct MessageBubble {
     return CodePreviewMarkerInjector.inject(normalized, scopeKey, this.codePreviewRegistry)
   }
 
+  private getMarkdownHybridRenderText(content: string): string {
+    return ChatMarkdownPreprocessor.preprocessForHybrid(content)
+  }
+
   private getCodePreviewMarkdownPlugins(): MarkdownPlugin[] {
     if (this.codePreviewMarkdownPlugins.length === 0) {
       this.codePreviewMarkdownPlugins = [{
@@ -1332,6 +1353,110 @@ export struct MessageBubble {
 
   private getCodePreviewKindLabel(kind: string): string {
     return kind === 'mermaid' ? 'Mermaid' : 'HTML'
+  }
+
+  private normalizeHybridCodePreviewKind(codeType: string): string {
+    const normalized = codeType.trim().toLowerCase()
+    if (normalized === 'mermaid') {
+      return 'mermaid'
+    }
+    if (normalized === 'html' || normalized === 'htm') {
+      return 'html'
+    }
+    return normalized.length > 0 ? normalized : 'code'
+  }
+
+  private normalizeLineBreaks(value: string): string {
+    return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  }
+
+  private getCodeFenceMarker(line: string): string {
+    const trimmed = line.trimStart()
+    if (trimmed.startsWith('```')) {
+      return '```'
+    }
+    if (trimmed.startsWith('~~~')) {
+      return '~~~'
+    }
+    return ''
+  }
+
+  private resolveHybridCodeBlockFromSource(code: string, source: string): string {
+    const normalizedCode = this.normalizeLineBreaks(code)
+    if (normalizedCode.indexOf('\n') >= 0 || source.trim().length === 0) {
+      return code
+    }
+
+    const lines = this.normalizeLineBreaks(source).split('\n')
+    let inFence = false
+    let fenceMarker = ''
+    let currentLines: string[] = []
+    let matchedBlock = ''
+    let matchCount = 0
+
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]
+      if (!inFence) {
+        const marker = this.getCodeFenceMarker(line)
+        if (marker !== '') {
+          inFence = true
+          fenceMarker = marker
+          currentLines = []
+        }
+        continue
+      }
+
+      if (line.trimStart().startsWith(fenceMarker)) {
+        const block = currentLines.join('\n')
+        const blockLines = block.split('\n')
+        let hasLineMatch = block === normalizedCode
+        if (!hasLineMatch) {
+          for (let lineIndex = 0; lineIndex < blockLines.length; lineIndex++) {
+            if (blockLines[lineIndex] === normalizedCode) {
+              hasLineMatch = true
+              break
+            }
+          }
+        }
+        if (hasLineMatch) {
+          matchedBlock = block
+          matchCount++
+        }
+        inFence = false
+        fenceMarker = ''
+        currentLines = []
+      } else {
+        currentLines.push(line)
+      }
+    }
+
+    if (matchCount === 1 && matchedBlock.trim().length > 0) {
+      return matchedBlock
+    }
+    return code
+  }
+
+  private copyCodeFromHybrid(code: string, source: string): void {
+    this.copyToClipboard(this.resolveHybridCodeBlockFromSource(code, source))
+  }
+
+  private openCodePreviewFromHybrid(code: string, codeType: string, source: string): void {
+    const resolvedCode = this.resolveHybridCodeBlockFromSource(code, source)
+    if (resolvedCode.trim().length === 0) {
+      showToast(this.getUIContext(), pickLocalizedText('代码还在生成中', 'Code is still generating'))
+      return
+    }
+    this.codePreviewKind = this.normalizeHybridCodePreviewKind(codeType)
+    this.codePreviewCode = resolvedCode
+    this.showCodePreview = true
+  }
+
+  private openTextSelectionSheet(content: string): void {
+    if (content.trim().length === 0) {
+      return
+    }
+    this.textSelectionSheetContent = content
+    this.showTextSelectionSheet = true
   }
 
   private getCodePreviewPluginTitle(node: PluginNode): string {
@@ -1400,6 +1525,51 @@ export struct MessageBubble {
       kind: this.codePreviewKind,
       code: this.codePreviewCode
     })
+  }
+
+  @Builder
+  TextSelectionSheetBuilder() {
+    Column() {
+      Row() {
+        Text(pickLocalizedText('选择文本', 'Select text'))
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.checkmark_square_on_square'))
+            .fontSize(16)
+            .fontColor([this.themePrimary])
+        }
+        .width(36)
+        .height(36)
+        .borderRadius(18)
+        .backgroundColor(this.isDarkMode ? '#242424' : '#ECEFF5')
+        .onClick(() => {
+          this.copyToClipboard(this.textSelectionSheetContent)
+        })
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 12 })
+
+      Scroll() {
+        Text(this.textSelectionSheetContent)
+          .width('100%')
+          .fontSize(this.chatFontSize)
+          .lineHeight(Math.round(this.chatFontSize * 1.45))
+          .fontColor($r('app.color.text_primary'))
+          .textAlign(TextAlign.Start)
+          .copyOption(CopyOptions.LocalDevice)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: 16, right: 16, top: 8, bottom: 16 })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(getAppUiState().themeBackground)
   }
 
   private shouldShowUserToolbar(): boolean {
@@ -1873,6 +2043,15 @@ export struct MessageBubble {
         .contentFont({ size: 14 })
         .onClick(() => { this.onForkMessage() })
 
+      if (this.canCopyMessageContent()) {
+        MenuItem({
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.text_alignleft')).fontSize(16),
+          content: pickLocalizedText('选择文本', 'Select text')
+        })
+          .contentFont({ size: 14 })
+          .onClick(() => { this.openTextSelectionSheet(this.message.content) })
+      }
+
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_circle')).fontSize(16), content: $r('app.string.menu_multi_select') })
         .contentFont({ size: 14 })
         .onClick(() => { this.onEnterMultiSelect(this.message.id) })
@@ -1906,6 +2085,15 @@ export struct MessageBubble {
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.message_badge_plus')).fontSize(16), content: $r('app.string.menu_create_branch') })
         .contentFont({ size: 14 })
         .onClick(() => { this.onForkMessage() })
+
+      if (this.canCopyMessageContent()) {
+        MenuItem({
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.text_alignleft')).fontSize(16),
+          content: pickLocalizedText('选择文本', 'Select text')
+        })
+          .contentFont({ size: 14 })
+          .onClick(() => { this.openTextSelectionSheet(this.message.content) })
+      }
 
       MenuItem({ symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_circle')).fontSize(16), content: $r('app.string.menu_multi_select') })
         .contentFont({ size: 14 })
@@ -2919,13 +3107,41 @@ export struct MessageBubble {
 	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
 	      if (part.text.trim() !== '') {
-	        Markdown({
-	          controller: this.getPartMarkdownController(blockIndex, partIndex, -1),
-	          text: this.getMarkdownRenderText(part.text, this.getPartMarkdownScopeKey(blockIndex, partIndex)),
-	          plugins: this.getCodePreviewMarkdownPlugins()
-	        })
-	          .width('100%')
-	          .backgroundColor(Color.Transparent)
+          if (this.message.role === MessageRole.ASSISTANT && getAppUiState().experimentalMarkdownHybridEnabled) {
+            ChatMarkdownHybridRenderer({
+              content: this.getMarkdownHybridRenderText(part.text),
+              isInputEnded: !this.message.isGenerating,
+              incrementalAnalysis: this.message.isGenerating,
+              useCangjieComponent: true,
+              chatFontSize: this.chatFontSize,
+              themeRenderKey: this.themeRenderKey,
+              onOpenLink: (title: string, url: string): void => {
+                this.openWebSheetForLink(title, url)
+              },
+              onImageClick: (src: string): void => {
+                this.openImagePreviewForMarkdownSource(src, part.text)
+              },
+              onCopyText: (text: string): void => {
+                this.copyToClipboard(text)
+              },
+              onCopyCode: (code: string): void => {
+                this.copyCodeFromHybrid(code, part.text)
+              },
+              onCodeFullScreen: (code: string, codeType: string): void => {
+                this.openCodePreviewFromHybrid(code, codeType, part.text)
+              }
+            })
+              .width('100%')
+              .backgroundColor(Color.Transparent)
+          } else {
+            Markdown({
+              controller: this.getPartMarkdownController(blockIndex, partIndex, -1),
+              text: this.getMarkdownRenderText(part.text, this.getPartMarkdownScopeKey(blockIndex, partIndex)),
+              plugins: this.getCodePreviewMarkdownPlugins()
+            })
+              .width('100%')
+              .backgroundColor(Color.Transparent)
+          }
 	      }
 	    }
 	    .width('100%')

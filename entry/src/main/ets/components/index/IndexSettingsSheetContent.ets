@@ -19,6 +19,7 @@ export struct IndexSettingsSheetContent {
   @Param notifyOnFailed: boolean = true
   @Param chatInputEnterKeySend: boolean = false
   @Param chatSuggestedQuestionsEnabled: boolean = false
+  @Param experimentalMarkdownHybridEnabled: boolean = false
   @Param handAdaptiveEnabled: boolean = false
   @Param handAdaptiveNewChat: boolean = false
   @Param handAdaptiveUnsupported: boolean = false
@@ -157,6 +158,14 @@ export struct IndexSettingsSheetContent {
       this.NotificationToggleItem($r('app.string.chat_suggested_questions_title'),
         $r('app.string.chat_suggested_questions_desc'), this.chatSuggestedQuestionsEnabled, (value: boolean) => {
           this.callbacks.onToggleChatSuggestedQuestionsEnabled(value)
+        })
+
+      Divider().color($r('app.color.divider'))
+
+      this.NotificationToggleItem($r('app.string.experimental_markdown_hybrid_title'),
+        $r('app.string.experimental_markdown_hybrid_desc'), this.experimentalMarkdownHybridEnabled,
+        (value: boolean) => {
+          this.callbacks.onToggleExperimentalMarkdownHybridEnabled(value)
         })
     }
     .width('100%')

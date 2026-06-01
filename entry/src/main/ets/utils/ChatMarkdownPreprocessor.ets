@@ -9,6 +9,10 @@ export class ChatMarkdownPreprocessor {
     return result
   }
 
+  static preprocessForHybrid(content: string): string {
+    return content
+  }
+
   private static convertTaskListToReadonly(content: string): string {
     let result = content.replace(/^(\s*[-*])\s*\[ \]/gm, '$1 ☐')
     result = result.replace(/^(\s*[-*])\s*\[[xX]\]/gm, '$1 ☑')

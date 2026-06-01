@@ -92,6 +92,9 @@ export class PreferenceKeys {
   // 聊天字体大小
   static readonly CHAT_FONT_SIZE: string = 'chat_font_size'
 
+  // 实验性 Markdown 渲染器
+  static readonly EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED: string = 'experimental_markdown_hybrid_enabled'
+
   // 聊天输入设置
   static readonly CHAT_INPUT_ENTER_KEY_SEND: string = 'chat_input_enter_key_send'
 
@@ -450,6 +453,14 @@ export class PreferencesService {
   // 设置聊天字体大小
   async setChatFontSize(size: number): Promise<void> {
     await this.setNumber(PreferenceKeys.CHAT_FONT_SIZE, size)
+  }
+
+  async getExperimentalMarkdownHybridEnabled(): Promise<boolean> {
+    return await this.getBoolean(PreferenceKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, false)
+  }
+
+  async setExperimentalMarkdownHybridEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(PreferenceKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, enabled)
   }
 
   // 获取聊天输入框回车键是否发送

@@ -1894,7 +1894,7 @@
     },
     {
       "name": "settings_chat_input_desc",
-      "value": "回车键行为、推荐后续问题"
+      "value": "回车键行为、推荐后续问题、实验渲染"
     },
     {
       "name": "chat_input_independent_send_button_title",
@@ -1911,6 +1911,14 @@
     {
       "name": "chat_suggested_questions_desc",
       "value": "AI 回复完成后，在输入框上方显示最多 3 个后续问题"
+    },
+    {
+      "name": "experimental_markdown_hybrid_title",
+      "value": "实验性 Markdown 渲染器"
+    },
+    {
+      "name": "experimental_markdown_hybrid_desc",
+      "value": "使用 markdown_hybrid 渲染普通助手正文，改善公式、表格和 HTML 显示"
     },
     {
       "name": "system_prompt_edit_title",

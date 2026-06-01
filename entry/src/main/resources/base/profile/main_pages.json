@@ -17,6 +17,7 @@
     "pages/ImportDataPage",
     "pages/ToolsCenterPage",
     "pages/ImageGenerationPage",
-    "pages/AboutPage"
+    "pages/AboutPage",
+    "pages/MarkdownHybridPreviewPage"
   ]
 }

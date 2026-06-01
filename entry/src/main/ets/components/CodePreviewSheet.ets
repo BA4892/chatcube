@@ -1,6 +1,8 @@
 import { webview } from '@kit.ArkWeb'
 import { hilog } from '@kit.PerformanceAnalysisKit'
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit'
 import { getAppUiState, observeAppUiState } from '../state/AppUiState'
+import { showToast } from '../utils/ToastUtil'
 
 const DOMAIN = 0x0002
 const TAG = 'CodePreviewSheet'
@@ -22,6 +24,9 @@ export function getCodePreviewSheetTitle(kind: string): string {
   }
   if (kind === 'html') {
     return 'HTML 预览'
+  }
+  if (kind !== '') {
+    return kind.toUpperCase() + ' 代码'
   }
   return '预览'
 }
@@ -66,29 +71,24 @@ export struct CodePreviewSheet {
     return this.isDarkMode ? '#A8A8A8' : '#666666'
   }
 
-  private getHtmlDataUrl(): string {
-    const bgColor = this.getBackgroundColor()
-    const textColor = this.getTextColor()
-    const wrappedHtml = '<!DOCTYPE html><html><head>' +
-      '<meta charset="utf-8">' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">' +
-      '<style>' +
-      '* { box-sizing: border-box; }' +
-      'html { width: 100%; min-height: 100%; margin: 0; background: ' + bgColor + '; color: ' + textColor + '; }' +
-      'body { width: 100%; min-height: 100vh; margin: 0; padding: 12px; overflow: auto; ' +
-      'font-family: HarmonyOS Sans, -apple-system, sans-serif; background: ' + bgColor + '; color: ' + textColor + '; }' +
-      'img { max-width: 100%; height: auto; }' +
-      'table { border-collapse: collapse; width: 100%; }' +
-      'th, td { border: 1px solid ' + (this.isDarkMode ? '#3A3A3A' : '#DDDDDD') + '; padding: 8px; text-align: left; }' +
-      'th { background: ' + (this.isDarkMode ? '#171717' : '#F5F5F5') + '; }' +
-      'a { color: ' + (this.isDarkMode ? '#9CBFE8' : '#4E6F9E') + '; }' +
-      'pre, code { font-family: monospace; }' +
-      'pre { padding: 12px; border-radius: 8px; overflow-x: auto; background: ' +
-      (this.isDarkMode ? '#101010' : '#F6F8FA') + '; }' +
-      '</style></head><body>' +
-      this.code +
-      '</body></html>'
-    return 'data:text/html;charset=utf-8,' + encodeURIComponent(wrappedHtml)
+  private getCodeBlockBackgroundColor(): string {
+    return this.isDarkMode ? '#101010' : '#F6F8FA'
+  }
+
+  private copyCode(): void {
+    try {
+      const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.code)
+      const systemPasteboard = pasteboard.getSystemPasteboard()
+      systemPasteboard.setData(pasteboardData)
+        .then((): void => {
+          showToast(this.getUIContext(), $r('app.string.copy_success'))
+        })
+        .catch((error: BusinessError): void => {
+          hilog.error(DOMAIN, TAG, `Copy preview code failed: ${JSON.stringify(error)}`)
+        })
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, `Copy preview code failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private getMermaidRenderScript(): string {
@@ -123,7 +123,7 @@ export struct CodePreviewSheet {
       return
     }
     try {
-      this.htmlWebController.loadUrl(this.getHtmlDataUrl())
+      this.htmlWebController.loadData(this.code, 'text/html', 'UTF-8', ' ', ' ')
     } catch (error) {
       hilog.error(DOMAIN, TAG, `Reload HTML preview failed: ${JSON.stringify(error)}`)
     }
@@ -189,15 +189,59 @@ export struct CodePreviewSheet {
           .fileAccess(false)
           .backgroundColor(this.getBackgroundColor())
       } else if (this.kind === 'html') {
-        Web({ src: this.getHtmlDataUrl(), controller: this.htmlWebController })
+        Web({ src: '', controller: this.htmlWebController })
           .width('100%')
           .layoutWeight(1)
           .onControllerAttached(() => {
             this.isHtmlWebReady = true
+            this.reloadHtml()
           })
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .backgroundColor(this.getBackgroundColor())
+      } else {
+        Column() {
+          Row() {
+            Text(this.kind !== '' ? this.kind.toUpperCase() : 'CODE')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.getTextColor())
+              .layoutWeight(1)
+
+            Button() {
+              SymbolGlyph($r('sys.symbol.checkmark_square_on_square'))
+                .fontSize(16)
+                .fontColor([this.themePrimary])
+            }
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor(this.isDarkMode ? '#242424' : '#ECEFF5')
+            .onClick(() => {
+              this.copyCode()
+            })
+          }
+          .width('100%')
+          .height(44)
+          .padding({ left: 16, right: 12 })
+
+          Scroll() {
+            Text(this.code)
+              .width('100%')
+              .fontSize(13)
+              .lineHeight(20)
+              .fontFamily('monospace')
+              .fontColor(this.getTextColor())
+              .textAlign(TextAlign.Start)
+              .copyOption(CopyOptions.LocalDevice)
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .padding(12)
+          .backgroundColor(this.getCodeBlockBackgroundColor())
+        }
+        .width('100%')
+        .height('100%')
       }
     }
     .width('100%')
