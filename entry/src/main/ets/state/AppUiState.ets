@@ -58,7 +58,6 @@ export class AppUiState {
   @Trace themeMarkdownTableAltBg: string = '#FAF7F0'
   @Trace themeMarkdownTableBorder: string = '#DED8CC'
   @Trace chatFontSize: number = 15
-  @Trace experimentalMarkdownHybridEnabled: boolean = false
   @Trace chatInputEnterKeySend: boolean = false
   @Trace chatSuggestedQuestionsEnabled: boolean = false
   @Trace materialType: number = 100   // ADAPTIVE
@@ -226,9 +225,6 @@ function applyAppUiStateValue<T extends string | number | boolean>(state: AppUiS
     case AppStorageKeys.CHAT_FONT_SIZE:
       state.chatFontSize = value as number
       return
-    case AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED:
-      state.experimentalMarkdownHybridEnabled = value as boolean
-      return
     case AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND:
       state.chatInputEnterKeySend = value as boolean
       return
@@ -351,8 +347,6 @@ function createAppUiStateFromStorage(): AppUiState {
   applyAppUiStateValue(state, AppStorageKeys.THEME_MARKDOWN_TABLE_BORDER,
     readStorageValue<string>(AppStorageKeys.THEME_MARKDOWN_TABLE_BORDER, state.themeMarkdownTableBorder))
   applyAppUiStateValue(state, AppStorageKeys.CHAT_FONT_SIZE, readStorageValue<number>(AppStorageKeys.CHAT_FONT_SIZE, 15))
-  applyAppUiStateValue(state, AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED,
-    readStorageValue<boolean>(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, false))
   applyAppUiStateValue(state, AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND,
     readStorageValue<boolean>(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, false))
   applyAppUiStateValue(state, AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED,
@@ -433,7 +427,6 @@ export function syncAppUiStateFromStorage(): void {
   state.themeMarkdownTableAltBg = freshState.themeMarkdownTableAltBg
   state.themeMarkdownTableBorder = freshState.themeMarkdownTableBorder
   state.chatFontSize = freshState.chatFontSize
-  state.experimentalMarkdownHybridEnabled = freshState.experimentalMarkdownHybridEnabled
   state.chatInputEnterKeySend = freshState.chatInputEnterKeySend
   state.materialType = freshState.materialType
   state.materialLevel = freshState.materialLevel
@@ -569,8 +562,6 @@ function resolveAppUiStatePath(path: string): string {
       return 'themeMarkdownTableBorder'
     case AppStorageKeys.CHAT_FONT_SIZE:
       return 'chatFontSize'
-    case AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED:
-      return 'experimentalMarkdownHybridEnabled'
     case AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND:
       return 'chatInputEnterKeySend'
     case AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED:

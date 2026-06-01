@@ -7,7 +7,6 @@ import {
   ToolResult,
   SearchReference
 } from '../models/ChatModels'
-import { Markdown, MarkdownController, MarkdownPlugin, PluginNode } from '@luvi/lv-markdown-in'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { showToast } from '../utils/ToastUtil'
 import { pickLocalizedText } from '../utils/LocalizedTextUtils'
@@ -22,13 +21,6 @@ import { AdaptiveImageThumbnail } from './AdaptiveImageThumbnail'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { getAppUiState } from '../state/AppUiState'
-import {
-  getMarkdownBlockSpacing,
-  getMarkdownQuotePadding,
-  getMarkdownTextLineHeight,
-  getMarkdownTitleLineHeights,
-  getMarkdownTitleSizes
-} from '../utils/MarkdownTypographyUtils'
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { isSearchToolFunctionName, isSearchToolId, isAskUserFunctionName, isScrapeWebFunctionName, isSearchWebFunctionName } from '../utils/SearchToolIdentityUtils'
 import { MessagePart, MessagePartKind, ToolPartStatus } from '../models/MessageParts'
@@ -42,18 +34,6 @@ import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { fingerprintLongString } from '../utils/MessageSignatureUtils'
 import { buildToolArgumentsPreview, buildToolResultPreview } from '../utils/ToolPayloadSummaryUtils'
-import { ChatMarkdownPreprocessor } from '../utils/ChatMarkdownPreprocessor'
-import {
-  CODE_PREVIEW_PLUGIN_KEY,
-  CODE_PREVIEW_PLUGIN_PATTERN,
-  CodePreviewBlock,
-  CodePreviewMarkerInjector,
-  CodePreviewRegistry
-} from '../utils/CodePreviewMarkerInjector'
-import { image } from '@kit.ImageKit'
-import { fileIo } from '@kit.CoreFileKit'
-import { fileUri } from '@kit.CoreFileKit'
-import { photoAccessHelper } from '@kit.MediaLibraryKit'
 
 const DOMAIN = 0x0002
 const TAG = 'MessageBubble'
@@ -142,14 +122,6 @@ export struct MessageBubble {
   @Local showTranslation: boolean = false  // 是否显示翻译结果
   @Local isTranslationExpanded: boolean = true  // 翻译结果是否展开
   @Local currentTranslateLang: string = ''  // 当前翻译的目标语言
-  @Local showLatexPreview: boolean = false
-  @Local latexPreviewPixelMap: image.PixelMap | null = null
-  @Local latexPreviewScale: number = 1
-  @Local latexPreviewLastScale: number = 1
-  @Local latexPreviewOffsetX: number = 0
-  @Local latexPreviewOffsetY: number = 0
-  @Local latexPreviewLastOffsetX: number = 0
-  @Local latexPreviewLastOffsetY: number = 0
   @Local showCodePreview: boolean = false
   @Local codePreviewKind: string = ''
   @Local codePreviewCode: string = ''
@@ -179,19 +151,11 @@ export struct MessageBubble {
   // 聊天字体大小
   @Param chatFontSize: number = 15
 
-  // ========== Markdown 配置 ==========
-  // MarkdownController 实例
-  private markdownController: MarkdownController = new MarkdownController()
-  private reasoningMarkdownController: MarkdownController = new MarkdownController()
-  private translationMarkdownController: MarkdownController = new MarkdownController()
-  private partMarkdownControllers: Map<string, MarkdownController> = new Map()
   private multiSelectTouchStartX: number = 0
   private multiSelectTouchStartY: number = 0
   private multiSelectTouchActive: boolean = false
   private static readonly MULTI_SELECT_TAP_THRESHOLD_VP: number = 8
 
-  // ========== 流式渲染优化 ==========
-  // lv-markdown-in 负责 Markdown 渲染；上游 ThrottleUtil 控制状态刷新频率。
   private boundMessageId: string = ''
   private translationRequestToken: number = 0
   // Reasoning 计时
@@ -219,10 +183,6 @@ export struct MessageBubble {
   private cachedPreviewImageGridRows: number[] = []
   private cachedMessageImageGridRows: number[] = []
   private derivedCacheSignature: string = ''
-  private markdownRuntimeOptionsSignature: string = ''
-  private finalizedMarkdownRenderTextCache: Map<string, string> = new Map()
-  private codePreviewRegistry: CodePreviewRegistry = new CodePreviewRegistry()
-  private codePreviewMarkdownPlugins: MarkdownPlugin[] = []
 
   @Event onRegenerate: () => void = () => {}
   @Event onCopy: () => void = () => {}
@@ -318,12 +278,8 @@ export struct MessageBubble {
   }
 
   aboutToAppear(): void {
-    this.recreateMarkdownControllers()
     this.syncMessageScopedState()
     this.syncDerivedRenderCaches()
-
-    // 配置 Markdown 样式
-    this.configureMarkdownStyles()
 
     this.isReasoningExpanded = false
     this.syncReasoningRuntime()
@@ -334,17 +290,6 @@ export struct MessageBubble {
     this.stopReasoningTimer()
     this.stopReasoningShimmer()
     this.stopSearchStepPulse()
-  }
-
-  private recreateMarkdownControllers(): void {
-    this.markdownController = new MarkdownController()
-    this.reasoningMarkdownController = new MarkdownController()
-    this.translationMarkdownController = new MarkdownController()
-    this.partMarkdownControllers.clear()
-    this.markdownRuntimeOptionsSignature = ''
-    this.finalizedMarkdownRenderTextCache.clear()
-    this.codePreviewRegistry.clearAll()
-    this.codePreviewMarkdownPlugins = []
   }
 
   // 消息状态变化回调（优化跳动点动画性能）
@@ -362,7 +307,6 @@ export struct MessageBubble {
     this.syncDerivedRenderCaches()
     this.syncReasoningRuntime()
     this.syncSearchStepPulseRuntime()
-    this.syncMarkdownRuntimeOptions()
   }
 
   @Monitor('previewContent')
@@ -417,22 +361,9 @@ export struct MessageBubble {
     this.showTranslation = false
     this.isTranslationExpanded = true
     this.currentTranslateLang = ''
-    this.partMarkdownControllers.clear()
-    this.markdownRuntimeOptionsSignature = ''
-    this.finalizedMarkdownRenderTextCache.clear()
-    this.codePreviewRegistry.clearAll()
     this.showCodePreview = false
     this.codePreviewKind = ''
     this.codePreviewCode = ''
-    // latex 预览状态: 切换消息时若上一条打开过预览, 必须复位避免新消息加载旧 pixelMap
-    this.showLatexPreview = false
-    this.latexPreviewPixelMap = null
-    this.latexPreviewScale = 1
-    this.latexPreviewLastScale = 1
-    this.latexPreviewOffsetX = 0
-    this.latexPreviewOffsetY = 0
-    this.latexPreviewLastOffsetX = 0
-    this.latexPreviewLastOffsetY = 0
     // 派生缓存指纹失效, 下一次 ensureDerivedRenderCaches 会重算
     this.derivedCacheSignature = ''
   }
@@ -640,326 +571,6 @@ export struct MessageBubble {
     this.cachedMessageFileAttachments = this.getFileAttachments(this.message.attachments)
     this.cachedPreviewImageGridRows = this.buildImageGridRows(this.cachedPreviewImageEntries.length)
     this.cachedMessageImageGridRows = this.buildImageGridRows(this.cachedMessageImageEntries.length)
-  }
-
-  private getMarkdownRuntimeOptionsSignature(): string {
-    return this.message.isGenerating ? 'generating' : 'stable'
-  }
-
-  private shouldEnableMarkdownTextSelection(): boolean {
-    // lv-markdown-in 懒渲染在文本选择开启时会自动回退普通渲染。
-    // 生成中优先保证长文实时渲染性能,结束后恢复文本选择/复制能力。
-    return !this.message.isGenerating
-  }
-
-  private applyMarkdownLazyRender(controller: MarkdownController): void {
-    controller
-      .setLazyRender(this.message.isGenerating)
-      .setLazyPreloadBlockCount(3)
-  }
-
-  private applyMarkdownTextSelection(controller: MarkdownController): void {
-    controller.setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
-  }
-
-  private syncMarkdownRuntimeOptions(force: boolean = false): void {
-    const nextSignature = this.getMarkdownRuntimeOptionsSignature()
-    if (!force && nextSignature === this.markdownRuntimeOptionsSignature) {
-      return
-    }
-    this.markdownRuntimeOptionsSignature = nextSignature
-    this.applyMarkdownLazyRender(this.markdownController)
-    this.applyMarkdownTextSelection(this.markdownController)
-    this.applyMarkdownLazyRender(this.reasoningMarkdownController)
-    this.applyMarkdownLazyRender(this.translationMarkdownController)
-    this.partMarkdownControllers.forEach((controller: MarkdownController) => {
-      this.applyMarkdownLazyRender(controller)
-      this.applyMarkdownTextSelection(controller)
-    })
-  }
-
-  private applyMarkdownTableTextColors(
-    controller: MarkdownController,
-    titleColor: ResourceColor,
-    normalTextColor: ResourceColor,
-    interleaveTextColor: ResourceColor
-  ): void {
-    controller.setTableTitleTextColor(titleColor)
-    controller.setTableNormalTextColor(normalTextColor)
-    controller.setTableInterleaveTextColor(interleaveTextColor)
-  }
-
-  // 配置 Markdown 样式
-  private configureMarkdownStyles(): void {
-    const uiState = getAppUiState()
-    const titleColor = uiState.themeMarkdownTitle
-    const textColor = uiState.themeMarkdownText
-    const reasoningTextColor = uiState.themeTextSecondary
-    const quoteBgColor = uiState.themeMarkdownQuoteBg
-    const linkColor = uiState.themeMarkdownLink
-    const linkBgColor = uiState.themeMarkdownLinkBg
-    const inlineCodeBgColor = uiState.themeMarkdownCodeBg
-    const inlineCodeTextColor = uiState.themeMarkdownCodeText
-    const tableBgColor = uiState.themeMarkdownTableBg
-    const tableHeaderBgColor = uiState.themeMarkdownTableHeaderBg
-    const tableAltBgColor = uiState.themeMarkdownTableAltBg
-    const tableBorderColor = uiState.themeMarkdownTableBorder
-    const codeTheme = this.isDarkMode ? 'dark' : 'light'
-
-    // 数学公式颜色接口需要 number（ARGB），不能直接传 ResourceColor
-    const latexTextColor = this.isDarkMode ? 0xFFE0E0E0 : 0xFF333333
-    const latexTextColorSecondary = 0xFF999999
-
-    const fs = this.chatFontSize
-    const mainTextSize = fs - 1
-    const compactTextSize = fs - 2
-    const mainTitleSizes = getMarkdownTitleSizes(mainTextSize)
-    const compactTitleSizes = getMarkdownTitleSizes(compactTextSize, true)
-    const mainBlockSpacing = getMarkdownBlockSpacing(mainTextSize)
-    const compactBlockSpacing = getMarkdownBlockSpacing(compactTextSize, true)
-    const mainQuotePadding = getMarkdownQuotePadding(mainTextSize)
-    const compactQuotePadding = getMarkdownQuotePadding(compactTextSize, true)
-
-    // 配置主内容 Markdown
-    const markdownController = this.markdownController
-    const reasoningMarkdownController = this.reasoningMarkdownController
-    const translationMarkdownController = this.translationMarkdownController
-
-    markdownController
-      .setTitleColor(titleColor)
-      .setTextColor(textColor)
-      .setTextSize(mainTextSize)
-      .setTextLineHeight(getMarkdownTextLineHeight(mainTextSize))
-      .setTitleSize(mainTitleSizes)
-      .setTitleLineHeight(getMarkdownTitleLineHeights(mainTitleSizes))
-      .setQuoteBackgroundColor(quoteBgColor)
-      .setQuoteBorderColor(linkColor)
-      .setQuotePadding(mainQuotePadding)
-      .setHyperlinkTextColor(linkColor)
-      .setHyperlinkBackgroundColor(linkBgColor)
-      .setInlineCodeColor(inlineCodeTextColor)
-      .setInlineCodeBackgroundColor(inlineCodeBgColor)
-      .setCodeBlockTheme(codeTheme)
-      .setLatexMathTextColor(latexTextColor)
-      .setLatexMathTextSize(fs + 2)
-      .setTableBackgroundColor(tableBgColor)
-      .setTableTitleBackgroundColor(tableHeaderBgColor)
-      .setTableInterleaveBackgroundColor(tableAltBgColor)
-      .setTableOuterBorderColor(tableBorderColor)
-      .setTableInnerBorderColor(tableBorderColor)
-      .setUlPointColor(textColor)
-      .setLineColor(tableBorderColor)
-      .setFootnoteTextColor(linkColor)
-      .setHyperlinkClickListener((title: string, src: string): boolean => {
-        return this.openWebSheetForLink(title, src)
-      })
-      .setImageClickListener((src: string): boolean => {
-        return this.openImagePreviewForMarkdownSource(src, this.message.content)
-      })
-      .setLatexClickListener((_text: string, pixelMap: image.PixelMap): boolean => {
-        this.latexPreviewPixelMap = pixelMap
-        this.showLatexPreview = true
-        return true
-      })
-      .setCodeCopyListener((code: string) => {
-        this.copyToClipboard(code)
-      })
-      .setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
-      .setTextSelectionCopyListener((text: string) => {
-        this.copyToClipboard(text)
-      })
-    this.applyMarkdownLazyRender(markdownController)
-    this.applyMarkdownTableTextColors(markdownController, titleColor, textColor, textColor)
-    markdownController.setBlockSpacing(mainBlockSpacing)
-
-    // 配置推理内容 Markdown（更紧凑）
-    reasoningMarkdownController
-      .setTitleColor(reasoningTextColor)
-      .setTextColor(reasoningTextColor)
-      .setTextSize(compactTextSize)
-      .setTextLineHeight(getMarkdownTextLineHeight(compactTextSize, true))
-      .setTitleSize(compactTitleSizes)
-      .setTitleLineHeight(getMarkdownTitleLineHeights(compactTitleSizes, true))
-      .setQuoteBackgroundColor(quoteBgColor)
-      .setQuoteBorderColor(linkColor)
-      .setQuotePadding(compactQuotePadding)
-      .setHyperlinkTextColor(linkColor)
-      .setHyperlinkBackgroundColor(linkBgColor)
-      .setInlineCodeColor(inlineCodeTextColor)
-      .setInlineCodeBackgroundColor(inlineCodeBgColor)
-      .setCodeBlockTheme(codeTheme)
-      .setLatexMathTextColor(latexTextColorSecondary)
-      .setLatexMathTextSize(fs)
-      .setTableBackgroundColor(tableBgColor)
-      .setTableTitleBackgroundColor(tableHeaderBgColor)
-      .setTableInterleaveBackgroundColor(tableAltBgColor)
-      .setTableOuterBorderColor(tableBorderColor)
-      .setTableInnerBorderColor(tableBorderColor)
-      .setUlPointColor(reasoningTextColor)
-      .setLineColor(tableBorderColor)
-      .setFootnoteTextColor(linkColor)
-      .setHyperlinkClickListener((title: string, src: string): boolean => {
-        return this.openWebSheetForLink(title, src)
-      })
-      .setImageClickListener((src: string): boolean => {
-        return this.openImagePreviewForMarkdownSource(src, this.message.reasoningContent)
-      })
-      .setLatexClickListener((_text: string, pixelMap: image.PixelMap): boolean => {
-        this.latexPreviewPixelMap = pixelMap
-        this.showLatexPreview = true
-        return true
-      })
-      .setCodeCopyListener((code: string) => {
-        this.copyToClipboard(code)
-      })
-    this.applyMarkdownLazyRender(reasoningMarkdownController)
-    this.applyMarkdownTableTextColors(reasoningMarkdownController, reasoningTextColor, reasoningTextColor, reasoningTextColor)
-    reasoningMarkdownController.setBlockSpacing(compactBlockSpacing)
-
-    // 配置翻译内容 Markdown
-    translationMarkdownController
-      .setTitleColor(titleColor)
-      .setTextColor(textColor)
-      .setTextSize(compactTextSize)
-      .setTextLineHeight(getMarkdownTextLineHeight(compactTextSize, true))
-      .setTitleSize(compactTitleSizes)
-      .setTitleLineHeight(getMarkdownTitleLineHeights(compactTitleSizes, true))
-      .setQuoteBackgroundColor(quoteBgColor)
-      .setQuoteBorderColor(linkColor)
-      .setQuotePadding(compactQuotePadding)
-      .setHyperlinkTextColor(linkColor)
-      .setHyperlinkBackgroundColor(linkBgColor)
-      .setInlineCodeColor(inlineCodeTextColor)
-      .setInlineCodeBackgroundColor(inlineCodeBgColor)
-      .setCodeBlockTheme(codeTheme)
-      .setLatexMathTextColor(latexTextColor)
-      .setLatexMathTextSize(this.chatFontSize)
-      .setTableBackgroundColor(tableBgColor)
-      .setTableTitleBackgroundColor(tableHeaderBgColor)
-      .setTableInterleaveBackgroundColor(tableAltBgColor)
-      .setTableOuterBorderColor(tableBorderColor)
-      .setTableInnerBorderColor(tableBorderColor)
-      .setUlPointColor(textColor)
-      .setLineColor(tableBorderColor)
-      .setFootnoteTextColor(linkColor)
-      .setHyperlinkClickListener((title: string, src: string): boolean => {
-        return this.openWebSheetForLink(title, src)
-      })
-      .setImageClickListener((src: string): boolean => {
-        return this.openImagePreviewForMarkdownSource(src, this.translatedText)
-      })
-      .setLatexClickListener((_text: string, pixelMap: image.PixelMap): boolean => {
-        this.latexPreviewPixelMap = pixelMap
-        this.showLatexPreview = true
-        return true
-      })
-      .setCodeCopyListener((code: string) => {
-        this.copyToClipboard(code)
-      })
-    this.applyMarkdownLazyRender(translationMarkdownController)
-    this.applyMarkdownTableTextColors(translationMarkdownController, titleColor, textColor, textColor)
-    translationMarkdownController.setBlockSpacing(compactBlockSpacing)
-    this.configurePartMarkdownControllers()
-    this.syncMarkdownRuntimeOptions(true)
-  }
-
-  private configurePartMarkdownController(controller: MarkdownController): void {
-    const uiState = getAppUiState()
-    const titleColor = uiState.themeMarkdownTitle
-    const textColor = uiState.themeMarkdownText
-    const quoteBgColor = uiState.themeMarkdownQuoteBg
-    const linkColor = uiState.themeMarkdownLink
-    const linkBgColor = uiState.themeMarkdownLinkBg
-    const inlineCodeBgColor = uiState.themeMarkdownCodeBg
-    const inlineCodeTextColor = uiState.themeMarkdownCodeText
-    const tableBgColor = uiState.themeMarkdownTableBg
-    const tableHeaderBgColor = uiState.themeMarkdownTableHeaderBg
-    const tableAltBgColor = uiState.themeMarkdownTableAltBg
-    const tableBorderColor = uiState.themeMarkdownTableBorder
-    const codeTheme = this.isDarkMode ? 'dark' : 'light'
-    const latexTextColor = this.isDarkMode ? 0xFFE0E0E0 : 0xFF333333
-    const fs = this.chatFontSize
-    const mainTextSize = fs - 1
-    const mainTitleSizes = getMarkdownTitleSizes(mainTextSize)
-
-    controller
-      .setTitleColor(titleColor)
-      .setTextColor(textColor)
-      .setTextSize(mainTextSize)
-      .setTextLineHeight(getMarkdownTextLineHeight(mainTextSize))
-      .setTitleSize(mainTitleSizes)
-      .setTitleLineHeight(getMarkdownTitleLineHeights(mainTitleSizes))
-      .setQuoteBackgroundColor(quoteBgColor)
-      .setQuoteBorderColor(linkColor)
-      .setQuotePadding(getMarkdownQuotePadding(mainTextSize))
-      .setHyperlinkTextColor(linkColor)
-      .setHyperlinkBackgroundColor(linkBgColor)
-      .setInlineCodeColor(inlineCodeTextColor)
-      .setInlineCodeBackgroundColor(inlineCodeBgColor)
-      .setCodeBlockTheme(codeTheme)
-      .setLatexMathTextColor(latexTextColor)
-      .setLatexMathTextSize(fs + 2)
-      .setTableBackgroundColor(tableBgColor)
-      .setTableTitleBackgroundColor(tableHeaderBgColor)
-      .setTableInterleaveBackgroundColor(tableAltBgColor)
-      .setTableOuterBorderColor(tableBorderColor)
-      .setTableInnerBorderColor(tableBorderColor)
-      .setUlPointColor(textColor)
-      .setLineColor(tableBorderColor)
-      .setFootnoteTextColor(linkColor)
-      .setHyperlinkClickListener((title: string, src: string): boolean => {
-        return this.openWebSheetForLink(title, src)
-      })
-      .setImageClickListener((src: string): boolean => {
-        return this.openImagePreviewForMarkdownSource(src, this.message.content)
-      })
-      .setLatexClickListener((_text: string, pixelMap: image.PixelMap): boolean => {
-        this.latexPreviewPixelMap = pixelMap
-        this.showLatexPreview = true
-        return true
-      })
-      .setCodeCopyListener((code: string) => {
-        this.copyToClipboard(code)
-      })
-      .setTextSelectionEnable(this.shouldEnableMarkdownTextSelection())
-      .setTextSelectionCopyListener((text: string) => {
-        this.copyToClipboard(text)
-      })
-    this.applyMarkdownLazyRender(controller)
-    this.applyMarkdownTableTextColors(controller, titleColor, textColor, textColor)
-    controller.setBlockSpacing(getMarkdownBlockSpacing(mainTextSize))
-  }
-
-  private configurePartMarkdownControllers(): void {
-    this.partMarkdownControllers.forEach((controller: MarkdownController) => {
-      this.configurePartMarkdownController(controller)
-    })
-  }
-
-  private getPartMarkdownController(
-    blockIndex: number,
-    partIndex: number,
-    segmentIndex: number
-  ): MarkdownController {
-    const key = this.message.id + '_' + blockIndex.toString() + '_' + partIndex.toString() + '_' + segmentIndex.toString()
-    let controller = this.partMarkdownControllers.get(key)
-    if (controller === undefined) {
-      controller = new MarkdownController()
-      this.configurePartMarkdownController(controller)
-      this.partMarkdownControllers.set(key, controller)
-    }
-    return controller
-  }
-
-  @Monitor('themeRenderKey')
-  onThemeRenderKeyChange(): void {
-    this.configureMarkdownStyles()
-  }
-
-  // 字体大小变化监听
-  @Monitor('chatFontSize')
-  onFontSizeChange(): void {
-    this.configureMarkdownStyles()
   }
 
   build() {
@@ -1276,85 +887,6 @@ export struct MessageBubble {
     return this.cachedTranslatedText
   }
 
-  private getMarkdownRenderText(content: string, scopeKey: string): string {
-    if (content.length === 0) {
-      this.codePreviewRegistry.clear(scopeKey)
-      return content
-    }
-    if (this.message.isGenerating) {
-      return this.buildMarkdownRenderText(content, scopeKey)
-    }
-    const cacheKey = scopeKey + '\n' + content
-    const cachedText = this.finalizedMarkdownRenderTextCache.get(cacheKey)
-    if (cachedText !== undefined) {
-      return cachedText
-    }
-    const renderText = this.buildMarkdownRenderText(content, scopeKey)
-    this.finalizedMarkdownRenderTextCache.set(cacheKey, renderText)
-    return renderText
-  }
-
-  private buildMarkdownRenderText(content: string, scopeKey: string): string {
-    const normalized = ChatMarkdownPreprocessor.preprocess(content)
-    return CodePreviewMarkerInjector.inject(normalized, scopeKey, this.codePreviewRegistry)
-  }
-
-  private getMarkdownHybridRenderText(content: string): string {
-    return ChatMarkdownPreprocessor.preprocessForHybrid(content)
-  }
-
-  private getCodePreviewMarkdownPlugins(): MarkdownPlugin[] {
-    if (this.codePreviewMarkdownPlugins.length === 0) {
-      this.codePreviewMarkdownPlugins = [{
-        key: CODE_PREVIEW_PLUGIN_KEY,
-        display: 'block',
-        pattern: CODE_PREVIEW_PLUGIN_PATTERN,
-        matchMode: 'full-line',
-        selectable: false,
-        render: (node: PluginNode): void => {
-          this.CodePreviewPluginBuilder(node)
-        }
-      } as MarkdownPlugin]
-    }
-    return this.codePreviewMarkdownPlugins
-  }
-
-  private getPartMarkdownScopeKey(blockIndex: number, partIndex: number): string {
-    return 'part_' + blockIndex.toString() + '_' + partIndex.toString()
-  }
-
-  private getReasoningMarkdownScopeKey(part: MessagePart): string {
-    return 'reasoning_' + part.reasoningCreatedAt.toString()
-  }
-
-  private getPluginGroup(node: PluginNode, index: number): string {
-    if (node.groups === undefined || index < 0 || index >= node.groups.length) {
-      return ''
-    }
-    return node.groups[index]
-  }
-
-  private getCodePreviewBlockFromNode(node: PluginNode): CodePreviewBlock | null {
-    const scopeKey = this.getPluginGroup(node, 0)
-    const kind = this.getPluginGroup(node, 1)
-    const index = Number.parseInt(this.getPluginGroup(node, 2))
-    if (scopeKey === '' || kind === '' || Number.isNaN(index)) {
-      return null
-    }
-    const block = this.codePreviewRegistry.get(scopeKey, index)
-    if (block === null) {
-      return null
-    }
-    if (block.kind !== kind) {
-      return null
-    }
-    return block
-  }
-
-  private getCodePreviewKindLabel(kind: string): string {
-    return kind === 'mermaid' ? 'Mermaid' : 'HTML'
-  }
-
   private normalizeHybridCodePreviewKind(codeType: string): string {
     const normalized = codeType.trim().toLowerCase()
     if (normalized === 'mermaid') {
@@ -1457,66 +989,6 @@ export struct MessageBubble {
     }
     this.textSelectionSheetContent = content
     this.showTextSelectionSheet = true
-  }
-
-  private getCodePreviewPluginTitle(node: PluginNode): string {
-    const block = this.getCodePreviewBlockFromNode(node)
-    if (block === null) {
-      return '预览'
-    }
-    return '预览 ' + this.getCodePreviewKindLabel(block.kind)
-  }
-
-  private isCodePreviewPluginEnabled(node: PluginNode): boolean {
-    const block = this.getCodePreviewBlockFromNode(node)
-    return block !== null && block.code.trim().length > 0
-  }
-
-  private getCodePreviewPluginSubtitle(node: PluginNode): string {
-    return this.isCodePreviewPluginEnabled(node) ? '点击打开' : '等待代码'
-  }
-
-  private openCodePreviewFromPluginNode(node: PluginNode): void {
-    const block = this.getCodePreviewBlockFromNode(node)
-    if (block === null || block.code.trim().length === 0) {
-      showToast(this.getUIContext(), pickLocalizedText('代码还在生成中', 'Code is still generating'))
-      return
-    }
-    this.codePreviewKind = block.kind
-    this.codePreviewCode = block.code
-    this.showCodePreview = true
-  }
-
-  @Builder
-  CodePreviewPluginBuilder(node: PluginNode) {
-    Row({ space: 8 }) {
-      SymbolGlyph($r('sys.symbol.eye'))
-        .fontSize(15)
-        .fontColor([this.themePrimary])
-
-      Text(this.getCodePreviewPluginTitle(node))
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.themePrimary)
-
-      Blank()
-
-      Text(this.getCodePreviewPluginSubtitle(node))
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
-    .height(36)
-    .padding({ left: 12, right: 12 })
-    .margin({ top: 4, bottom: 4 })
-    .borderRadius(10)
-    .border({ width: 0.5, color: withColorAlpha(this.themePrimary, this.isDarkMode ? '70' : '50') })
-    .backgroundColor(withColorAlpha(this.themePrimary, this.isDarkMode ? '20' : '12'))
-    .opacity(this.isCodePreviewPluginEnabled(node) ? 1 : 0.55)
-    .enabled(this.isCodePreviewPluginEnabled(node))
-    .onClick(() => {
-      this.openCodePreviewFromPluginNode(node)
-    })
   }
 
   @Builder
@@ -2289,22 +1761,6 @@ export struct MessageBubble {
     .onTouch((event: TouchEvent) => {
       this.handleMultiSelectTouch(event)
     })
-    .bindSheet($$this.showLatexPreview, this.LatexPreviewSheetBuilder(), {
-      height: SheetSize.MEDIUM,
-      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
-      dragBar: true,
-      showClose: true,
-      title: { title: 'LaTeX' },
-      onDisappear: () => {
-        this.latexPreviewPixelMap = null
-        this.latexPreviewScale = 1
-        this.latexPreviewLastScale = 1
-        this.latexPreviewOffsetX = 0
-        this.latexPreviewOffsetY = 0
-        this.latexPreviewLastOffsetX = 0
-        this.latexPreviewLastOffsetY = 0
-      }
-    })
   }
 
   // 等待 AI 响应的立体跳动点动画
@@ -2402,10 +1858,30 @@ export struct MessageBubble {
             .padding({ left: 12, right: 12, bottom: 12 })
           } else if (this.translatedText !== '') {
             Column() {
-              Markdown({
-                controller: this.translationMarkdownController,
-                text: this.getMarkdownRenderText(this.getTranslatedText(), 'translation'),
-                plugins: this.getCodePreviewMarkdownPlugins()
+              ChatMarkdownHybridRenderer({
+                content: this.getTranslatedText(),
+                isInputEnded: true,
+                incrementalAnalysis: false,
+                useCangjieComponent: true,
+                chatFontSize: this.chatFontSize,
+                compact: true,
+                latexFontSize: this.chatFontSize,
+                themeRenderKey: this.themeRenderKey,
+                onOpenLink: (title: string, url: string): void => {
+                  this.openWebSheetForLink(title, url)
+                },
+                onImageClick: (src: string): void => {
+                  this.openImagePreviewForMarkdownSource(src, this.getTranslatedText())
+                },
+                onCopyText: (text: string): void => {
+                  this.copyToClipboard(text)
+                },
+                onCopyCode: (code: string): void => {
+                  this.copyCodeFromHybrid(code, this.getTranslatedText())
+                },
+                onCodeFullScreen: (code: string, codeType: string): void => {
+                  this.openCodePreviewFromHybrid(code, codeType, this.getTranslatedText())
+                }
               })
                 .constraintSize({ maxWidth: '100%' })
                 .backgroundColor(Color.Transparent)
@@ -3107,41 +2583,31 @@ export struct MessageBubble {
 	  PartTextContent(part: MessagePart, blockIndex: number, partIndex: number) {
 	    Column() {
 	      if (part.text.trim() !== '') {
-          if (this.message.role === MessageRole.ASSISTANT && getAppUiState().experimentalMarkdownHybridEnabled) {
-            ChatMarkdownHybridRenderer({
-              content: this.getMarkdownHybridRenderText(part.text),
-              isInputEnded: !this.message.isGenerating,
-              incrementalAnalysis: this.message.isGenerating,
-              useCangjieComponent: true,
-              chatFontSize: this.chatFontSize,
-              themeRenderKey: this.themeRenderKey,
-              onOpenLink: (title: string, url: string): void => {
-                this.openWebSheetForLink(title, url)
-              },
-              onImageClick: (src: string): void => {
-                this.openImagePreviewForMarkdownSource(src, part.text)
-              },
-              onCopyText: (text: string): void => {
-                this.copyToClipboard(text)
-              },
-              onCopyCode: (code: string): void => {
-                this.copyCodeFromHybrid(code, part.text)
-              },
-              onCodeFullScreen: (code: string, codeType: string): void => {
-                this.openCodePreviewFromHybrid(code, codeType, part.text)
-              }
-            })
-              .width('100%')
-              .backgroundColor(Color.Transparent)
-          } else {
-            Markdown({
-              controller: this.getPartMarkdownController(blockIndex, partIndex, -1),
-              text: this.getMarkdownRenderText(part.text, this.getPartMarkdownScopeKey(blockIndex, partIndex)),
-              plugins: this.getCodePreviewMarkdownPlugins()
-            })
-              .width('100%')
-              .backgroundColor(Color.Transparent)
-          }
+          ChatMarkdownHybridRenderer({
+            content: part.text,
+            isInputEnded: !this.message.isGenerating,
+            incrementalAnalysis: this.message.isGenerating,
+            useCangjieComponent: true,
+            chatFontSize: this.chatFontSize,
+            themeRenderKey: this.themeRenderKey,
+            onOpenLink: (title: string, url: string): void => {
+              this.openWebSheetForLink(title, url)
+            },
+            onImageClick: (src: string): void => {
+              this.openImagePreviewForMarkdownSource(src, part.text)
+            },
+            onCopyText: (text: string): void => {
+              this.copyToClipboard(text)
+            },
+            onCopyCode: (code: string): void => {
+              this.copyCodeFromHybrid(code, part.text)
+            },
+            onCodeFullScreen: (code: string, codeType: string): void => {
+              this.openCodePreviewFromHybrid(code, codeType, part.text)
+            }
+          })
+            .width('100%')
+            .backgroundColor(Color.Transparent)
 	      }
 	    }
 	    .width('100%')
@@ -3253,10 +2719,32 @@ export struct MessageBubble {
 
       if (this.isReasoningStepExpanded(step) && step.text.length > 0) {
         Column() {
-          Markdown({
-            controller: this.reasoningMarkdownController,
-            text: this.getMarkdownRenderText(step.text, this.getReasoningMarkdownScopeKey(step)),
-            plugins: this.getCodePreviewMarkdownPlugins()
+          ChatMarkdownHybridRenderer({
+            content: step.text,
+            isInputEnded: !this.message.isGenerating,
+            incrementalAnalysis: this.message.isGenerating,
+            useCangjieComponent: true,
+            chatFontSize: this.chatFontSize,
+            compact: true,
+            latexFontSize: this.chatFontSize,
+            textColorOverride: getAppUiState().themeTextSecondary,
+            titleColorOverride: getAppUiState().themeTextSecondary,
+            themeRenderKey: this.themeRenderKey,
+            onOpenLink: (title: string, url: string): void => {
+              this.openWebSheetForLink(title, url)
+            },
+            onImageClick: (src: string): void => {
+              this.openImagePreviewForMarkdownSource(src, step.text)
+            },
+            onCopyText: (text: string): void => {
+              this.copyToClipboard(text)
+            },
+            onCopyCode: (code: string): void => {
+              this.copyCodeFromHybrid(code, step.text)
+            },
+            onCodeFullScreen: (code: string, codeType: string): void => {
+              this.openCodePreviewFromHybrid(code, codeType, step.text)
+            }
           })
             .constraintSize({ maxWidth: '100%' })
             .backgroundColor(Color.Transparent)
@@ -3638,111 +3126,6 @@ export struct MessageBubble {
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     .borderRadius(8)
     .backgroundColor($r('app.color.surface'))
-  }
-
-  private async saveLatexPixelMap(): Promise<void> {
-    if (this.latexPreviewPixelMap === null) {
-      return
-    }
-    try {
-      const packer = image.createImagePacker()
-      let data: ArrayBuffer
-      try {
-        data = await packer.packToData(this.latexPreviewPixelMap, { format: 'image/png', quality: 100 })
-      } finally {
-        packer.release()
-      }
-      const context = this.getUIContext().getHostContext()!
-      const tempPath = `${context.tempDir}/latex_${Date.now()}.png`
-      const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
-      fileIo.writeSync(file.fd, data)
-      fileIo.closeSync(file)
-      const config: photoAccessHelper.PhotoCreationConfig = {
-        title: `LaTeX_${Date.now()}`,
-        fileNameExtension: 'png',
-        photoType: photoAccessHelper.PhotoType.IMAGE,
-        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-      }
-      const phHelper = photoAccessHelper.getPhotoAccessHelper(context)
-      const srcUri = fileUri.getUriFromPath(tempPath)
-      const destUris = await phHelper.showAssetsCreationDialog([srcUri], [config])
-      if (destUris.length > 0) {
-        const src = fileIo.openSync(tempPath, fileIo.OpenMode.READ_ONLY)
-        const dest = fileIo.openSync(destUris[0], fileIo.OpenMode.WRITE_ONLY)
-        fileIo.copyFileSync(src.fd, dest.fd)
-        fileIo.closeSync(src)
-        fileIo.closeSync(dest)
-        showToast(this.getUIContext(), pickLocalizedText('已保存', 'Saved'))
-      }
-      fileIo.unlinkSync(tempPath)
-    } catch (error) {
-      console.error('MessageBubble', `Failed to save LaTeX image: ${JSON.stringify(error)}`)
-      showToast(this.getUIContext(), pickLocalizedText('保存失败', 'Save failed'))
-    }
-  }
-
-  @Builder
-  LatexPreviewSheetBuilder() {
-    Column() {
-      if (this.latexPreviewPixelMap !== null) {
-        Stack() {
-          Image(this.latexPreviewPixelMap)
-            .objectFit(ImageFit.Contain)
-            .width('100%')
-            .height('100%')
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .clip(true)
-        .scale({ x: this.latexPreviewScale, y: this.latexPreviewScale })
-        .translate({ x: this.latexPreviewOffsetX, y: this.latexPreviewOffsetY })
-        .parallelGesture(
-          PinchGesture({ fingers: 2 })
-            .onActionUpdate((event: GestureEvent) => {
-              this.latexPreviewScale = this.latexPreviewLastScale * event.scale
-              if (this.latexPreviewScale < 0.5) {
-                this.latexPreviewScale = 0.5
-              }
-              if (this.latexPreviewScale > 5) {
-                this.latexPreviewScale = 5
-              }
-            })
-            .onActionEnd(() => {
-              this.latexPreviewLastScale = this.latexPreviewScale
-            })
-        )
-        .gesture(
-          PanGesture()
-            .onActionUpdate((event: GestureEvent) => {
-              this.latexPreviewOffsetX = this.latexPreviewLastOffsetX + event.offsetX
-              this.latexPreviewOffsetY = this.latexPreviewLastOffsetY + event.offsetY
-            })
-            .onActionEnd(() => {
-              this.latexPreviewLastOffsetX = this.latexPreviewOffsetX
-              this.latexPreviewLastOffsetY = this.latexPreviewOffsetY
-            })
-        )
-
-        Row({ space: 12 }) {
-          Button(pickLocalizedText('保存图片', 'Save'))
-            .height(36)
-            .fontSize(13)
-            .type(ButtonType.Capsule)
-            .backgroundColor(this.themePrimary)
-            .fontColor(Color.White)
-            .onClick(() => {
-              this.saveLatexPixelMap()
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .padding({ top: 8, bottom: 8 })
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .padding(16)
-    .backgroundColor(getAppUiState().themeBackground)
   }
 
   private buildToolStepTitle(part: MessagePart): string {

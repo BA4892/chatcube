@@ -134,11 +134,6 @@
       "name": "CubeSpinnerPreview",
       "pageSourceFile": "src/main/ets/pages/CubeSpinnerPreview.ets",
       "buildFunction": "CubeSpinnerPreviewBuilder"
-    },
-    {
-      "name": "MarkdownHybridPreviewPage",
-      "pageSourceFile": "src/main/ets/pages/MarkdownHybridPreviewPage.ets",
-      "buildFunction": "MarkdownHybridPreviewPageBuilder"
     }
   ]
 }

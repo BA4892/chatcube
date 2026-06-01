@@ -12,8 +12,8 @@ import {
   CHAT_NAVIGATION_BAR_MIN_HEIGHT
 } from '../config/ChatLayout'
 import { buildIconResourcePath, getModelIconPath, isNetworkIconPath, isSandboxIconPath } from '../utils/ProviderIconUtils'
-import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
-import { getAppUiState, observeAppUiState } from '../state/AppUiState'
+import { getAppUiState } from '../state/AppUiState'
+import { ChatMarkdownHybridRenderer } from './ChatMarkdownHybridRenderer'
 
 @ComponentV2
 export struct ChatNavigationBar {
@@ -61,44 +61,6 @@ export struct ChatNavigationBar {
   // 主题颜色
   private get themePrimary(): string {
     return getAppUiState().themePrimary
-  }
-  private get isDarkMode(): boolean {
-    return getAppUiState().isDarkMode
-  }
-  private titleMarkdownController: MarkdownController = new MarkdownController()
-  private themeObserverDisposer: (() => void) | null = null
-
-  aboutToAppear(): void {
-    this.configureTitleMarkdownStyles()
-    if (this.themeObserverDisposer === null) {
-      this.themeObserverDisposer = observeAppUiState(['isDarkMode', 'themePrimary'], (): void => {
-        this.onNavThemeStateChange()
-      })
-    }
-  }
-
-  onNavThemeStateChange(): void {
-    this.configureTitleMarkdownStyles()
-  }
-
-  aboutToDisappear(): void {
-    if (this.themeObserverDisposer !== null) {
-      this.themeObserverDisposer()
-      this.themeObserverDisposer = null
-    }
-  }
-
-  private configureTitleMarkdownStyles(): void {
-    const textColor = $r('app.color.text_primary')
-    const latexTextColor = this.isDarkMode ? 0xFFE0E0E0 : 0xFF333333
-
-    this.titleMarkdownController
-      .setTitleColor(textColor)
-      .setTextColor(textColor)
-      .setTextSize(14)
-      .setTextLineHeight(17)
-      .setLatexMathTextColor(latexTextColor)
-      .setLatexMathTextSize(16)
   }
 
   private hasCurrentModelIdentity(): boolean {
@@ -243,9 +205,17 @@ export struct ChatNavigationBar {
                 Column() {
                   Row() {
                     if (this.titleContainsLatex()) {
-                      Markdown({
-                        controller: this.titleMarkdownController,
-                        text: this.normalizeLatexInTitle(this.sessionTitle)
+                      ChatMarkdownHybridRenderer({
+                        content: this.sessionTitle,
+                        isInputEnded: true,
+                        incrementalAnalysis: false,
+                        useCangjieComponent: true,
+                        chatFontSize: 16,
+                        compact: true,
+                        latexFontSize: 16,
+                        textColorOverride: getAppUiState().themeTextPrimary,
+                        titleColorOverride: getAppUiState().themeTextPrimary,
+                        themeRenderKey: this.sessionTitle
                       })
                         .layoutWeight(1)
                         .constraintSize({ maxHeight: 20 })
@@ -399,16 +369,7 @@ export struct ChatNavigationBar {
   }
 
   private titleContainsLatex(): boolean {
-    return /\$.+?\$/.test(this.sessionTitle) ||
-      this.sessionTitle.includes('\\(') ||
-      this.sessionTitle.includes('\\[')
-  }
-
-  private normalizeLatexInTitle(title: string): string {
-    let result = title
-    result = result.replace(/\\\[([\s\S]*?)\\\]/g, (_match: string, p1: string): string => `$$${p1}$$`)
-    result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_match: string, p1: string): string => `$${p1}$`)
-    return result
+    return /\$[^$\n]+?\$/.test(this.sessionTitle) || /\$\$[\s\S]+?\$\$/.test(this.sessionTitle)
   }
 
   // 构建更多菜单

@@ -1,15 +1,7 @@
 import { Want, common } from '@kit.AbilityKit'
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
-import { Markdown, MarkdownController } from '@luvi/lv-markdown-in'
-import { getAppUiState } from '../state/AppUiState'
-import {
-  getMarkdownBlockSpacing,
-  getMarkdownQuotePadding,
-  getMarkdownTextLineHeight,
-  getMarkdownTitleLineHeights,
-  getMarkdownTitleSizes
-} from '../utils/MarkdownTypographyUtils'
+import { ChatMarkdownHybridRenderer } from './ChatMarkdownHybridRenderer'
 import { showToast } from '../utils/ToastUtil'
 
 const DOMAIN = 0x0000
@@ -24,31 +16,13 @@ export struct HelpMarkdownView {
 
   @Local resolvedText: string = ''
 
-  private markdownController: MarkdownController = new MarkdownController()
-
   aboutToAppear(): void {
     this.syncResolvedText()
-    this.configureMarkdownController()
   }
 
   @Monitor('text')
   onTextChange(): void {
     this.syncResolvedText()
-  }
-
-  @Monitor('textSize')
-  onTextSizeChange(): void {
-    this.configureMarkdownController()
-  }
-
-  @Monitor('compact')
-  onCompactChange(): void {
-    this.configureMarkdownController()
-  }
-
-  @Monitor('themeRenderKey')
-  onThemeRenderKeyChange(): void {
-    this.configureMarkdownController()
   }
 
   private syncResolvedText(): void {
@@ -71,55 +45,6 @@ export struct HelpMarkdownView {
       hilog.error(DOMAIN, TAG, 'Resolve help markdown text failed: %{public}s', JSON.stringify(error))
       return ''
     }
-  }
-
-  private configureMarkdownController(): void {
-    const uiState = getAppUiState()
-    const textSize = this.textSize
-    const titleSizes = getMarkdownTitleSizes(textSize, this.compact)
-    const codeTheme = uiState.isDarkMode ? 'dark' : 'light'
-    const latexTextColor = uiState.isDarkMode ? 0xFFE0E0E0 : 0xFF333333
-
-    this.markdownController
-      .setTitleColor(uiState.themeMarkdownTitle)
-      .setTextColor(uiState.themeMarkdownText)
-      .setTextSize(textSize)
-      .setTextLineHeight(getMarkdownTextLineHeight(textSize, this.compact))
-      .setTitleSize(titleSizes)
-      .setTitleLineHeight(getMarkdownTitleLineHeights(titleSizes, this.compact))
-      .setQuoteBackgroundColor(uiState.themeMarkdownQuoteBg)
-      .setQuoteBorderColor(uiState.themeMarkdownLink)
-      .setQuotePadding(getMarkdownQuotePadding(textSize, this.compact))
-      .setHyperlinkTextColor(uiState.themeMarkdownLink)
-      .setHyperlinkBackgroundColor(uiState.themeMarkdownLinkBg)
-      .setInlineCodeColor(uiState.themeMarkdownCodeText)
-      .setInlineCodeBackgroundColor(uiState.themeMarkdownCodeBg)
-      .setCodeBlockTheme(codeTheme)
-      .setLatexMathTextColor(latexTextColor)
-      .setLatexMathTextSize(textSize + 2)
-      .setTableBackgroundColor(uiState.themeMarkdownTableBg)
-      .setTableTitleBackgroundColor(uiState.themeMarkdownTableHeaderBg)
-      .setTableInterleaveBackgroundColor(uiState.themeMarkdownTableAltBg)
-      .setTableOuterBorderColor(uiState.themeMarkdownTableBorder)
-      .setTableInnerBorderColor(uiState.themeMarkdownTableBorder)
-      .setUlPointColor(uiState.themeMarkdownText)
-      .setLineColor(uiState.themeMarkdownTableBorder)
-      .setFootnoteTextColor(uiState.themeMarkdownLink)
-      .setHyperlinkClickListener((_title: string, src: string): boolean => {
-        return this.openExternalLink(src)
-      })
-      .setCodeCopyListener((code: string): void => {
-        this.copyToClipboard(code)
-      })
-      .setTextSelectionEnable(true)
-      .setTextSelectionCopyListener((selectedText: string): void => {
-        this.copyToClipboard(selectedText)
-      })
-
-    this.markdownController.setTableTitleTextColor(uiState.themeMarkdownTitle)
-    this.markdownController.setTableNormalTextColor(uiState.themeMarkdownText)
-    this.markdownController.setTableInterleaveTextColor(uiState.themeMarkdownText)
-    this.markdownController.setBlockSpacing(getMarkdownBlockSpacing(textSize, this.compact))
   }
 
   private normalizeLink(src: string): string {
@@ -186,9 +111,23 @@ export struct HelpMarkdownView {
   }
 
   build() {
-    Markdown({
-      controller: this.markdownController,
-      text: this.resolvedText
+    ChatMarkdownHybridRenderer({
+      content: this.resolvedText,
+      isInputEnded: true,
+      incrementalAnalysis: false,
+      useCangjieComponent: true,
+      chatFontSize: this.textSize + 1,
+      compact: this.compact,
+      themeRenderKey: this.themeRenderKey,
+      onOpenLink: (_title: string, url: string): void => {
+        this.openExternalLink(url)
+      },
+      onCopyText: (text: string): void => {
+        this.copyToClipboard(text)
+      },
+      onCopyCode: (code: string): void => {
+        this.copyToClipboard(code)
+      }
     })
       .width('100%')
       .backgroundColor(Color.Transparent)

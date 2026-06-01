@@ -236,7 +236,7 @@ export struct SharePreviewSheet {
     return Math.sqrt(memoryBudget / estimatedBytes)
   }
 
-  // 等待 ShareMessageCard 高度稳定,避免 lv-markdown-in Worker 仍在异步排版时就开始截图。
+  // 等待 ShareMessageCard 高度稳定,避免 Markdown 异步排版时就开始截图。
   private async waitForCardStable(maxWaitMs: number = 4000, stableThresholdMs: number = 250): Promise<void> {
     const start = Date.now()
     while (true) {

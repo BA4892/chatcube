@@ -261,7 +261,6 @@ struct Index {
   @Local chatFontSize: number = 15
   @Local chatInputEnterKeySend: boolean = false
   @Local chatSuggestedQuestionsEnabled: boolean = false
-  @Local experimentalMarkdownHybridEnabled: boolean = false
   @Local materialType: number = 100
   @Local materialLevel: number = 10
   @Local lightColorMode: string = 'default'
@@ -1107,10 +1106,6 @@ struct Index {
         this.chatSuggestedQuestionsEnabled = suggestedQuestionsEnabled
         this.syncSettingsSummaryToStorage()
       },
-      onExperimentalMarkdownHybridChanged: (enabled: boolean): void => {
-        this.experimentalMarkdownHybridEnabled = enabled
-        this.syncSettingsSummaryToStorage()
-      },
       onMaterialSettingsChanged: (materialType: number, materialLevel: number, lightColorMode: string): void => {
         this.materialType = materialType
         this.materialLevel = materialLevel
@@ -1133,7 +1128,6 @@ struct Index {
     this.chatFontSize = this.settingsManager.getChatFontSize()
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
     this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
-    this.experimentalMarkdownHybridEnabled = this.settingsManager.getExperimentalMarkdownHybridEnabled()
     this.materialType = this.settingsManager.getMaterialType()
     this.materialLevel = this.settingsManager.getMaterialLevel()
     this.lightColorMode = this.settingsManager.getLightColorMode()
@@ -1286,7 +1280,6 @@ struct Index {
     this.chatFontSize = this.settingsManager.getChatFontSize()
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
     this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
-    this.experimentalMarkdownHybridEnabled = this.settingsManager.getExperimentalMarkdownHybridEnabled()
     this.materialType = this.settingsManager.getMaterialType()
     this.materialLevel = this.settingsManager.getMaterialLevel()
     this.lightColorMode = this.settingsManager.getLightColorMode()
@@ -1307,7 +1300,6 @@ struct Index {
     setAppUiStateValue(AppStorageKeys.CHAT_FONT_SIZE, this.chatFontSize)
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
     setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
-    setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, this.experimentalMarkdownHybridEnabled)
     setAppUiStateValue(AppStorageKeys.MATERIAL_TYPE, this.materialType)
     setAppUiStateValue(AppStorageKeys.MATERIAL_LEVEL, this.materialLevel)
     setAppUiStateValue(AppStorageKeys.LIGHT_COLOR_MODE, this.lightColorMode)
@@ -5071,7 +5063,6 @@ struct Index {
           notifyOnFailed: this.notifyOnFailed,
           chatInputEnterKeySend: this.chatInputEnterKeySend,
           chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
-          experimentalMarkdownHybridEnabled: this.experimentalMarkdownHybridEnabled,
           handAdaptiveEnabled: this.handAdaptiveEnabled,
           handAdaptiveNewChat: this.handAdaptiveNewChat,
           handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5099,7 +5090,6 @@ struct Index {
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
       chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
-      experimentalMarkdownHybridEnabled: this.experimentalMarkdownHybridEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5118,7 +5108,6 @@ struct Index {
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
       chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
-      experimentalMarkdownHybridEnabled: this.experimentalMarkdownHybridEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5137,7 +5126,6 @@ struct Index {
       notifyOnFailed: this.notifyOnFailed,
       chatInputEnterKeySend: this.chatInputEnterKeySend,
       chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
-      experimentalMarkdownHybridEnabled: this.experimentalMarkdownHybridEnabled,
       handAdaptiveEnabled: this.handAdaptiveEnabled,
       handAdaptiveNewChat: this.handAdaptiveNewChat,
       handAdaptiveUnsupported: this.handAdaptiveUnsupported,
@@ -5199,11 +5187,6 @@ struct Index {
       this.chatSuggestedQuestionsEnabled = value
       this.syncSettingsSummaryToStorage()
       await this.settingsManager.setChatSuggestedQuestionsEnabled(value)
-    }
-    callbacks.onToggleExperimentalMarkdownHybridEnabled = async (value: boolean): Promise<void> => {
-      this.experimentalMarkdownHybridEnabled = value
-      this.syncSettingsSummaryToStorage()
-      await this.settingsManager.setExperimentalMarkdownHybridEnabled(value)
     }
     callbacks.onOpenSystemNotificationSettings = (): void => {
       this.openSystemNotificationSettings()

@@ -7,8 +7,7 @@
   "license": "",
   "dependencies": {
     "@cangjie-tpc/markdown_hybrid": "^1.3.6",
-    "@lyb/media-preview": "^1.3.5",
-    "@luvi/lv-markdown-in": "^3.4.2"
+    "@lyb/media-preview": "^1.3.5"
   },
   "devDependencies": {},
   "dynamicDependencies": {}

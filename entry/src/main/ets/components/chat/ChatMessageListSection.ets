@@ -226,7 +226,7 @@ export struct ChatMessageListSection {
 
   // 取消 @ReusableV2 复用: LazyForEach + 手动 DataSource 下精确订阅会失效, 复用瞬间 @Param 不刷新会
   // 导致 AI 消息内容串到错位气泡上。靠 LazyForEach cachedCount 管理"延迟构造", 不再启用组件级复用。
-  // 长会话快速 fling 时 MessageBubble 会重新构造 (MarkdownController x3 + configureMarkdownStyles),
+  // 长会话快速 fling 时 MessageBubble 会重新构造复杂 Markdown 内容,
   // 视为可接受代价, 后续单独做 Repeat 替代 PoC。
 
   private updateMessageRowData(

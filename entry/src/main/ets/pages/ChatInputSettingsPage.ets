@@ -52,7 +52,6 @@ struct ChatInputSettingsPage {
 
   @Local chatInputEnterKeySend: boolean = false
   @Local chatSuggestedQuestionsEnabled: boolean = false
-  @Local experimentalMarkdownHybridEnabled: boolean = false
 
   private settingsManager = ServiceRegistry.settings()
   private compactScroller: Scroller = new Scroller()
@@ -68,7 +67,6 @@ struct ChatInputSettingsPage {
   private reloadSettings(): void {
     this.chatInputEnterKeySend = this.settingsManager.getChatInputEnterKeySend()
     this.chatSuggestedQuestionsEnabled = this.settingsManager.getChatSuggestedQuestionsEnabled()
-    this.experimentalMarkdownHybridEnabled = this.settingsManager.getExperimentalMarkdownHybridEnabled()
   }
 
   private getContentMaxWidth(): number {
@@ -129,18 +127,6 @@ struct ChatInputSettingsPage {
         setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, previousValue)
       }
     }
-    callbacks.onToggleExperimentalMarkdownHybridEnabled = async (value: boolean): Promise<void> => {
-      const previousValue = this.experimentalMarkdownHybridEnabled
-      this.experimentalMarkdownHybridEnabled = value
-      setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, value)
-      try {
-        await this.settingsManager.setExperimentalMarkdownHybridEnabled(value)
-      } catch (error) {
-        console.error('ChatInputSettingsPage', `Failed to set experimental markdown renderer: ${JSON.stringify(error)}`)
-        this.experimentalMarkdownHybridEnabled = previousValue
-        setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, previousValue)
-      }
-    }
     return callbacks
   }
 
@@ -159,7 +145,6 @@ struct ChatInputSettingsPage {
             settingsSheetType: SettingsSheetType.CHAT_INPUT,
             chatInputEnterKeySend: this.chatInputEnterKeySend,
             chatSuggestedQuestionsEnabled: this.chatSuggestedQuestionsEnabled,
-            experimentalMarkdownHybridEnabled: this.experimentalMarkdownHybridEnabled,
             callbacks: this.buildCallbacks()
           })
         }

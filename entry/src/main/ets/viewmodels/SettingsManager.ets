@@ -13,7 +13,6 @@ export interface SettingsChangeCallback {
   onNotificationSettingsChanged?: (enabled: boolean, notifyOnComplete: boolean, notifyOnFailed: boolean) => void
   onChatFontSizeChanged?: (size: number) => void
   onChatInputSettingsChanged?: (enterKeySend: boolean, suggestedQuestionsEnabled: boolean) => void
-  onExperimentalMarkdownHybridChanged?: (enabled: boolean) => void
   onMaterialSettingsChanged?: (materialType: number, materialLevel: number, lightColorMode: string) => void
 }
 
@@ -26,7 +25,6 @@ export class SettingsManager {
   private notifyOnComplete: boolean = true
   private notifyOnFailed: boolean = true
   private chatFontSize: number = 15
-  private experimentalMarkdownHybridEnabled: boolean = false
   private chatInputEnterKeySend: boolean = false
   private chatSuggestedQuestionsEnabled: boolean = false
   private materialType: number = 100    // ADAPTIVE
@@ -68,13 +66,11 @@ export class SettingsManager {
     this.notifyOnComplete = await preferencesService.getNotifyOnComplete()
     this.notifyOnFailed = await preferencesService.getNotifyOnFailed()
     this.chatFontSize = await preferencesService.getChatFontSize()
-    this.experimentalMarkdownHybridEnabled = await preferencesService.getExperimentalMarkdownHybridEnabled()
     this.chatInputEnterKeySend = await preferencesService.getChatInputEnterKeySend()
     this.chatSuggestedQuestionsEnabled = await preferencesService.getChatSuggestedQuestionsEnabled()
     this.materialType = await preferencesService.getMaterialType()
     this.materialLevel = await preferencesService.getMaterialLevel()
     this.lightColorMode = await preferencesService.getLightColorMode()
-    setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, this.experimentalMarkdownHybridEnabled)
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
     setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
     this.isInitialized = true
@@ -89,13 +85,11 @@ export class SettingsManager {
     this.notifyOnComplete = await preferencesService.getNotifyOnComplete()
     this.notifyOnFailed = await preferencesService.getNotifyOnFailed()
     this.chatFontSize = await preferencesService.getChatFontSize()
-    this.experimentalMarkdownHybridEnabled = await preferencesService.getExperimentalMarkdownHybridEnabled()
     this.chatInputEnterKeySend = await preferencesService.getChatInputEnterKeySend()
     this.chatSuggestedQuestionsEnabled = await preferencesService.getChatSuggestedQuestionsEnabled()
     this.materialType = await preferencesService.getMaterialType()
     this.materialLevel = await preferencesService.getMaterialLevel()
     this.lightColorMode = await preferencesService.getLightColorMode()
-    setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, this.experimentalMarkdownHybridEnabled)
     setAppUiStateValue(AppStorageKeys.CHAT_INPUT_ENTER_KEY_SEND, this.chatInputEnterKeySend)
     setAppUiStateValue(AppStorageKeys.CHAT_SUGGESTED_QUESTIONS_ENABLED, this.chatSuggestedQuestionsEnabled)
   }
@@ -286,25 +280,6 @@ export class SettingsManager {
       const callback = this.callbacks[i]
       if (callback.onChatFontSizeChanged !== undefined) {
         callback.onChatFontSizeChanged(size)
-      }
-    }
-  }
-
-  getExperimentalMarkdownHybridEnabled(): boolean {
-    return this.experimentalMarkdownHybridEnabled
-  }
-
-  async setExperimentalMarkdownHybridEnabled(enabled: boolean): Promise<void> {
-    if (this.experimentalMarkdownHybridEnabled === enabled) {
-      return
-    }
-    this.experimentalMarkdownHybridEnabled = enabled
-    await getPreferencesService().setExperimentalMarkdownHybridEnabled(enabled)
-    setAppUiStateValue(AppStorageKeys.EXPERIMENTAL_MARKDOWN_HYBRID_ENABLED, enabled)
-    for (let i = 0; i < this.callbacks.length; i++) {
-      const callback = this.callbacks[i]
-      if (callback.onExperimentalMarkdownHybridChanged !== undefined) {
-        callback.onExperimentalMarkdownHybridChanged(enabled)
       }
     }
   }

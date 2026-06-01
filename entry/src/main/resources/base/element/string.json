@@ -1913,14 +1913,6 @@
       "value": "After an AI reply, generate up to 3 follow-up questions above the input box"
     },
     {
-      "name": "experimental_markdown_hybrid_title",
-      "value": "Experimental Markdown renderer"
-    },
-    {
-      "name": "experimental_markdown_hybrid_desc",
-      "value": "Use markdown_hybrid for normal assistant messages to improve formula, table, and HTML rendering"
-    },
-    {
       "name": "system_prompt_edit_title",
       "value": "System Prompt"
     },

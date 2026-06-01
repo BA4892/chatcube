@@ -21,6 +21,10 @@ export struct ChatMarkdownHybridRenderer {
   @Param incrementalAnalysis: boolean = false
   @Param useCangjieComponent: boolean = true
   @Param chatFontSize: number = 15
+  @Param compact: boolean = false
+  @Param latexFontSize: number = 0
+  @Param textColorOverride: string = ''
+  @Param titleColorOverride: string = ''
   @Param themeRenderKey: string = ''
 
   @Event onOpenLink: (title: string, url: string) => void =
@@ -71,7 +75,11 @@ export struct ChatMarkdownHybridRenderer {
       uiState.themeMarkdownTableBg,
       uiState.themeMarkdownTableHeaderBg,
       uiState.themeMarkdownTableAltBg,
-      uiState.themeMarkdownTableBorder
+      uiState.themeMarkdownTableBorder,
+      this.compact ? 'compact' : 'normal',
+      this.latexFontSize.toString(),
+      this.textColorOverride,
+      this.titleColorOverride
     ].join('|')
   }
 
@@ -108,11 +116,17 @@ export struct ChatMarkdownHybridRenderer {
       theme.setContext(hostContext)
     }
 
-    const textSize = Math.max(this.chatFontSize - 1, 10)
-    const titleSizes = getMarkdownTitleSizes(textSize)
-    const titleLineHeights = getMarkdownTitleLineHeights(titleSizes)
-    const textColor = this.parseThemeColor(uiState.themeMarkdownText, uiState.isDarkMode ? 0xFFE7E0D4 : 0xFF3D3830)
-    const titleColor = this.parseThemeColor(uiState.themeMarkdownTitle, uiState.isDarkMode ? 0xFFF3EFE6 : 0xFF24211C)
+    const textSize = Math.max(this.chatFontSize - (this.compact ? 2 : 1), 10)
+    const titleSizes = getMarkdownTitleSizes(textSize, this.compact)
+    const titleLineHeights = getMarkdownTitleLineHeights(titleSizes, this.compact)
+    const textColor = this.parseThemeColor(
+      this.textColorOverride !== '' ? this.textColorOverride : uiState.themeMarkdownText,
+      uiState.isDarkMode ? 0xFFE7E0D4 : 0xFF3D3830
+    )
+    const titleColor = this.parseThemeColor(
+      this.titleColorOverride !== '' ? this.titleColorOverride : uiState.themeMarkdownTitle,
+      uiState.isDarkMode ? 0xFFF3EFE6 : 0xFF24211C
+    )
     const linkColor = this.parseThemeColor(uiState.themeMarkdownLink, uiState.isDarkMode ? 0xFF9CBFE8 : 0xFF4E6F9E)
     const linkBgColor = this.parseThemeColor(uiState.themeMarkdownLinkBg, 0x00000000)
     const codeBgColor = this.parseThemeColor(uiState.themeMarkdownCodeBg, uiState.isDarkMode ? 0xFF24221E : 0xFFF3EFE8)
@@ -125,10 +139,10 @@ export struct ChatMarkdownHybridRenderer {
       this.parseThemeColor(uiState.themeMarkdownTableAltBg, uiState.isDarkMode ? 0xFF25231F : 0xFFFAF7F0)
     const tableBorderColor =
       this.parseThemeColor(uiState.themeMarkdownTableBorder, uiState.isDarkMode ? 0xFF514C45 : 0xFFDED8CC)
-    const textLineHeight = getMarkdownTextLineHeight(textSize)
+    const textLineHeight = getMarkdownTextLineHeight(textSize, this.compact)
     const codeTextSize = Math.max(textSize - 1, 10)
     const codeLineHeight = getMarkdownTextLineHeight(codeTextSize)
-    const blockSpacing = getMarkdownBlockSpacing(textSize)
+    const blockSpacing = getMarkdownBlockSpacing(textSize, this.compact)
 
     theme.setIsMarkdownParserSync(false)
     theme.setIsCodeBlockParserSync(false)
@@ -205,7 +219,7 @@ export struct ChatMarkdownHybridRenderer {
 
     theme.setThematicBreakColor(tableBorderColor)
     theme.setLatexDefaultText(true)
-    theme.setLatexMathTextSize(this.chatFontSize + 2)
+    theme.setLatexMathTextSize(this.latexFontSize > 0 ? this.latexFontSize : this.chatFontSize + (this.compact ? 0 : 2))
     theme.setLatexMathTextColor(textColor)
     theme.setLatexMathBackGroupColor(0x00000000)
     theme.setLatexMathColorFormat(LatexMathColorFormat.COLOR_FORMAT_BGRA_8888)
