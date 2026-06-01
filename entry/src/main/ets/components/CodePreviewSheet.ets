@@ -50,12 +50,16 @@ export struct CodePreviewSheet {
     return getAppUiState().themePrimaryLight
   }
 
+  private get themeTextPrimary(): string {
+    return getAppUiState().themeTextPrimary
+  }
+
   private getBackgroundColor(): string {
-    return this.isDarkMode ? '#000000' : '#FFFFFF'
+    return getAppUiState().themeBackground
   }
 
   private getTextColor(): string {
-    return this.isDarkMode ? '#E8E8E8' : '#222222'
+    return this.themeTextPrimary
   }
 
   private getLineColor(): string {
@@ -70,7 +74,8 @@ export struct CodePreviewSheet {
       '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">' +
       '<style>' +
       '* { box-sizing: border-box; }' +
-      'html, body { width: 100%; min-height: 100%; margin: 0; padding: 12px; ' +
+      'html { width: 100%; min-height: 100%; margin: 0; background: ' + bgColor + '; color: ' + textColor + '; }' +
+      'body { width: 100%; min-height: 100vh; margin: 0; padding: 12px; overflow: auto; ' +
       'font-family: HarmonyOS Sans, -apple-system, sans-serif; background: ' + bgColor + '; color: ' + textColor + '; }' +
       'img { max-width: 100%; height: auto; }' +
       'table { border-collapse: collapse; width: 100%; }' +
@@ -148,7 +153,13 @@ export struct CodePreviewSheet {
 
   aboutToAppear(): void {
     if (this.themeObserverDisposer === null) {
-      this.themeObserverDisposer = observeAppUiState(['isDarkMode', 'themePrimary', 'themePrimaryLight'], (): void => {
+      this.themeObserverDisposer = observeAppUiState([
+        'isDarkMode',
+        'themePrimary',
+        'themePrimaryLight',
+        'themeBackground',
+        'themeTextPrimary'
+      ], (): void => {
         this.reloadPreview()
       })
     }

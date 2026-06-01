@@ -8,34 +8,48 @@
       box-sizing: border-box;
     }
 
-    html,
-    body {
+    html {
       width: 100%;
       min-height: 100%;
       margin: 0;
       padding: 0;
+      background: #ffffff;
+      color: #333333;
+    }
+
+    body {
+      width: 100%;
+      min-height: 100vh;
+      margin: 0;
+      padding: 12px;
       overflow: auto;
       background: #ffffff;
       color: #333333;
       font-family: HarmonyOS Sans, -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    body {
-      padding: 12px;
-    }
-
     #diagram {
       width: 100%;
-      min-height: 80px;
+      min-height: calc(100vh - 24px);
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: center;
+      overflow: auto;
     }
 
     #diagram svg {
       max-width: 100%;
       height: auto;
       display: block;
+    }
+
+    #diagram.scrollable {
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+
+    #diagram.scrollable svg {
+      max-width: none;
     }
 
     #error {
@@ -51,6 +65,7 @@
       font: 12px/18px monospace;
     }
 
+    html.dark,
     body.dark {
       background: #1a1a1a;
       color: #e0e0e0;
@@ -72,15 +87,79 @@
 
       function setTheme(payload) {
         var dark = !!payload.dark;
+        var background = payload.background || (dark ? '#1a1a1a' : '#ffffff');
+        var text = payload.text || (dark ? '#e0e0e0' : '#333333');
+        document.documentElement.classList.toggle('dark', dark);
         document.body.classList.toggle('dark', dark);
-        document.body.style.background = payload.background || (dark ? '#1a1a1a' : '#ffffff');
-        document.body.style.color = payload.text || (dark ? '#e0e0e0' : '#333333');
+        document.documentElement.style.background = background;
+        document.documentElement.style.color = text;
+        document.body.style.background = background;
+        document.body.style.color = text;
+      }
+
+      function getSvgIntrinsicSize(svg) {
+        var viewBox = svg.viewBox && svg.viewBox.baseVal;
+        if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+          return {
+            width: viewBox.width,
+            height: viewBox.height
+          };
+        }
+
+        var width = parseFloat(svg.getAttribute('width') || '0');
+        var height = parseFloat(svg.getAttribute('height') || '0');
+        if (isFinite(width) && isFinite(height) && width > 0 && height > 0) {
+          return {
+            width: width,
+            height: height
+          };
+        }
+
+        try {
+          var box = svg.getBBox();
+          if (box && box.width > 0 && box.height > 0) {
+            return {
+              width: box.width,
+              height: box.height
+            };
+          }
+        } catch (err) {
+        }
+
+        return {
+          width: 0,
+          height: 0
+        };
+      }
+
+      function updateDiagramLayout() {
+        var diagram = document.getElementById('diagram');
+        var svg = diagram ? diagram.querySelector('svg') : null;
+        if (!diagram || !svg) {
+          return;
+        }
+        svg.style.maxWidth = '100%';
+        svg.style.width = '';
+        svg.style.height = 'auto';
+        diagram.classList.remove('scrollable');
+        requestAnimationFrame(function () {
+          var size = getSvgIntrinsicSize(svg);
+          var needsScroll = size.width > diagram.clientWidth || size.height > diagram.clientHeight;
+          if (needsScroll && size.width > 0 && size.height > 0) {
+            svg.style.width = size.width + 'px';
+            svg.style.height = size.height + 'px';
+            svg.style.maxWidth = 'none';
+          }
+          diagram.classList.toggle('scrollable', needsScroll);
+        });
       }
 
       function showError(message) {
         var diagram = document.getElementById('diagram');
         var error = document.getElementById('error');
         diagram.innerHTML = '';
+        diagram.style.display = 'none';
+        diagram.classList.remove('scrollable');
         error.style.display = 'block';
         error.textContent = message || 'Mermaid render failed.';
       }
@@ -107,6 +186,8 @@
 
         setTheme(payload);
         diagram.innerHTML = '';
+        diagram.style.display = 'flex';
+        diagram.classList.remove('scrollable');
         error.style.display = 'none';
         error.textContent = '';
 
@@ -136,8 +217,7 @@
               diagram.innerHTML = result.svg;
               var svg = diagram.querySelector('svg');
               if (svg) {
-                svg.style.maxWidth = '100%';
-                svg.style.height = 'auto';
+                updateDiagramLayout();
               }
               if (typeof result.bindFunctions === 'function') {
                 result.bindFunctions(diagram);
@@ -153,6 +233,8 @@
           showError(err && err.message ? err.message : String(err));
         }
       };
+
+      window.addEventListener('resize', updateDiagramLayout);
     })();
   </script>
 </body>

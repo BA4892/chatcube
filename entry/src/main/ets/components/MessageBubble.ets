@@ -2089,6 +2089,7 @@ export struct MessageBubble {
           showClose: true,
           title: { title: getCodePreviewSheetTitle(this.codePreviewKind) },
           onDisappear: () => {
+            this.showCodePreview = false
             this.codePreviewKind = ''
             this.codePreviewCode = ''
           }
