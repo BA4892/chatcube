@@ -143,6 +143,10 @@ export function buildHdsTopNavigationTitleBarOptions(
           blurRadius: getHdsTopNavigationInitialBlurRadius(options.materialType)
         },
         contentStyle: {
+          titleStyle: {
+            mainTitleColor: $r('app.color.text_primary'),
+            subTitleColor: $r('app.color.text_secondary')
+          },
           menuStyle: {
             backgroundColor: $r('sys.color.comp_background_tertiary'),
             iconColor: $r('sys.color.icon_primary')
@@ -161,6 +165,10 @@ export function buildHdsTopNavigationTitleBarOptions(
             options.windowHeightVp)
         },
         contentStyle: {
+          titleStyle: {
+            mainTitleColor: $r('app.color.text_primary'),
+            subTitleColor: $r('app.color.text_secondary')
+          },
           menuStyle: {
             backgroundColor: $r('sys.color.comp_background_tertiary'),
             iconColor: $r('sys.color.icon_primary')
