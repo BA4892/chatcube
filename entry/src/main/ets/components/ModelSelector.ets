@@ -407,7 +407,7 @@ export struct ModelSelectorContent {
                 this.CapabilityIcon('sys.symbol.AI_deep_thinking')
               }
               if (getEffectiveCapabilities(row.model).supportsVision) {
-                this.CapabilityIcon('sys.symbol.ohos_photo')
+                this.CapabilityIcon('sys.symbol.eye_viewfinder')
               }
               if (getEffectiveCapabilities(row.model).supportsTools) {
                 this.CapabilityIcon('sys.symbol.wrench_and_screwdriver')

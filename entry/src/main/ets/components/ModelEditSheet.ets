@@ -299,7 +299,7 @@ export struct ModelEditSheet {
 
         // 视觉理解
         Row() {
-          SymbolGlyph($r('sys.symbol.ohos_photo'))
+          SymbolGlyph($r('sys.symbol.eye_viewfinder'))
             .fontSize(16)
             .fontColor([this.capSupportsVision ? this.themePrimary : $r('app.color.text_tertiary')])
           Text('视觉理解')
