@@ -34,6 +34,16 @@ import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { fingerprintLongString } from '../utils/MessageSignatureUtils'
 import { buildToolArgumentsPreview, buildToolResultPreview } from '../utils/ToolPayloadSummaryUtils'
+import {
+  ASSISTANT_BUBBLE_BORDER_WIDTH,
+  ASSISTANT_BUBBLE_RADIUS,
+  USER_BUBBLE_BORDER_WIDTH,
+  USER_BUBBLE_MAX_WIDTH,
+  getAssistantBubblePadding,
+  getUserBubblePadding,
+  getUserBubbleRadius,
+  getUserBubbleTextLineHeight
+} from '../utils/MessageBubbleStyleUtils'
 
 const DOMAIN = 0x0002
 const TAG = 'MessageBubble'
@@ -1132,23 +1142,18 @@ export struct MessageBubble {
               Text(this.getDisplayContent())
                 .fontSize(this.chatFontSize)
                 .fontColor(this.themeUserBubbleText)
-                .lineHeight(Math.round(this.chatFontSize * 1.4))
+                .lineHeight(getUserBubbleTextLineHeight(this.chatFontSize))
             }
           }
-          .padding(this.hasDisplayAttachments() ? { left: 8, right: 8, top: 8, bottom: 8 } : { left: 14, right: 14, top: 10, bottom: 10 })
+          .padding(getUserBubblePadding(this.hasDisplayAttachments()))
           .backgroundColor(this.isMultiSelectMode && this.isSelected
             ? this.lightenColor(this.themeUserBubble, 0.15)
             : this.themeUserBubble)
-          .borderRadius({
-            topLeft: 20,
-            topRight: 20,
-            bottomLeft: 20,
-            bottomRight: 6
-          })
+          .borderRadius(getUserBubbleRadius())
           .clip(true)
-          .constraintSize({ maxWidth: '75%' })
+          .constraintSize({ maxWidth: USER_BUBBLE_MAX_WIDTH })
           .border({
-            width: this.isEditing ? 2 : (this.isMultiSelectMode && this.isSelected ? 1.2 : 0.5),
+            width: this.isEditing ? 2 : (this.isMultiSelectMode && this.isSelected ? 1.2 : USER_BUBBLE_BORDER_WIDTH),
             color: this.isEditing
               ? '#FFFFFF'
               : (this.isMultiSelectMode && this.isSelected ? withColorAlpha(this.themePrimary, '66') : 'rgba(255, 255, 255, 0.15)')
@@ -1724,13 +1729,13 @@ export struct MessageBubble {
         }
         .width('100%')
         .margin({ top: this.showHeader ? 8 : 0 })
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .padding(getAssistantBubblePadding())
           .backgroundColor(this.isMultiSelectMode && this.isSelected
             ? this.themePrimaryLight
             : this.themeAiBubble)
-          .borderRadius(16)
+          .borderRadius(ASSISTANT_BUBBLE_RADIUS)
           .border({
-            width: this.isMultiSelectMode && this.isSelected ? 1.2 : 0.5,
+            width: this.isMultiSelectMode && this.isSelected ? 1.2 : ASSISTANT_BUBBLE_BORDER_WIDTH,
             color: this.isMultiSelectMode && this.isSelected ? this.themePrimary : $r('app.color.bubble_border')
           })
           .clip(true)

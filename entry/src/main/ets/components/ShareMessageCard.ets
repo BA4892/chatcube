@@ -4,6 +4,16 @@
  */
 import { ChatMessage, MessageRole, MessageAttachment, AttachmentType } from '../models/ChatModels'
 import { getAppUiState } from '../state/AppUiState'
+import {
+  ASSISTANT_BUBBLE_BORDER_WIDTH,
+  ASSISTANT_BUBBLE_RADIUS,
+  USER_BUBBLE_BORDER_WIDTH,
+  USER_BUBBLE_MAX_WIDTH,
+  getAssistantBubblePadding,
+  getUserBubblePadding,
+  getUserBubbleRadius,
+  getUserBubbleTextLineHeight
+} from '../utils/MessageBubbleStyleUtils'
 import { AssistantAvatarView } from './AssistantAvatar'
 import { ChatMarkdownHybridRenderer } from './ChatMarkdownHybridRenderer'
 
@@ -28,32 +38,8 @@ export struct ShareMessageCard {
   private get themeAiBubble(): string {
     return getAppUiState().themeAiBubble
   }
-
-  private hasFencedCodeBlock(content: string): boolean {
-    return /```[\s\S]*?```/.test(content)
-  }
-
-  private hasMarkdownTable(content: string): boolean {
-    const lines = content.split('\n')
-    for (let i = 0; i < lines.length - 1; i++) {
-      const header = lines[i].trim()
-      const separator = lines[i + 1].trim()
-      if (header.indexOf('|') < 0 || separator.indexOf('|') < 0) {
-        continue
-      }
-      if (/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(separator)) {
-        return true
-      }
-    }
-    return false
-  }
-
-  private needsWideAiLayout(message: ChatMessage): boolean {
-    const content = message.content
-    if (content.trim().length === 0) {
-      return false
-    }
-    return this.hasMarkdownTable(content) || this.hasFencedCodeBlock(content)
+  private get chatFontSize(): number {
+    return getAppUiState().chatFontSize
   }
 
   // 获取卡片背景色
@@ -182,30 +168,25 @@ export struct ShareMessageCard {
             // 文本内容
             if (message.content.length > 0) {
               Text(message.content)
-                .fontSize(15)
+                .fontSize(this.chatFontSize)
                 .fontColor(this.getUserBubbleTextColor())
-                .lineHeight(21)
+                .lineHeight(getUserBubbleTextLineHeight(this.chatFontSize))
                 .padding(message.hasAttachments() ? { left: 8, right: 8 } : { left: 0, right: 0 })
             }
           }
-          .padding(message.hasAttachments() ? { left: 8, right: 8, top: 8, bottom: 8 } : { left: 14, right: 14, top: 10, bottom: 10 })
+          .padding(getUserBubblePadding(message.hasAttachments()))
           .backgroundColor(this.getUserBubbleBgColor())
-          .borderRadius({
-            topLeft: 20,
-            topRight: 20,
-            bottomLeft: 20,
-            bottomRight: 6
-          })
-          .border({ width: 0.5, color: 'rgba(255, 255, 255, 0.15)' })
-          .constraintSize({ maxWidth: '75%' })
+          .borderRadius(getUserBubbleRadius())
+          .clip(true)
+          .border({ width: USER_BUBBLE_BORDER_WIDTH, color: 'rgba(255, 255, 255, 0.15)' })
+          .constraintSize({ maxWidth: USER_BUBBLE_MAX_WIDTH })
         }
         .width('100%')
         .margin({ bottom: 12 })
       } else {
         // AI 消息
-        Row() {
-          // 助手头像 (与聊天页 MessageBubble 保持一致)
-          Column() {
+        Column() {
+          Row() {
             AssistantAvatarView({
               value: this.assistantAvatarValue,
               color: this.assistantAvatarColor,
@@ -217,13 +198,19 @@ export struct ShareMessageCard {
               modelName: message.modelName,
               preferModelIconForMessage: true
             })
+
+            Text(message.modelName || 'AI')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.getPrimaryTextColor())
+              .margin({ left: 10 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Blank()
           }
-          .width(30)
-          .height(30)
-          .borderRadius(8)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-          .flexShrink(0)
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
 
           Column() {
             Column() {
@@ -232,15 +219,14 @@ export struct ShareMessageCard {
                 this.ShareAttachments(message, false)
               }
 
-              // 消息内容 - 使用 Markdown 渲染（紧凑样式）
+              // 消息内容 - 使用 Markdown 渲染
               if (message.content.length > 0) {
                 ChatMarkdownHybridRenderer({
                   content: message.content,
                   isInputEnded: true,
                   incrementalAnalysis: false,
                   useCangjieComponent: true,
-                  chatFontSize: 15,
-                  compact: true,
+                  chatFontSize: this.chatFontSize,
                   themeRenderKey: message.id
                 })
                   .width('100%')
@@ -248,19 +234,18 @@ export struct ShareMessageCard {
               }
             }
             .width('100%')
-            .padding(this.needsWideAiLayout(message)
-              ? { left: 6, right: 6, top: 10, bottom: 10 }
-              : { left: 14, right: 14, top: 12, bottom: 10 })
+            .padding(getAssistantBubblePadding())
             .backgroundColor(this.getAiContentBgColor())
-            .borderRadius(16)
-            .border({ width: 0.5, color: $r('app.color.bubble_border') })
+            .borderRadius(ASSISTANT_BUBBLE_RADIUS)
+            .border({ width: ASSISTANT_BUBBLE_BORDER_WIDTH, color: $r('app.color.bubble_border') })
+            .clip(true)
           }
+          .width('100%')
           .alignItems(HorizontalAlign.Start)
-          .margin({ left: 10 })
-          .layoutWeight(1)
+          .margin({ top: 8 })
         }
         .width('100%')
-        .alignItems(VerticalAlign.Top)
+        .alignItems(HorizontalAlign.Start)
         .margin({ bottom: 12 })
       }
     }
