@@ -10,6 +10,8 @@ import { buildPointLightBorderEffect, getCurrentMaterialBlurStyle } from '../uti
 import { withColorAlpha } from '../utils/ColorAlphaUtils'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 
+const CONTEXT_MENU_SHEET_ACTION_DELAY_MS = 120
+
 @ComponentV2
 export struct SessionCard {
   @Param session: ChatSession = new ChatSession('', '', '')
@@ -50,6 +52,17 @@ export struct SessionCard {
   @Event onMultiSelect: () => void = () => {}
   @Event onShare: () => void = () => {}
   @Event onToggleFavorite: () => void = () => {}
+
+  private requestShareFromContextMenu(): void {
+    try {
+      this.getUIContext().getContextMenuController().close()
+    } catch (_error) {
+      // 菜单可能已被系统自动关闭，继续等待退场动画即可。
+    }
+    setTimeout(() => {
+      this.onShare()
+    }, CONTEXT_MENU_SHEET_ACTION_DELAY_MS)
+  }
 
   private getFavoriteMenuText(): Resource {
     if (this.session.isFavorite) {
@@ -121,7 +134,7 @@ export struct SessionCard {
         content: $r('app.string.menu_share')
       })
         .onClick(() => {
-          this.onShare()
+          this.requestShareFromContextMenu()
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.heart')).fontSize(16),
