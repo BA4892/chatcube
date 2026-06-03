@@ -348,6 +348,7 @@ struct Index {
   // 分享预览弹窗状态
   @Local showSharePreview: boolean = false
   @Local shareMessages: ChatMessage[] = []
+  @Local shareSessionTitle: string = ''
   // Settings Sheet 关闭动画期间的状态机（避免“关闭回调晚到”误关新弹窗）
   private settingsSheetClosing: boolean = false
   private pendingSettingsSheetType: SettingsSheetType = SettingsSheetType.NONE
@@ -1961,6 +1962,7 @@ struct Index {
           preferType: SheetType.BOTTOM,
           onDisappear: () => {
             this.showSharePreview = false
+            this.shareSessionTitle = ''
           }
         })
 
@@ -2273,8 +2275,10 @@ struct Index {
   SharePreviewBuilder() {
     SharePreviewSheet({
       messages: this.shareMessages,
+      sessionTitle: this.shareSessionTitle,
       onClose: () => {
         this.showSharePreview = false
+        this.shareSessionTitle = ''
       }
     })
   }
@@ -5464,6 +5468,7 @@ struct Index {
 
     // 设置分享消息并打开分享预览
     this.shareMessages = fullSession.messages
+    this.shareSessionTitle = fullSession.title.trim() !== '' ? fullSession.title : session.title
     this.showSharePreview = true
   }
 
@@ -5478,6 +5483,7 @@ struct Index {
 
     // 设置分享消息并打开分享预览
     this.shareMessages = fullSession.messages
+    this.shareSessionTitle = fullSession.title.trim() !== '' ? fullSession.title : session.title
     this.showSharePreview = true
   }
 

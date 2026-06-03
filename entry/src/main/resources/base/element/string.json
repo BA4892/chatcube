@@ -1025,6 +1025,10 @@
       "value": "Plain Text"
     },
     {
+      "name": "share_mode_html",
+      "value": "Web Page"
+    },
+    {
       "name": "share_button",
       "value": "Share"
     },

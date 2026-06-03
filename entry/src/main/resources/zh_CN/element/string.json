@@ -1025,6 +1025,10 @@
       "value": "纯文本"
     },
     {
+      "name": "share_mode_html",
+      "value": "网页"
+    },
+    {
       "name": "share_button",
       "value": "分享"
     },

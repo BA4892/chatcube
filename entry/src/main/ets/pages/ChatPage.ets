@@ -330,7 +330,21 @@ export struct ChatPage {
   }
   private get messageThemeRenderKey(): string {
     const uiState = getAppUiState()
-    return `${uiState.colorTheme}_${uiState.isDarkMode ? '1' : '0'}`
+    return [
+      uiState.colorTheme,
+      uiState.isDarkMode ? 'dark' : 'light',
+      uiState.themeMarkdownTitle,
+      uiState.themeMarkdownText,
+      uiState.themeMarkdownLink,
+      uiState.themeMarkdownLinkBg,
+      uiState.themeMarkdownCodeBg,
+      uiState.themeMarkdownCodeText,
+      uiState.themeMarkdownQuoteBg,
+      uiState.themeMarkdownTableBg,
+      uiState.themeMarkdownTableHeaderBg,
+      uiState.themeMarkdownTableAltBg,
+      uiState.themeMarkdownTableBorder
+    ].join('|')
   }
   // 多选模式状态
   @Local isMultiSelectMode: boolean = false
@@ -3264,6 +3278,7 @@ export struct ChatPage {
   SharePreviewBuilder() {
     SharePreviewSheet({
       messages: this.shareMessages,
+      sessionTitle: this.sessionTitle !== '' ? this.sessionTitle : this.getDefaultSessionTitle(),
       currentModelId: this.currentModelId,
       assistantAvatarValue: this.currentAssistantAvatarSymbol,
       assistantAvatarColor: this.currentAssistantColor,

@@ -26,6 +26,7 @@ export struct ChatMarkdownHybridRenderer {
   @Param textColorOverride: string = ''
   @Param titleColorOverride: string = ''
   @Param themeRenderKey: string = ''
+  @Param showCodeFullScreen: boolean = true
 
   @Event onOpenLink: (title: string, url: string) => void =
     (_title: string, _url: string): void => {}
@@ -79,7 +80,8 @@ export struct ChatMarkdownHybridRenderer {
       this.compact ? 'compact' : 'normal',
       this.latexFontSize.toString(),
       this.textColorOverride,
-      this.titleColorOverride
+      this.titleColorOverride,
+      this.showCodeFullScreen ? 'fullscreen' : 'no_fullscreen'
     ].join('|')
   }
 
@@ -105,6 +107,33 @@ export struct ChatMarkdownHybridRenderer {
     theme.setHeadingTextColor4(titleColor)
     theme.setHeadingTextColor5(titleColor)
     theme.setHeadingTextColor6(titleColor)
+  }
+
+  private applyListTheme(theme: MarkdownTheme, textSize: number, textLineHeight: number, textColor: number): void {
+    const listItemSpacing = Math.max(Math.round(textSize * (this.compact ? 0.12 : 0.18)), this.compact ? 1 : 2)
+    const listLeftMargin = Math.max(Math.round(textSize * 0.65), this.compact ? 7 : 8)
+    const bulletSize = Math.max(Math.round(textSize * 0.35), 4)
+
+    theme.setBlockOrderedAndBulletTopAndBottomMargins(listItemSpacing)
+    theme.setBlockLeftMargin(listLeftMargin)
+    theme.setBlockRightMargin(0)
+    theme.setOrderedListItemPrefixBold(false)
+    theme.setOrderedListItemColor(textColor)
+    theme.setOrderedListItemSize(textSize)
+    theme.setOrderedListItemLineHeight(textLineHeight)
+    theme.setBulletListItemColor(textColor)
+    theme.setBulletListItemSize(bulletSize)
+    theme.setBulletListItemLineHeight(textLineHeight)
+  }
+
+  private applyInlineDecorationTheme(theme: MarkdownTheme, textSize: number, textColor: number): void {
+    const subSupTextSize = Math.max(Math.round(textSize * 0.72), 8)
+    theme.setStrikethroughColor(textColor)
+    theme.setUnderlineColor(textColor)
+    theme.setSubTextColor(textColor)
+    theme.setSubTextSize(subSupTextSize)
+    theme.setSupTextColor(textColor)
+    theme.setSupTextSize(subSupTextSize)
   }
 
   private buildMarkdownConfig(): MarkdownConfiguration {
@@ -143,6 +172,11 @@ export struct ChatMarkdownHybridRenderer {
     const codeTextSize = Math.max(textSize - 1, 10)
     const codeLineHeight = getMarkdownTextLineHeight(codeTextSize)
     const blockSpacing = getMarkdownBlockSpacing(textSize, this.compact)
+    const codeMultilineMargin = Math.max(Math.round(codeTextSize * (this.compact ? 0.65 : 0.75)), this.compact ? 8 : 10)
+    const quoteHorizontalMargin =
+      Math.max(Math.round(textSize * (this.compact ? 0.72 : 0.8)), this.compact ? 9 : 10)
+    const quoteVerticalSpacing =
+      Math.max(Math.round(textSize * (this.compact ? 0.4 : 0.45)), this.compact ? 5 : 6)
 
     theme.setIsMarkdownParserSync(false)
     theme.setIsCodeBlockParserSync(false)
@@ -170,9 +204,11 @@ export struct ChatMarkdownHybridRenderer {
     theme.setBlockQuoteColor(linkColor)
     theme.setBlockQuoteBackGroupColor(quoteBgColor)
     theme.setBlockQuoteWidth(3)
-    theme.setBlockQuoteLeftMargin(8)
+    theme.setBlockQuoteLeftMargin(quoteHorizontalMargin)
     theme.setBlockQuoteRightMargin(0)
-    theme.setBlockQuoteTopAndBottomMargins(Math.max(Math.round(textSize * 0.45), 6))
+    theme.setBlockQuoteTopAndBottomMargins(quoteVerticalSpacing)
+
+    this.applyListTheme(theme, textSize, textLineHeight, textColor)
 
     theme.setCodeTextColor(codeTextColor)
     theme.setCodeBackgroundColor(codeBgColor)
@@ -182,14 +218,14 @@ export struct ChatMarkdownHybridRenderer {
     theme.setCodeBlockTypeTextColor(codeTextColor)
     theme.setCodeBlockTypeTextPadding(4)
     theme.setCodeBlockBackgroundColor(codeBgColor)
-    theme.setCodeMultilineMargin(0)
+    theme.setCodeMultilineMargin(codeMultilineMargin)
     theme.setCodeBlockTypeface('monospace')
     theme.setCodeBlockTextSize(codeTextSize)
     theme.setCodeBlockLineHeight(codeLineHeight)
     theme.setCodeBlockRadius(8)
-    theme.setCodeBlockLineNumberHide(true)
+    theme.setCodeBlockLineNumberHide(false)
     theme.setCodeBlockIconTextHide(false)
-    theme.setIsCodeFullScreen(true)
+    theme.setIsCodeFullScreen(this.showCodeFullScreen)
     theme.setIconWidthAndHeight(22)
     theme.setCodeCopyIcon($r('app.media.markdown_code_copy'))
     theme.setCodeFullScreenIcon($r('app.media.markdown_code_fullscreen'))
@@ -216,8 +252,10 @@ export struct ChatMarkdownHybridRenderer {
     theme.setTableContentTextLineHeight(textLineHeight)
     theme.setTableRadius(6)
     theme.setTableScrollBarShow(false)
+    theme.setTableScrollBarColor(tableBorderColor)
 
     theme.setThematicBreakColor(tableBorderColor)
+    this.applyInlineDecorationTheme(theme, textSize, textColor)
     theme.setLatexDefaultText(true)
     theme.setLatexMathTextSize(this.latexFontSize > 0 ? this.latexFontSize : this.chatFontSize + (this.compact ? 0 : 2))
     theme.setLatexMathTextColor(textColor)
@@ -269,20 +307,25 @@ export struct ChatMarkdownHybridRenderer {
     plugin.setIsHtmlPlugin(true)
     plugin.setIsSubPlugin(true)
     plugin.setIsSupPlugin(true)
+    plugin.setIsTocPlugin(true)
+    plugin.setIsFootnotePlugin(true)
     this.cachedPlugin = plugin
     return plugin
   }
 
+
   build() {
     Column() {
-      CJMarkdown({
-        content: this.content,
-        isInputEnded: this.isInputEnded,
-        incrementalAnalysis: this.incrementalAnalysis,
-        useCangjieComponent: this.useCangjieComponent,
-        config: this.getMarkdownConfig(),
-        plugin: this.getMarkdownPlugin()
-      })
+      ForEach([this.buildConfigSignature()], (_renderKey: string) => {
+        CJMarkdown({
+          content: this.content,
+          isInputEnded: this.isInputEnded,
+          incrementalAnalysis: this.incrementalAnalysis,
+          useCangjieComponent: this.useCangjieComponent,
+          config: this.getMarkdownConfig(),
+          plugin: this.getMarkdownPlugin()
+        })
+      }, (renderKey: string): string => renderKey)
     }
     .width('100%')
     .backgroundColor(Color.Transparent)

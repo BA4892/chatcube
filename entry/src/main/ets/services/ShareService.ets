@@ -1,6 +1,6 @@
 /**
  * 分享服务
- * 提供消息分享功能：图片分享、Markdown分享、纯文本分享
+ * 提供消息分享功能：图片分享、Markdown分享、纯文本分享、网页分享
  */
 import { systemShare } from '@kit.ShareKit'
 import { uniformTypeDescriptor as utd } from '@kit.ArkData'
@@ -9,13 +9,15 @@ import { image } from '@kit.ImageKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
 import { common } from '@kit.AbilityKit'
 import { display, componentSnapshot } from '@kit.ArkUI'
-import { ChatMessage, MessageRole } from '../models/ChatModels'
+import { ChatMessage } from '../models/ChatModels'
+import { getConversationExportService } from './ConversationExportService'
 
 // 分享模式枚举
 export enum ShareMode {
   IMAGE = 'image',      // 图片分享（卡片风格）
   MARKDOWN = 'markdown', // Markdown 格式
-  TEXT = 'text'         // 纯文本格式
+  TEXT = 'text',        // 纯文本格式
+  HTML = 'html'         // 网页文件
 }
 
 // 分享结果
@@ -47,6 +49,7 @@ export class ShareService {
   private readonly snapshotRetryDelayMs: number = 200
   private readonly scrollSettleMs: number = 120
   private readonly maxScrollSegments: number = 80
+  private readonly exportService = getConversationExportService()
 
   // 初始化服务
   init(context: common.UIAbilityContext): void {
@@ -54,69 +57,27 @@ export class ShareService {
   }
 
   // 将消息列表转换为 Markdown 格式
-  convertToMarkdown(messages: ChatMessage[]): string {
-    const lines: string[] = []
-    lines.push('# 对话记录\n')
-    lines.push(`> 导出时间: ${this.formatDateTime(Date.now())}\n`)
-    lines.push('---\n')
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]
-      const roleLabel = msg.role === MessageRole.USER ? '👤 **用户**' : '🤖 **AI**'
-      const time = this.formatTime(msg.timestamp)
-
-      lines.push(`### ${roleLabel} · ${time}\n`)
-
-      // 添加消息内容
-      if (msg.content.length > 0) {
-        lines.push(msg.content)
-        lines.push('')
-      }
-
-      if (msg.reasoningContent.trim().length > 0) {
-        lines.push('<details>')
-        lines.push('<summary>💭 思考过程</summary>\n')
-        lines.push(msg.reasoningContent)
-        lines.push('</details>\n')
-      }
-
-      lines.push('---\n')
-    }
-
-    return lines.join('\n')
+  convertToMarkdown(messages: ChatMessage[], sessionTitle: string = ''): string {
+    return this.exportService.toMarkdown(this.exportService.buildModel(messages, sessionTitle))
   }
 
   // 将消息列表转换为纯文本格式
-  convertToPlainText(messages: ChatMessage[]): string {
-    const lines: string[] = []
-    lines.push('=== 对话记录 ===')
-    lines.push(`导出时间: ${this.formatDateTime(Date.now())}`)
-    lines.push('')
+  convertToPlainText(messages: ChatMessage[], sessionTitle: string = ''): string {
+    return this.exportService.toPlainText(this.exportService.buildModel(messages, sessionTitle))
+  }
 
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]
-      const roleLabel = msg.role === MessageRole.USER ? '[用户]' : '[AI]'
-      const time = this.formatTime(msg.timestamp)
-
-      lines.push(`${roleLabel} ${time}`)
-      if (msg.content.length > 0) {
-        lines.push(msg.content)
-      }
-
-      if (msg.reasoningContent.trim().length > 0) {
-        if (msg.content.length > 0) {
-          lines.push('')
-        }
-        lines.push('[思考过程]')
-        lines.push(msg.reasoningContent)
-      }
-
-      lines.push('')
-      lines.push('---')
-      lines.push('')
-    }
-
-    return lines.join('\n')
+  // 将消息列表转换为 HTML 文件内容
+  convertToHtml(messages: ChatMessage[], assistantAvatarValue: string = 'AI',
+    assistantAvatarColor: string = '', currentModelId: string = '', assistantAvatarCacheKey: number = 0,
+    sessionTitle: string = ''): string {
+    return this.exportService.toHtml(
+      this.exportService.buildModel(messages, sessionTitle),
+      assistantAvatarValue,
+      assistantAvatarColor,
+      currentModelId,
+      assistantAvatarCacheKey,
+      this.context
+    )
   }
 
   // 分享文本内容
@@ -145,6 +106,67 @@ export class ShareService {
       return { success: true, errorMessage: '' }
     } catch (error) {
       console.error('ShareService', `[shareText] 分享文本失败: ${JSON.stringify(error)}`)
+      return { success: false, errorMessage: `分享失败: ${error}` }
+    }
+  }
+
+  // 生成并分享 HTML 文件
+  async shareHtml(messages: ChatMessage[], title: string = 'conversation.html',
+    assistantAvatarValue: string = 'AI', assistantAvatarColor: string = '', currentModelId: string = '',
+    assistantAvatarCacheKey: number = 0, sessionTitle: string = ''): Promise<ShareResult> {
+    if (this.context === null) {
+      console.error('ShareService', '[shareHtml] 服务未初始化')
+      return { success: false, errorMessage: '服务未初始化' }
+    }
+
+    try {
+      const model = this.exportService.buildModel(messages, sessionTitle)
+      const html = this.exportService.toHtml(
+        model,
+        assistantAvatarValue,
+        assistantAvatarColor,
+        currentModelId,
+        assistantAvatarCacheKey,
+        this.context
+      )
+      const fileName = this.buildHtmlShareFileName(model.appName, model.title, model.exportedAt)
+      const filePath = this.writeHtmlFile(html, fileName)
+      const shareTitle = this.resolveHtmlShareTitle(title, fileName)
+      console.info('ShareService', `[shareHtml] HTML 文件已生成: ${filePath}`)
+      return await this.shareHtmlFile(filePath, shareTitle)
+    } catch (error) {
+      console.error('ShareService', `[shareHtml] 分享网页失败: ${JSON.stringify(error)}`)
+      return { success: false, errorMessage: `分享失败: ${error}` }
+    }
+  }
+
+  // 分享 HTML 文件
+  async shareHtmlFile(htmlPath: string, title: string = 'conversation.html'): Promise<ShareResult> {
+    if (this.context === null) {
+      console.error('ShareService', '[shareHtmlFile] 服务未初始化')
+      return { success: false, errorMessage: '服务未初始化' }
+    }
+
+    try {
+      console.info('ShareService', `[shareHtmlFile] 开始分享 HTML: ${htmlPath}`)
+      const uri = fileUri.getUriFromPath(htmlPath)
+      const shareData = new systemShare.SharedData({
+        utd: utd.UniformDataType.HTML,
+        uri: uri,
+        title: title
+      })
+
+      const controller = new systemShare.ShareController(shareData)
+      console.info('ShareService', '[shareHtmlFile] 打开分享面板')
+      await controller.show(this.context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DETAIL
+      })
+
+      console.info('ShareService', '[shareHtmlFile] 分享面板已关闭')
+      return { success: true, errorMessage: '' }
+    } catch (error) {
+      console.error('ShareService', `[shareHtmlFile] 分享 HTML 失败: ${JSON.stringify(error)}`)
       return { success: false, errorMessage: `分享失败: ${error}` }
     }
   }
@@ -422,6 +444,124 @@ export class ShareService {
     }
   }
 
+  private writeHtmlFile(content: string, fileName: string): string {
+    let file: fs.File | null = null
+    try {
+      const normalizedFileName = this.normalizeHtmlFileName(fileName)
+      const htmlDir = this.context?.cacheDir ?? this.context?.tempDir ?? ''
+      if (htmlDir === '') {
+        throw new Error('share html directory unavailable')
+      }
+
+      try {
+        fs.accessSync(htmlDir)
+      } catch (_error) {
+        fs.mkdirSync(htmlDir, true)
+      }
+
+      const filePath = this.resolveAvailableFilePath(htmlDir, normalizedFileName)
+      file = fs.openSync(filePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC)
+      fs.writeSync(file.fd, content)
+      return filePath
+    } catch (error) {
+      console.error('ShareService', `Failed to write share html file: ${JSON.stringify(error)}`)
+      throw new Error(`Failed to write share html file: ${JSON.stringify(error)}`)
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file)
+        } catch (error) {
+          console.error('ShareService', `Failed to close share html file: ${JSON.stringify(error)}`)
+        }
+      }
+    }
+  }
+
+  private buildHtmlShareFileName(appName: string, title: string, timestamp: number): string {
+    const app = this.sanitizeFileNamePart(appName, 'Cube Chat')
+    const conversationTitle = this.sanitizeFileNamePart(title, '对话记录')
+    const dateText = this.formatHtmlFileDateTime(timestamp)
+    let baseName = `${app} ${conversationTitle} ${dateText}`.trim()
+    baseName = this.truncateFileNameBase(baseName, 96)
+    return `${baseName}.html`
+  }
+
+  private resolveHtmlShareTitle(title: string, fileName: string): string {
+    const value = title.trim()
+    if (value === '' || value === 'conversation.html') {
+      return fileName
+    }
+    return value
+  }
+
+  private normalizeHtmlFileName(fileName: string): string {
+    let value = this.sanitizeFileNamePart(fileName, '')
+    if (value === '') {
+      value = this.buildHtmlShareFileName('Cube Chat', '对话记录', Date.now())
+    }
+    if (!value.toLowerCase().endsWith('.html')) {
+      value += '.html'
+    }
+    return value
+  }
+
+  private sanitizeFileNamePart(value: string, fallback: string): string {
+    let result = value
+      .replace(/[\\/:*?"<>|\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    while (result.endsWith('.') || result.endsWith(' ')) {
+      result = result.substring(0, result.length - 1).trim()
+    }
+    if (result === '' || result === '.' || result === '..') {
+      return fallback
+    }
+    return result
+  }
+
+  private truncateFileNameBase(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+      return value
+    }
+    return value.substring(0, maxLength).trim()
+  }
+
+  private formatHtmlFileDateTime(timestamp: number): string {
+    const date = new Date(timestamp)
+    const year = date.getFullYear().toString()
+    const month = (date.getMonth() + 1).toString().padStart(2, '0')
+    const day = date.getDate().toString().padStart(2, '0')
+    const hours = date.getHours().toString().padStart(2, '0')
+    const minutes = date.getMinutes().toString().padStart(2, '0')
+    return `${year}年${month}月${day}日 ${hours}点${minutes}分`
+  }
+
+  private resolveAvailableFilePath(directory: string, fileName: string): string {
+    const extension = '.html'
+    const lowerName = fileName.toLowerCase()
+    const baseName = lowerName.endsWith(extension) ? fileName.substring(0, fileName.length - extension.length) : fileName
+    let candidate = `${directory}/${fileName}`
+    if (!this.fileExists(candidate)) {
+      return candidate
+    }
+    for (let i = 2; i <= 99; i++) {
+      candidate = `${directory}/${baseName} (${i})${extension}`
+      if (!this.fileExists(candidate)) {
+        return candidate
+      }
+    }
+    return `${directory}/${baseName} ${Date.now()}${extension}`
+  }
+
+  private fileExists(path: string): boolean {
+    try {
+      fs.accessSync(path)
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
   private async sleep(delayMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
       setTimeout(() => resolve(), delayMs)
@@ -443,26 +583,6 @@ export class ShareService {
     return 'unknown error'
   }
 
-  // 格式化时间
-  private formatTime(timestamp: number): string {
-    const date = new Date(timestamp)
-    const hours = date.getHours()
-    const minutes = date.getMinutes().toString().padStart(2, '0')
-    const period = hours >= 12 ? 'PM' : 'AM'
-    const displayHours = hours % 12 || 12
-    return `${displayHours}:${minutes} ${period}`
-  }
-
-  // 格式化日期时间
-  private formatDateTime(timestamp: number): string {
-    const date = new Date(timestamp)
-    const year = date.getFullYear()
-    const month = (date.getMonth() + 1).toString().padStart(2, '0')
-    const day = date.getDate().toString().padStart(2, '0')
-    const hours = date.getHours().toString().padStart(2, '0')
-    const minutes = date.getMinutes().toString().padStart(2, '0')
-    return `${year}-${month}-${day} ${hours}:${minutes}`
-  }
 }
 
 // 单例实例

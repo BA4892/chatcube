@@ -1,6 +1,6 @@
 /**
  * 分享预览弹窗组件
- * 支持三种分享模式：图片、Markdown、纯文本
+ * 支持图片、Markdown、纯文本、网页分享
  */
 import { ChatMessage } from '../models/ChatModels'
 import { ShareService, ShareMode, getShareService } from '../services/ShareService'
@@ -16,6 +16,7 @@ const SHARE_PREVIEW_SCROLL_ID = 'share_preview_scroll_capture_source'
 @ComponentV2
 export struct SharePreviewSheet {
   @Param messages: ChatMessage[] = []
+  @Param sessionTitle: string = ''
   @Param currentModelId: string = ''
   @Param assistantAvatarValue: string = 'AI'
   @Param assistantAvatarColor: string = '#4E6F9E'
@@ -54,9 +55,11 @@ export struct SharePreviewSheet {
   // 更新预览文本
   private updatePreviewText(): void {
     if (this.selectedMode === ShareMode.MARKDOWN) {
-      this.previewText = this.shareService.convertToMarkdown(this.messages)
+      this.previewText = this.shareService.convertToMarkdown(this.messages, this.sessionTitle)
     } else if (this.selectedMode === ShareMode.TEXT) {
-      this.previewText = this.shareService.convertToPlainText(this.messages)
+      this.previewText = this.shareService.convertToPlainText(this.messages, this.sessionTitle)
+    } else {
+      this.previewText = ''
     }
   }
 
@@ -106,6 +109,7 @@ export struct SharePreviewSheet {
         this.ModeButton($r('app.string.share_mode_image'), ShareMode.IMAGE, $r('sys.symbol.picture'))
         this.ModeButton($r('app.string.share_mode_markdown'), ShareMode.MARKDOWN, $r('sys.symbol.doc_text'))
         this.ModeButton($r('app.string.share_mode_text'), ShareMode.TEXT, $r('sys.symbol.text_alignleft'))
+        this.ModeButton($r('app.string.share_mode_html'), ShareMode.HTML, $r('sys.symbol.globe_badge_message'))
       }
       .width('100%')
       .padding({ left: 20, right: 20 })
@@ -127,8 +131,8 @@ export struct SharePreviewSheet {
           .width('100%')
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
-        } else if (this.selectedMode === ShareMode.IMAGE) {
-          // 截图复用预览态 Scroll 的已渲染像素,避免 Sheet 父链 clip 与 Markdown 离屏 Worker 异步未完成的问题。
+        } else if (this.selectedMode === ShareMode.IMAGE || this.selectedMode === ShareMode.HTML) {
+          // 图片和网页模式都使用静态分享卡片预览；图片分享会复用该 Scroll 的已渲染像素完成截图。
           Scroll(this.previewScroller) {
             Column() {
               ShareMessageCard({
@@ -353,7 +357,7 @@ export struct SharePreviewSheet {
         await this.shareAsImage()
       } else if (this.selectedMode === ShareMode.MARKDOWN) {
         // Markdown 分享
-        const content = this.shareService.convertToMarkdown(this.messages)
+        const content = this.shareService.convertToMarkdown(this.messages, this.sessionTitle)
         const result = await this.shareService.shareText(content, 'conversation.md')
         if (!result.success) {
           if (result.errorMessage !== '') {
@@ -362,10 +366,28 @@ export struct SharePreviewSheet {
             this.showShareToast($r('app.string.share_failed'))
           }
         }
-      } else {
+      } else if (this.selectedMode === ShareMode.TEXT) {
         // 纯文本分享
-        const content = this.shareService.convertToPlainText(this.messages)
+        const content = this.shareService.convertToPlainText(this.messages, this.sessionTitle)
         const result = await this.shareService.shareText(content, 'conversation')
+        if (!result.success) {
+          if (result.errorMessage !== '') {
+            this.showShareToast(result.errorMessage)
+          } else {
+            this.showShareToast($r('app.string.share_failed'))
+          }
+        }
+      } else {
+        // 网页分享
+        const result = await this.shareService.shareHtml(
+          this.messages,
+          'conversation.html',
+          this.assistantAvatarValue,
+          this.assistantAvatarColor,
+          this.currentModelId,
+          this.assistantAvatarCacheKey,
+          this.sessionTitle
+        )
         if (!result.success) {
           if (result.errorMessage !== '') {
             this.showShareToast(result.errorMessage)

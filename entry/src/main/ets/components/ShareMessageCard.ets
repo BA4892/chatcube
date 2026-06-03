@@ -227,7 +227,8 @@ export struct ShareMessageCard {
                   incrementalAnalysis: false,
                   useCangjieComponent: true,
                   chatFontSize: this.chatFontSize,
-                  themeRenderKey: message.id
+                  themeRenderKey: message.id,
+                  showCodeFullScreen: false
                 })
                   .width('100%')
                   .backgroundColor(Color.Transparent)
