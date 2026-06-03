@@ -334,7 +334,7 @@ export class ChatViewModel {
   }
 
   // 解析"本次请求要发的 max output tokens", 0 / undefined 一律返回 undefined,
-  // 让 AIApiService 在各 provider 路径里决定是否下发字段(只有 Claude 必传时会兜底 64_000)。
+  // 让 AIApiService 在各 provider 路径里决定是否下发字段(只有 Claude 必传时会兜底 128_000)。
   // override 优先于助手配置, 用于 sendMessage 这种从 ChatSendFlow 传入显式覆盖值的入口。
   private async resolveEffectiveMaxOutputTokens(override?: number): Promise<number | undefined> {
     if (override !== undefined && override > 0) {

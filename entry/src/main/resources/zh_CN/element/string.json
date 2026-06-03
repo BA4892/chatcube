@@ -2482,7 +2482,7 @@
     },
     {
       "name": "assistant_max_output_hint",
-      "value": "0 表示不限制(由模型按自身上限输出),Claude 等强制要求该字段的服务商会兜底为 64K"
+      "value": "0 表示不限制(由模型按自身上限输出),Claude 等强制要求该字段的服务商会兜底为 128K"
     },
     {
       "name": "assistant_name_required",

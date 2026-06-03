@@ -1,6 +1,7 @@
 import { TextReader } from '@kit.SpeechKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
+import { stripMarkdownForTts } from '../utils/MarkdownPlainTextUtil'
 
 // TTS事件回调接口
 export interface TTSCallback {
@@ -169,50 +170,7 @@ export class TTSService {
       return ''
     }
 
-    let text = markdown
-
-    // 移除代码块（```code```）
-    text = text.replace(/```[\s\S]*?```/g, '')
-
-    // 移除行内代码（`code`）
-    text = text.replace(/`[^`]*`/g, '')
-
-    // 清理Markdown符号
-    text = text.replace(/\*\*\*([^*]+)\*\*\*/g, '$1')  // ***bold italic***
-    text = text.replace(/\*\*([^*]+)\*\*/g, '$1')     // **bold**
-    text = text.replace(/\*([^*]+)\*/g, '$1')         // *italic*
-    text = text.replace(/___([^_]+)___/g, '$1')      // ___bold italic___
-    text = text.replace(/__([^_]+)__/g, '$1')        // __bold__
-    text = text.replace(/_([^_]+)_/g, '$1')          // _italic_
-    text = text.replace(/~~([^~]+)~~/g, '')          // ~~strikethrough~~
-
-    // 清理标题符号
-    text = text.replace(/^#{1,6}\s+/gm, '')
-
-    // 清理引用符号
-    text = text.replace(/^>\s+/gm, '')
-
-    // 清理链接语法 [text](url) -> text
-    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-
-    // 清理图片语法 ![alt](url)
-    text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-
-    // 清理无序列表符号
-    text = text.replace(/^[-*+]\s+/gm, '')
-
-    // 清理有序列表符号
-    text = text.replace(/^\d+\.\s+/gm, '')
-
-    // 清理水平线
-    text = text.replace(/^[-*_]{3,}\s*$/gm, '')
-
-    // 清理LaTeX公式（简单处理）
-    text = text.replace(/\$\$[\s\S]*?\$\$/g, '公式')
-    text = text.replace(/\$[^$]*\$/g, '公式')
-
-    // 清理多余空行
-    text = text.replace(/\n{3,}/g, '\n\n')
+    let text = stripMarkdownForTts(markdown)
 
     // 限制长度（TextReader 支持长文本，但建议合理分段）
     if (text.length > 50000) {

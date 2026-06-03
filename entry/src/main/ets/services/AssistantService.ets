@@ -17,7 +17,7 @@ export class AssistantRuntimeConfig {
   frequencyPenaltyEnabled: boolean = false
   frequencyPenalty: number = 0
   contextMessageCount: number = 0
-  // 最大输出 token 数。0 = "无限制"(不下发字段,Anthropic 兜底 64_000),>0 = 显式下发该值。
+  // 最大输出 token 数。0 = "无限制"(不下发字段,Anthropic 兜底 128_000),>0 = 显式下发该值。
   // 详见 Assistant.maxOutputTokens 注释。
   maxOutputTokens: number = 0
   enabledToolIds: string[] = []

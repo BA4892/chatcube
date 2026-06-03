@@ -34,6 +34,7 @@ import { resolveToolSymbol } from '../utils/ToolIconMapping'
 import { buildToolTitle } from '../utils/ToolTitleBuilder'
 import { fingerprintLongString } from '../utils/MessageSignatureUtils'
 import { buildToolArgumentsPreview, buildToolResultPreview } from '../utils/ToolPayloadSummaryUtils'
+import { removeMarkdownCodeBlocks, stripMarkdownForTextSelection } from '../utils/MarkdownPlainTextUtil'
 import {
   ASSISTANT_BUBBLE_BORDER_WIDTH,
   ASSISTANT_BUBBLE_RADIUS,
@@ -707,7 +708,7 @@ export struct MessageBubble {
       return images
     }
 
-    const markdownText = content.replace(/```[\s\S]*?```/g, '')
+    const markdownText = removeMarkdownCodeBlocks(content)
     const pattern = /!\[[^\]]*]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^"']*["'])?\s*\)/g
     let match = pattern.exec(markdownText)
     while (match !== null) {
@@ -994,10 +995,11 @@ export struct MessageBubble {
   }
 
   private openTextSelectionSheet(content: string): void {
-    if (content.trim().length === 0) {
+    const selectionContent = stripMarkdownForTextSelection(content)
+    if (selectionContent.trim().length === 0) {
       return
     }
-    this.textSelectionSheetContent = content
+    this.textSelectionSheetContent = selectionContent
     this.showTextSelectionSheet = true
   }
 

@@ -141,6 +141,7 @@ struct Index {
   private static readonly SETTINGS_SHEET_OUTSIDE_DISMISS_GUARD_MS: number = 320
   private static readonly COMPACT_CHAT_SPLIT_TITLE_BAR_MASK_EXTRA_HEIGHT: number = 20
   private static readonly CHAT_SEARCH_GEOMETRY_TRANSITION_ID: string = 'INDEX_CHAT_SESSION_SEARCH_TRANSITION_ID'
+  private static readonly ASSISTANT_MAX_OUTPUT_TOKENS_LIMIT: number = 384 * 1024
   private static readonly TAB_ASSISTANTS: number = INDEX_TAB_ASSISTANTS
   private static readonly TAB_CHAT: number = INDEX_TAB_CHAT
   private static readonly TAB_SETTINGS: number = INDEX_TAB_SETTINGS
@@ -2790,6 +2791,14 @@ struct Index {
     this.openChatRoute({} as ChatPageRouteParams)
   }
 
+  private normalizeAssistantMaxOutputTokens(value: number): number {
+    const rounded = Math.round(value)
+    if (rounded <= 0) {
+      return 0
+    }
+    return Math.min(rounded, Index.ASSISTANT_MAX_OUTPUT_TOKENS_LIMIT)
+  }
+
   private resetAssistantEditorForm(): void {
     this.editingAssistantId = ''
     this.editingAssistantCreatedAt = 0
@@ -2840,7 +2849,7 @@ struct Index {
     this.assistantFormFrequencyPenaltyEnabled = assistant.frequencyPenaltyEnabled
     this.assistantFormFrequencyPenalty = assistant.frequencyPenalty
     this.assistantFormContextMessageCount = assistant.contextMessageCount
-    this.assistantFormMaxOutputTokens = assistant.maxOutputTokens
+    this.assistantFormMaxOutputTokens = this.normalizeAssistantMaxOutputTokens(assistant.maxOutputTokens)
   }
 
   private setAssistantFormAvatarSymbol(value: string): void {
@@ -2933,7 +2942,7 @@ struct Index {
     assistant.frequencyPenaltyEnabled = this.assistantFormFrequencyPenaltyEnabled
     assistant.frequencyPenalty = this.assistantFormFrequencyPenalty
     assistant.contextMessageCount = this.assistantFormContextMessageCount
-    assistant.maxOutputTokens = this.assistantFormMaxOutputTokens
+    assistant.maxOutputTokens = this.normalizeAssistantMaxOutputTokens(this.assistantFormMaxOutputTokens)
     assistant.createdAt = this.editingAssistantCreatedAt
     assistant.sortOrder = this.editingAssistantSortOrder
     assistant.isDefault = this.editingAssistantIsDefault
@@ -4036,11 +4045,17 @@ struct Index {
       }
       .width('100%')
 
-      Slider({ value: this.assistantFormMaxOutputTokens, min: 0, max: 65536, step: 256, style: SliderStyle.InSet })
+      Slider({
+        value: this.assistantFormMaxOutputTokens,
+        min: 0,
+        max: Index.ASSISTANT_MAX_OUTPUT_TOKENS_LIMIT,
+        step: 256,
+        style: SliderStyle.InSet
+      })
         .width('100%')
         .selectedColor(this.themePrimary)
         .onChange((value: number, _mode: SliderChangeMode) => {
-          this.assistantFormMaxOutputTokens = Math.round(value)
+          this.assistantFormMaxOutputTokens = this.normalizeAssistantMaxOutputTokens(value)
         })
 
       Text($r('app.string.assistant_max_output_hint'))

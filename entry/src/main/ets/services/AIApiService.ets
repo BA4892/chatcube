@@ -2711,7 +2711,7 @@ export class AIApiService {
   // 构建请求体
   //
   // maxTokens 语义:
-  // - undefined / 0 表示"无限制", 仅在 Anthropic Claude 路径会兜底成 64_000 (Anthropic API 强制要求);
+  // - undefined / 0 表示"无限制", 仅在 Anthropic Claude 路径会兜底成 128_000 (Anthropic API 强制要求);
   // - OpenAI Chat / OpenAI Responses / Google Gemini 等路径在 0/undefined 时直接不下发对应字段,
   //   让模型按自身上限输出, 避免被全局 4096 锁死。
   // 调用方应将助手配置中的 maxOutputTokens (0 = 无限制) 直接透传到这里。
@@ -2867,9 +2867,9 @@ export class AIApiService {
         }
       }
 
-      // Anthropic Claude API 强制要求 max_tokens 字段, 助手未配置时按 RikkaHub 兜底 64_000,
-      // 覆盖 Claude 4 系列 64K 输出能力。其他 provider 不传字段就好, 不要在这里改成 4096。
-      const claudeMaxTokens = (maxTokens !== undefined && maxTokens > 0) ? maxTokens : 64_000
+      // Anthropic Claude API 强制要求 max_tokens 字段,助手未配置时兜底到 128_000,
+      // 覆盖 Claude Opus 4.8 同步 Messages API 的 128K 输出能力。其他 provider 不传字段就好。
+      const claudeMaxTokens = (maxTokens !== undefined && maxTokens > 0) ? maxTokens : 128_000
 
       if (systemPrompt !== '') {
         const bodyWithSystem: AnthropicRequestBody = {

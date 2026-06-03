@@ -2486,7 +2486,7 @@
     },
     {
       "name": "assistant_max_output_hint",
-      "value": "0 means no limit; the model uses its own ceiling. Claude requires the field and falls back to 64K."
+      "value": "0 means no limit; the model uses its own ceiling. Claude requires the field and falls back to 128K."
     },
     {
       "name": "assistant_saved",
