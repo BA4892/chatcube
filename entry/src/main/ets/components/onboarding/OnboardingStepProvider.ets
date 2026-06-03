@@ -80,12 +80,6 @@ export struct OnboardingStepProvider {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-
-      if (this.vm.selectedPresetProviderId === provider.id) {
-        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-          .fontSize(18)
-          .fontColor([this.themePrimary])
-      }
     }
     .width('100%')
     .padding(12)
@@ -120,7 +114,22 @@ export struct OnboardingStepProvider {
         .padding({ left: 14, right: 14 })
         .onChange((value: string) => {
           this.vm.apiKeyInput = value
+          this.vm.lastError = ''
         })
+
+      if (this.vm.lastError !== '') {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+            .fontSize(14)
+            .fontColor([$r('app.color.status_error')])
+          Text(this.vm.lastError)
+            .fontSize(12)
+            .fontColor($r('app.color.status_error'))
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ top: 2 })
+      }
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 4, bottom: 8 })

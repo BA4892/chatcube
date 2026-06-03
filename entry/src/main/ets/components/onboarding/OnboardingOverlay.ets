@@ -134,15 +134,17 @@ export struct OnboardingOverlay {
         Button($r('app.string.onboarding_skip_provider'))
           .secondaryStyle(this.themeSurface)
           .layoutWeight(1)
+          .enabled(!this.vm.applyingProvider)
+          .opacity(this.vm.applyingProvider ? 0.5 : 1)
           .onClick(() => {
             this.vm.nextStep()
           })
 
-        Button($r('app.string.onboarding_next'))
+        Button(this.vm.applyingProvider ? $r('app.string.provider_fetching') : $r('app.string.onboarding_next'))
           .primaryStyle(this.themePrimary)
           .layoutWeight(1)
-          .enabled(this.isProviderStepReady())
-          .opacity(this.isProviderStepReady() ? 1 : 0.5)
+          .enabled(this.isProviderStepReady() && !this.vm.applyingProvider)
+          .opacity(this.isProviderStepReady() && !this.vm.applyingProvider ? 1 : 0.5)
           .onClick(() => {
             this.handleProviderNext()
           })
