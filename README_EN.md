@@ -15,6 +15,10 @@
 
 ---
 
+> [!IMPORTANT]
+> **This repository is archived and kept read-only as an open-source snapshot.** Cube Chat is being prepared for release on Huawei AppGallery, and future versions will no longer be published here.
+> For now you can install the latest build via Huawei's **beta test** — live link (always points to the latest version): **<https://beta.04160518.xyz/r>**
+
 ## Why Cube Chat?
 
 - Built entirely with ArkTS — a true HarmonyOS native app, not a web wrapper
